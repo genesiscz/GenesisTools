@@ -478,6 +478,8 @@ const sourceAudioFileSchema = z.object({
 export const sourceAudioPieceSchema = sourceAudioFileSchema.extend({
     /** Where the recording's second 0 sits on the record's clock, in whole milliseconds. */
     offsetMs: z.number().int().nonnegative(),
+    /** Which channel the recording's microphone is on, as it was calibrated before the join; absent: not calibrated. */
+    layout: z.enum(CHANNEL_LAYOUTS).optional(),
 });
 export type SourceAudioPiece = z.infer<typeof sourceAudioPieceSchema>;
 

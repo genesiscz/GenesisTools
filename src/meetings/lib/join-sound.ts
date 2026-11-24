@@ -328,7 +328,12 @@ export function applyJoinSound(
         }
     }
 
-    const pieces = plan.recordings.map((one) => ({ ...one.audio, path: one.to, offsetMs: one.part.offsetMs }));
+    const pieces = plan.recordings.map((one) => ({
+        ...one.audio,
+        path: one.to,
+        offsetMs: one.part.offsetMs,
+        ...(one.part.channels ? { layout: one.part.channels.layout } : {}),
+    }));
     const first = pieces[0];
     const audio: PreservedSourceAudio | undefined = options.joined
         ? { sourceMeetingId: plan.sourceMeetingId ?? first!.sourceMeetingId, ...options.joined, pieces }

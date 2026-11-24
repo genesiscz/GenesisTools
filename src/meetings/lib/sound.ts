@@ -238,7 +238,8 @@ export interface SoundInputs {
         source: MeetingSourceId;
         layout: ChannelLayout;
         durationSec: number;
-        pieces?: ReadonlyArray<{ path: string; zeroSec: number; durationSec: number }>;
+        /** Each with its own channel layout when it was calibrated alone; else the record's `layout` applies. */
+        pieces?: ReadonlyArray<{ path: string; zeroSec: number; durationSec: number; layout?: ChannelLayout }>;
     };
     clock?: SoundClock;
     /** `source`: the recorder tracks are never chosen by preference (an explicit `track` still is). */
@@ -303,14 +304,21 @@ function recorderTracks(inputs: SoundInputs): SoundTrack[] {
 
 /** The source's two channels, each a piece per recording: the recordings themselves, never a file put together from them. */
 function sourceTracks(source: NonNullable<SoundInputs["source"]>): SoundTrack[] {
-    const channels = sourceChannels(source.layout);
-    const recordings = source.pieces ?? [{ path: source.path, zeroSec: 0, durationSec: source.durationSec }];
+    const listed = source.pieces ?? [{ path: source.path, zeroSec: 0, durationSec: source.durationSec }];
+    const recordings = listed.map(({ layout, ...one }, index) => ({
+        ...one,
+        // A recording holds the time to its end, never past the next one's second 0 (a length that did not read is
+        // infinite).
+        durationSec: Math.min(one.durationSec, (listed[index + 1]?.zeroSec ?? Number.POSITIVE_INFINITY) - one.zeroSec),
+        // Each recording's microphone sits on its own channel; one calibrated as unknown takes the record's layout.
+        channels: sourceChannels(layout && layout !== "unknown" ? layout : source.layout),
+    }));
     return SOURCE_TRACK_KINDS.map((kind) => ({
         kind,
         seat: SEAT_OF[kind],
         processing: "unknown",
         from: { kind: "source", source: source.source },
-        pieces: recordings.map((one) => ({ ...one, channel: channels[SEAT_OF[kind]] })),
+        pieces: recordings.map(({ channels, ...one }) => ({ ...one, channel: channels[SEAT_OF[kind]] })),
         clock: "source",
     }));
 }
@@ -507,6 +515,7 @@ async function soundSource(opened: OpenedMeeting): Promise<SoundInputs["source"]
                           path: piece.path,
                           zeroSec: piece.offsetMs / 1000,
                           durationSec: await soundLength(piece.path),
+                          ...(piece.layout ? { layout: piece.layout } : {}),
                       }))
                   ),
               }
