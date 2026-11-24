@@ -15,9 +15,12 @@ extension MeetingsAPI {
         }
         struct Result: Decodable, Equatable {
             struct Conflict: Decodable, Equatable { let file: String; let message: String }
+            /// Two listed owners the people list joins by name while no merge joins their samples.
+            struct MergeHint: Decodable, Equatable { let owners: [VoiceOwner]; let command: String }
             let people: [VoicePerson]
             var learnt: [LearntVoice]?
             var conflicts: [Conflict]?
+            var mergeHints: [MergeHint]?
         }
     }
 
@@ -103,6 +106,16 @@ extension MeetingsAPI {
         struct Params: Codable, Equatable { let token: String; let requestToken: String }
         typealias Result = VoiceCorrectionReply
     }
+    /// `voices.rename`: names a person's samples again and refuses nobody. A target the people list knows becomes a
+    /// people merge (undone by `people.unmerge`); a new name re-keys the samples (undone by `voices.undo`).
+    enum VoicesRename: MeetingsServiceMethod {
+        static let name = "voices.rename"
+        struct Params: Codable, Equatable {
+            let from: VoiceOwner; let to: VoiceOwner
+            let preview: Bool; let planToken: String?; let token: String
+        }
+        typealias Result = VoiceCorrectionReply
+    }
 
     enum VoicesJobs: MeetingsServiceMethod {
         static let name = "voices.jobs"
@@ -182,12 +195,26 @@ struct LearntVoice: Decodable, Equatable {
 }
 
 struct VoiceCorrectionReply: Decodable, Equatable {
+    struct Undo: Decodable, Equatable { let method: String; let token: String }
+    /// How an applied correction is undone: by its voice correction token, or by splitting the people merge it made.
+    enum UndoCall: Equatable { case voices(String), unmerge(String) }
+
     let status: String
     var reason: String?
     var token: String?
     var planToken: String?
     var ids: [String]?
     var affected: [MeetingsAPI.VoicesRemove.Affected]?
+    /// `voices.rename` only: `merge` or `rekey`.
+    var mechanism: String?
+    /// `voices.rename` only: the method and token that undo it.
+    var undo: Undo?
+
+    var isMerge: Bool { mechanism == "merge" }
+    var undoCall: UndoCall? {
+        if let undo { return undo.method == MeetingsAPI.PeopleUnmerge.name ? .unmerge(undo.token) : .voices(undo.token) }
+        return token.map(UndoCall.voices)
+    }
 
     func require(_ expected: String) throws {
         guard status == expected else {

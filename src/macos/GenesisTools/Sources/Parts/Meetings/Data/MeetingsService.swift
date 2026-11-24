@@ -671,6 +671,12 @@ final class MeetingsService {
         return current
     }
 
+    /// Whether the connected service answers `method`; true while no connection has said otherwise.
+    func offers(_ method: String) -> Bool {
+        if case .connected(let methods, _) = state { return methods.contains(method) }
+        return true
+    }
+
     /// Older services list project rows and expose only the original numbered playback selector.
     func listVoiceLibrary(_ destination: VoiceDestination) async throws -> MeetingsAPI.VoicesList.Result {
         _ = await connection()

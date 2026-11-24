@@ -61,6 +61,80 @@ final class MeetingsVoiceLibraryTests: XCTestCase {
         }
     }
 
+    func testRenameJoinsAKnownPersonOrReKeysAndEachUndoUsesTheMethodTheServiceNamed() async throws {
+        let fake = try FakeMeetingsService()
+        fake.fixtureMethods = ["voices.list", "voices.jobs", "voices.rename", "voices.undo", "people.unmerge"]
+        fake.fixtureReply = { method, params in
+            switch method {
+            case "voices.list": return ["people": []]
+            case "voices.jobs": return []
+            case "people.unmerge":
+                return ["merge": ["token": "merge-token", "people": [["name": "aster.example"], ["name": "Aster"]], "name": "Aster",
+                                  "at": "2026-01-01T00:00:00Z"]]
+            case "voices.undo": return ["status": "applied", "ids": ["vs_one"], "planToken": "undo-plan", "token": "undo", "affected": []]
+            default:
+                let merge = (params["to"] as? [String: Any])?["name"] as? String == "Aster"
+                let preview = params["preview"] as? Bool == true
+                var reply: [String: Any] = ["status": preview ? "preview" : "applied", "mechanism": merge ? "merge" : "rekey",
+                                            "ids": merge ? [] : ["vs_one"], "planToken": "rename-plan", "affected": [],
+                                            "from": params["from"] ?? [:], "to": params["to"] ?? [:]]
+                if !merge { reply["token"] = "rekey-token" }
+                if !preview {
+                    reply["undo"] = merge ? ["method": "people.unmerge", "token": "merge-token"] : ["method": "voices.undo", "token": "rekey-token"]
+                }
+                return reply
+            }
+        }
+        try await fake.withVoiceWindow { window in
+            let library = window.voiceLibrary
+            library.show(.person(.init(name: "Aster"), project: nil), doubtfulFirst: true)
+            let cases: [(LibraryCorrection, String, String, String)] = [
+                (.rename(from: .init(name: "aster.example"), to: .init(name: "Aster")), "people.unmerge", "merge-token",
+                 "No sample changes its owner."),
+                (.rename(from: .init(name: "Aster"), to: .init(name: "Beryl")), "voices.undo", "rekey-token",
+                 "1 sample of Aster will carry the name Beryl."),
+            ]
+            for (action, undoMethod, token, sentence) in cases {
+                library.preview(action)
+                let previewed = await waitUntil(3) { library.confirmation != nil && !library.busy }
+                XCTAssertTrue(previewed, undoMethod)
+                let choice = try XCTUnwrap(library.confirmation)
+                XCTAssertTrue(choice.message.contains(sentence), choice.message)
+                XCTAssertTrue(choice.message.contains("No owner is refused."), choice.message)
+                if undoMethod == "people.unmerge" { XCTAssertEqual(choice.title, "Treat aster.example and Aster as one person") }
+                library.apply(choice)
+                let applied = await waitUntil(3) { !library.busy && window.newestUndo != nil }
+                XCTAssertTrue(applied, undoMethod)
+                let calls = fake.received.filter { $0["method"] as? String == "voices.rename" }.compactMap { $0["params"] as? [String: Any] }
+                XCTAssertEqual(calls.suffix(2).map { $0["preview"] as? Bool }, [true, false])
+                XCTAssertEqual(calls.last?["planToken"] as? String, "rename-plan")
+                XCTAssertEqual(calls.suffix(2).first?["token"] as? String, calls.last?["token"] as? String)
+                XCTAssertTrue(window.undoNewest())
+                let undone = await waitUntil(3) { fake.count(undoMethod) == 1 && library.lastCorrection == nil }
+                XCTAssertTrue(undone, undoMethod)
+                let undo = fake.received.last { $0["method"] as? String == undoMethod }?["params"] as? [String: Any]
+                XCTAssertEqual(undo?["token"] as? String, token)
+            }
+            // A rename never asks for a refusal.
+            XCTAssertEqual(fake.count("voices.reject") + fake.count("voices.move"), 0)
+        }
+    }
+
+    func testMergeHintsOfferSamePersonOnBothOwners() throws {
+        let json = #"""
+        {"people":[
+          {"project":"Orchard","person":"Aster","owner":{"name":"Aster"},"meetings":["one"],"samples":[]},
+          {"project":"Orchard","person":"aster.example","owner":{"name":"aster.example"},"meetings":["two"],"samples":[]},
+          {"project":"Orchard","person":"Beryl","owner":{"name":"Beryl"},"meetings":["one"],"samples":[]}],
+         "mergeHints":[{"owners":[{"name":"Aster"},{"name":"aster.example"}],
+                        "command":"tools meetings people merge Aster aster.example --yes"}]}
+        """#
+        let result = try JSONDecoder().decode(MeetingsAPI.VoicesList.Result.self, from: Data(json.utf8))
+        let rows = VoiceLibraryRows(result, destination: .project("Orchard"), doubtfulFirst: true)
+        XCTAssertEqual(rows.people.map { $0.sameAs.map(\.name) }, [["aster.example"], ["Aster"], []])
+        XCTAssertEqual(rows.people.first?.owner, VoiceOwner(name: "Aster"))
+    }
+
     func testPreparedRowsRankIndependentOutliersAndExplainMissingScores() throws {
         let owner = ["name": "Aster"]
         let samples: [[String: Any]] = ["vs_typical", "vs_doubtful", "vs_small"].enumerated().map { i, id in

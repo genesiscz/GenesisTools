@@ -32,7 +32,10 @@ struct VoiceLibraryRows: Equatable {
         let person: VoicePerson
         let rows: [Row]
         let prints: [String]
+        /// Other listed owners the people list joins with this one by name (`mergeHints`): their samples stay apart.
+        var sameAs: [VoiceOwner] = []
         var id: String { person.id }
+        var owner: VoiceOwner { person.owner ?? .init(name: person.person) }
     }
     let people: [Person]
     let others: [Person]
@@ -91,7 +94,9 @@ struct VoiceLibraryRows: Equatable {
                 guard let summary = summaries[sample.id], seen.insert(summary).inserted else { return nil }
                 return summary
             }
-            let group = Person(person: person, rows: rows, prints: prints)
+            let owner = person.owner ?? .init(name: person.person)
+            let sameAs = (response.mergeHints ?? []).flatMap { hint in hint.owners.contains(owner) ? hint.owners.filter { $0 != owner } : [] }
+            let group = Person(person: person, rows: rows, prints: prints, sameAs: sameAs)
             meetings.formUnion(person.meetings)
             projects.formUnion(person.projects ?? (person.project.isEmpty ? [] : [person.project]))
             if let meeting = destination.meeting, !person.meetings.contains(meeting) {
@@ -116,10 +121,13 @@ enum LibraryCorrection: Equatable {
     case move(id: String, person: String, to: VoiceOwner)
     case reject(id: String, person: String, reason: String)
     case remove(id: String?, person: String, scope: VoiceBrowseScope)
+    /// Names a person's samples again: a people merge with a known person, else a re-key to the new name.
+    case rename(from: VoiceOwner, to: VoiceOwner)
 
     var title: String {
         switch self {
         case .move(_, _, let to): return "Move sample to \(to.name)\(to.email.map { " (\($0))" } ?? "")"
+        case .rename(let from, let to): return "Rename \(from.name) to \(to.name)"
         case .reject(_, _, "bad-audio"): return "Reject unusable audio for everyone"
         case .reject(_, _, "several-voices"): return "Reject mixed voices for everyone"
         case .reject(_, let person, _): return "Mark as the wrong person for \(person)"
@@ -132,7 +140,22 @@ enum LibraryCorrection: Equatable {
         case .reject(_, _, "wrong-person"): return "Future learning skips this clip for this person."
         case .reject: return "Future learning skips this audio for every person."
         case .remove: return "A later backfill can learn this clip again."
+        case .rename: return "No owner is refused."
         }
+    }
+
+    /// What the confirmation asks, once the preview said how the service carries it out.
+    func title(for reply: VoiceCorrectionReply) -> String {
+        guard case .rename(let from, let to) = self, reply.isMerge else { return title }
+        return "Treat \(from.name) and \(to.name) as one person"
+    }
+
+    /// The confirmation's sentence: the samples, the suggestions reconsidered, and what the action also changes.
+    func summary(_ reply: VoiceCorrectionReply, ids: [String], impact: String) -> String {
+        guard case .rename(let from, let to) = self else { return "\(Plural.count(ids.count, "sample")) affected. \(impact) \(effect)" }
+        guard reply.isMerge else { return "\(Plural.count(ids.count, "sample")) of \(from.name) will carry the name \(to.name). \(impact) \(effect)" }
+        let samples = ids.isEmpty ? "No sample changes its owner." : "\(Plural.count(ids.count, "sample")) of \(from.name) will join \(to.name)."
+        return "The people list and the voice library join \(from.name) and \(to.name). \(samples) \(effect) Undo splits them again."
     }
 
     @MainActor
@@ -149,6 +172,9 @@ enum LibraryCorrection: Equatable {
                                                                                    planToken: planToken, preview: preview))
             return .init(status: preview ? "preview" : "applied", token: reply.token, planToken: reply.planToken,
                          ids: reply.ids, affected: reply.affected)
+        case .rename(let from, let to):
+            return try await service.call(MeetingsAPI.VoicesRename.self, .init(from: from, to: to, preview: preview,
+                                                                              planToken: planToken, token: token))
         }
     }
 }
@@ -158,6 +184,7 @@ final class VoiceLibraryModel {
     struct Confirmation: Identifiable {
         let id: String
         let action: LibraryCorrection
+        let title: String
         let plan: String
         let message: String
         let ids: [String]
@@ -352,14 +379,15 @@ final class VoiceLibraryModel {
                 let reply = try await action.call(service, preview: true, planToken: nil, token: token)
                 try reply.require("preview")
                 guard self.destination == destination else { return }
-                guard let plan = reply.planToken, let ids = reply.ids, !ids.isEmpty else {
+                // A merge can join two people before either has a sample; every other correction needs one.
+                guard let plan = reply.planToken, let ids = reply.ids, !ids.isEmpty || reply.isMerge else {
                     throw MeetingsCLI.Failure(sentence: "There are no samples to correct in this selection.", detail: action.title)
                 }
                 let affected = reply.affected ?? []
                 let impact = affected.isEmpty ? "No suggested names change."
                     : "\(Plural.count(affected.count, "suggested line")) will be reconsidered across \(Plural.count(Set(affected.map(\.meeting)).count, "meeting"))."
-                confirmation = .init(id: token, action: action, plan: plan,
-                                     message: "\(Plural.count(ids.count, "sample")) affected. \(impact) \(action.effect)", ids: ids, affected: affected)
+                confirmation = .init(id: token, action: action, title: action.title(for: reply), plan: plan,
+                                     message: action.summary(reply, ids: ids, impact: impact), ids: ids, affected: affected)
             } catch { window?.notices.push(.meetingsFailure(error)) }
         }
     }
@@ -380,14 +408,19 @@ final class VoiceLibraryModel {
             do {
                 let result = try await choice.action.call(service, preview: false, planToken: choice.plan, token: choice.id)
                 try result.require("applied")
-                guard let receipt = result.token else {
-                    throw MeetingsCLI.Failure(sentence: "The service returned no correction receipt. Read the library again.", detail: choice.action.title)
+                guard let undo = result.undoCall else {
+                    throw MeetingsCLI.Failure(sentence: "The service returned no correction receipt. Read the library again.", detail: choice.title)
                 }
                 let undoRequest = UUID().uuidString
-                let saved = StackedNotice(text: "Voice library updated", detail: choice.action.title, actions: [.undo { [weak self, weak notices = window.notices] notice in
+                let saved = StackedNotice(text: "Voice library updated", detail: choice.title, actions: [.undo { [weak self, weak notices = window.notices] notice in
                     notices?.settleUndo(notice, done: "Voice correction undone") {
-                        let reply = try await service.call(MeetingsAPI.VoicesUndo.self, .init(token: receipt, requestToken: undoRequest))
-                        try reply.require("applied")
+                        switch undo {
+                        case .voices(let receipt):
+                            let reply = try await service.call(MeetingsAPI.VoicesUndo.self, .init(token: receipt, requestToken: undoRequest))
+                            try reply.require("applied")
+                        case .unmerge(let token):
+                            _ = try await service.call(MeetingsAPI.PeopleUnmerge.self, .init(token: token))
+                        }
                         if self?.lastCorrection?.id == notice { self?.lastCorrection = nil }
                         self?.refresh()
                     }
@@ -412,6 +445,7 @@ struct VoiceSampleRows: View {
     @State private var full: Set<String> = []
     @State private var othersOpen = false
     @State private var moving: VoiceLibraryRows.Row?
+    @State private var renaming: VoiceLibraryRows.Person?
     @State private var search: PeopleSearch?
     @State private var query = ""
     @State private var revealedInitialFocus = false
@@ -480,6 +514,18 @@ struct VoiceSampleRows: View {
             .onChange(of: query) { _, value in search?.ask(value) }
             .padding()
         }
+        .sheet(item: $renaming, onDismiss: { search?.cancel(); search = nil }) { group in
+            PersonPicker(people: search?.people ?? [], query: $query, sources: search?.sources ?? [],
+                         title: "Rename \(group.owner.name), or join with", prompt: "Search people or type a new name", pick: { person in
+                renaming = nil
+                model.preview(.rename(from: group.owner, to: .init(name: person.name, email: person.email)))
+            }, addNew: { name in
+                renaming = nil
+                model.preview(.rename(from: group.owner, to: .init(name: name)))
+            }, addTitle: { "Rename to ‘\($0)’" }, cancel: { renaming = nil })
+            .onChange(of: query) { _, value in search?.ask(value) }
+            .padding()
+        }
         .sheet(item: Bindable(model).confirmation) { choice in
             VoiceCorrectionSheet(choice: choice, cancel: { model.confirmation = nil }, confirm: { model.apply(choice) })
         }
@@ -504,6 +550,31 @@ struct VoiceSampleRows: View {
         reveal(group.id)
     }
 
+    private func startRename(_ group: VoiceLibraryRows.Person) {
+        query = ""
+        let lookup = PeopleSearch(meeting: nil, limit: 50, service: model.window?.service)
+        search = lookup
+        lookup.ask("", after: .zero)
+        renaming = group
+    }
+
+    /// "Rename or join…" and one "Same person as …" per owner the people list joins with this one by name. A service
+    /// without `voices.rename` shows neither.
+    @ViewBuilder private func ownerActions(_ group: VoiceLibraryRows.Person) -> some View {
+        if model.window?.service?.offers(MeetingsAPI.VoicesRename.name) != false {
+            ForEach(group.sameAs, id: \.self) { other in
+                Button("Same person as \(other.name)…") { model.preview(.rename(from: group.owner, to: other)) }
+                    .buttonStyle(.genHoverPlain()).disabled(model.busy)
+                    .instantTooltip("The people list already joins these names. Join their voice samples too; Undo splits them again.")
+                    .accessibilityIdentifier("meetings.voices.sameAs")
+            }
+            Button("Rename or join with another person…") { startRename(group) }
+                .buttonStyle(.genHoverPlain()).disabled(model.busy)
+                .instantTooltip("Give these samples another name, or join them with a known person. Nobody is refused.")
+                .accessibilityIdentifier("meetings.voices.rename")
+        }
+    }
+
     @ViewBuilder private func groupRow(_ group: VoiceLibraryRows.Person) -> some View {
         let person = group.person
         if group.rows.isEmpty {
@@ -511,6 +582,7 @@ struct VoiceSampleRows: View {
                 Text(person.person).fontWeight(.medium)
                 Text("No sample yet").foregroundStyle(.secondary)
                 if let waiting { Text(VoicesPane.waitingText(person.person, preview: waiting)).font(.caption) }
+                ownerActions(group)
             }
         } else {
             GenDisclosure(isExpanded: Binding(get: { expanded.contains(group.id) }, set: { open in
@@ -532,6 +604,7 @@ struct VoiceSampleRows: View {
                 if group.rows.count > VoicesPane.shownRows, !full.contains(group.id) {
                     Button("Show all \(group.rows.count) samples") { full.insert(group.id) }.buttonStyle(.genHoverPlain())
                 }
+                ownerActions(group)
                 if destination.scope.kind == "project", group.rows.first?.sample.stableID != nil {
                     Button("Remove all of this person’s samples in this project…") {
                         model.preview(.remove(id: nil, person: person.person, scope: destination.scope))
@@ -557,7 +630,7 @@ private struct VoiceCorrectionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(choice.action.title + "?").font(.headline)
+            Text(choice.title + "?").font(.headline)
             Text(choice.message)
             GenDisclosure("Affected samples and suggestions", isExpanded: $details) {
                 ScrollView {

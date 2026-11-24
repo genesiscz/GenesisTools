@@ -121,6 +121,8 @@ struct PersonPicker: View {
     let pick: (KnownPerson) -> Void
     /// "Add 'X' as new speaker": omitted when this picker can only select existing people.
     var addNew: ((String) -> Void)?
+    /// The add row's words for a typed name, when this picker adds something other than a speaker ("Rename to 'X'").
+    var addTitle: ((String) -> String)?
     /// A question can take the typed answer even when it matches an existing person's name or alias.
     var answerAsTyped: ((String) -> Void)?
     /// Esc.
@@ -259,7 +261,7 @@ struct PersonPicker: View {
                 .font(.system(size: 13))
                 .foregroundStyle(KitTheme.accent)
                 .frame(width: 22)
-            Text("Add ‘\(name)’ as new speaker")
+            Text(addTitle?(name) ?? "Add ‘\(name)’ as new speaker")
                 .font(.system(size: 13))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -270,7 +272,7 @@ struct PersonPicker: View {
         .contentShape(Rectangle())
         .background(Self.highlight(highlighted == shownPeople.count))
         .rowButton(cornerRadius: Self.rowCorner) { addNew?(name) }
-        .accessibilityLabel("Add \(name) as new speaker")
+        .accessibilityLabel(addTitle?(name) ?? "Add \(name) as new speaker")
         .accessibilityIdentifier("meetings.personPicker.add")
     }
 
