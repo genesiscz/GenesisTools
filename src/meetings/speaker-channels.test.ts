@@ -1817,6 +1817,39 @@ test("a first manual stay keeps the roster's presence, and a time edit keeps a p
     expect(saved.seats!.remote.map((seat) => seat.name)).toContain("Gil Example");
 });
 
+test("a first manual stay keeps every remote seat, so one stay added by hand never leaves a person alone in the call", async () => {
+    const storage = new Storage(`room-people-remote-${process.pid}`);
+    const store = new MeetingStore(storage);
+    mkdirSync(store.folder(record.id), { recursive: true });
+    writeFileSync(
+        join(store.folder(record.id), "meeting.json"),
+        SafeJSON.stringify({
+            ...record,
+            end: "2026-11-03T13:00:00Z",
+            participants: record.participants.map((person) => ({ ...person, firstSeenSec: 0 })),
+            seats: {
+                room: ["Gil Example"],
+                remote: [{ name: "Hal Example" }, { name: "Ivy Example", fromSec: 40, toSec: 70 }],
+            },
+        })
+    );
+
+    // Gil leaves the room at 50: the edit states his stay and changes nobody else's.
+    await editMeetingPerson({
+        store,
+        meeting: record.id,
+        edit: { action: "add", name: "Gil Example", fromSec: 0, toSec: 50 },
+    });
+    const saved = new MeetingStore(storage).resolve(record.id)!;
+    expect(saved.attendance!.people).toEqual([
+        { name: USER, fromSec: 0, toSec: 3600 },
+        { name: "Hal Example", fromSec: 0, toSec: 3600 },
+        { name: "Ivy Example", fromSec: 40, toSec: 70 },
+        { name: "Gil Example", fromSec: 0, toSec: 50, joinedAtExact: true, leftAtExact: true },
+    ]);
+    expect(saved.sections!.filter((section) => section.fromSec >= 50).every((s) => s.present.length > 1)).toBe(true);
+});
+
 // The features stream through ffmpeg, which a runner without it (CI) lacks.
 test.skipIf(!Bun.which("ffmpeg"))(
     "streamed synthetic stereo voice features preserve pitch, level, silence and anchored clusters",
