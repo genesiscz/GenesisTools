@@ -1,4 +1,4 @@
-import type { DarwinKitOptions } from "@genesiscz/darwinkit";
+import type { DarwinKitOptions, MethodMap, MethodName, ReadyNotification } from "@genesiscz/darwinkit";
 import { DarwinKit } from "@genesiscz/darwinkit";
 import { logger } from "@genesiscz/utils/logger";
 import { describeResponsibleIdentity } from "./genesis-app";
@@ -61,6 +61,75 @@ export function translateDarwinKitAccessError(error: unknown): Error {
     );
 }
 
+/** How long the helper may take to start and send `ready`. */
+const CONNECT_DEADLINE_MS = 30_000;
+/** Added to a request's own timeout: a reply, or a reconnect after a helper crash, can land just after it. */
+const REPLY_GRACE_MS = 15_000;
+/** DarwinKit's own default request timeout, used when the caller passes none. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Keeps the process alive until `work` settles, and fails it after `ms`.
+ *
+ * DarwinKit unrefs its helper process and the helper's pipes, and its connect step waits for the
+ * helper's `ready` line with no timer. A CLI that awaits only that line has nothing left to keep
+ * Bun's event loop open, so Bun exits with code 0 in the middle of the await: no output, no error,
+ * no `finally` (a held lock file stays behind). The timer here is the handle that was missing, and
+ * its deadline turns a helper that never answers into an error the caller can print.
+ */
+export function holdUntilSettled<T>(
+    work: Promise<T>,
+    { ms, what, onExpire }: { ms: number; what: string; onExpire?: () => void }
+): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            onExpire?.();
+            reject(new Error(`${what} after ${ms} ms`));
+        }, ms);
+
+        work.then(resolve, reject).finally(() => clearTimeout(timer));
+    });
+}
+
+/**
+ * The one DarwinKit client every GenesisTools caller builds, so no request waits on the helper
+ * without a deadline and a handle that keeps the process alive.
+ */
+export class GuardedDarwinKit extends DarwinKit {
+    private readonly requestTimeoutMs: number;
+
+    constructor(options?: DarwinKitOptions) {
+        super(options);
+        this.requestTimeoutMs = options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    }
+
+    override connect(): Promise<ReadyNotification> {
+        return holdUntilSettled(super.connect(), {
+            ms: CONNECT_DEADLINE_MS,
+            what: "The darwinkit helper sent no ready line",
+            onExpire: () => {
+                void this.close();
+            },
+        });
+    }
+
+    override async call<M extends MethodName>(
+        method: M,
+        params: MethodMap[M]["params"],
+        options?: { timeout?: number }
+    ): Promise<MethodMap[M]["result"]> {
+        await this.connect();
+
+        return holdUntilSettled(super.call(method, params, options), {
+            ms: (options?.timeout ?? this.requestTimeoutMs) + REPLY_GRACE_MS,
+            what: `The darwinkit helper sent no answer to ${method}`,
+            onExpire: () => {
+                void this.close();
+            },
+        });
+    }
+}
+
 let _instance: DarwinKit | null = null;
 
 export function hasDarwinKit(): boolean {
@@ -76,7 +145,7 @@ export function getDarwinKit(options?: DarwinKitOptions): DarwinKit {
         return _instance;
     }
 
-    _instance = new DarwinKit({
+    _instance = new GuardedDarwinKit({
         timeout: 60_000,
         logger,
         logLevel: "warn",
