@@ -233,7 +233,7 @@ export async function proposeSpeakerLabels(
     opened: OpenedMeeting,
     settings: MeetingsConfig["global"]["speakerLabels"],
     storedPresence?: Presence[],
-    options: { voiceOnly?: boolean; applyAbove?: number; energyMicShare?: AcousticShare } = {}
+    options: { voiceOnly?: boolean; applyAbove?: number; energyMicShare?: AcousticShare; warnings?: string[] } = {}
 ): Promise<LineLabel[]> {
     const enabled = SPEAKER_LABELER_IDS.filter((id) => settings[id].enabled);
     if (!enabled.length) {
@@ -255,7 +255,25 @@ export async function proposeSpeakerLabels(
         byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(inputs));
     }
 
+    options.warnings?.push(...fewSampleWarnings(byLabeler.get("voice") ?? [], settings.voice.minSamples));
+
     return options.voiceOnly ? (byLabeler.get("voice") ?? []) : mergeLineLabels(byLabeler);
+}
+
+/** One sentence per person the voice left out of a split for too few samples, with the count of lines that wait. */
+export function fewSampleWarnings(labels: readonly LineLabel[], minSamples: number): string[] {
+    const waiting = new Map<string, number>();
+
+    for (const label of labels) {
+        if (label.reason === "few-samples" && label.next) {
+            waiting.set(label.next.person, (waiting.get(label.next.person) ?? 0) + 1);
+        }
+    }
+
+    return [...waiting].map(
+        ([person, lines]) =>
+            `${person} has fewer than ${minSamples} voice samples at a seat shared with others, so the voice left them out of the choice on ${lines} lines; those lines wait for more samples (speakerLabels.voice.minSamples).`
+    );
 }
 
 // Keep one meeting's embeddings while its editor is open. Track, clock, source identity or span changes invalidate it.

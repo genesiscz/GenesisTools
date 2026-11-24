@@ -788,7 +788,7 @@ export const applySeats = defineMethod({
 export const voiceJobs = defineMethod({
     ...voicesJobs,
     name: "voiceJobs",
-    doc: `Return current and recent voice jobs with progress, counts and errors. CLI: ${toolCommand("meetings voices jobs")} [--project <p>] --json.`,
+    doc: `Return current and recent voice jobs with progress, counts, errors and warnings (a naming pass that left a person with too few samples out of a split). CLI: ${toolCommand("meetings voices jobs")} [--project <p>] --json.`,
 });
 export const cancelVoiceJob = defineMethod({
     ...voicesJobsCancel,

@@ -1710,6 +1710,7 @@ export const voicesPreview = defineMethod({
                     "below-gate",
                     "no-rival-sample",
                     "unsampled-present",
+                    "few-samples",
                     "not-the-seat-person",
                     "no-voice",
                     "seat-of-one",
@@ -1876,6 +1877,8 @@ export const voiceJobSchema = z.object({
     added: count,
     skipped: count,
     error: z.string().optional(),
+    /** What a naming pass refused or left open, in sentences (a person with too few samples to share a seat). */
+    warnings: z.array(z.string()).optional(),
 });
 export type VoiceJob = z.output<typeof voiceJobSchema>;
 

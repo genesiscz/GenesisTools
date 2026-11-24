@@ -26,6 +26,8 @@ interface NamingInputs {
     attended: readonly Stay[];
     gate: VoiceGate;
     minSeconds: number;
+    /** Fewer prints than this on the line's seat and track keep a person out of a split between several people. */
+    minSamples?: number;
     exclusion?: VoiceSettings["exclusion"];
     meeting?: string;
     /** The old ids of recordings a join absorbed into `meeting`, each with its offset: their samples are its own. */
@@ -301,7 +303,7 @@ function ownWindow(input: {
 }
 
 export function nameByVoice(options: NamingInputs): LineLabel[] {
-    const { gate, exclusion, applyAbove = DEFAULT_APPLY_ABOVE } = options;
+    const { gate, exclusion, applyAbove = DEFAULT_APPLY_ABOVE, minSamples = 1 } = options;
     const people: string[] = [];
     const stays = options.attended.map((stay) => {
         const person = people.find((other) => sameName(other, stay.person));
@@ -348,9 +350,22 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
         const eligiblePeople = [...present.keys()].filter(
             (person) => !line.eligible || line.eligible.some((name) => sameName(name, person))
         );
+        // In a split between three or more people, a person with fewer prints than `minSamples` (saved samples and
+        // the lines confirmed here, the line itself not counted) takes no part: one print cannot tell their voice from
+        // the others', and the best sampled voice won lines that may be theirs. They count as a person with no sample.
+        const few = new Set<string>();
         const candidates = eligiblePeople
             .flatMap((person) => {
                 const profile = profiles.get(profileKey(person, target));
+                if (
+                    profile &&
+                    eligiblePeople.length > 2 &&
+                    profile.count - overlappingWindows(profile, target).size < minSamples
+                ) {
+                    few.add(person);
+                    return [];
+                }
+
                 const score = profile && profileScore(profile, target);
                 return score === undefined ? [] : [{ person, score }];
             })
@@ -361,11 +376,14 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
                 eligiblePeople.includes(stay.person) && !candidates.some((sample) => sample.person === stay.person)
         );
         const unknown = missing[0];
+        const waiting = unknown && few.has(unknown.person) ? "few-samples" : "unsampled-present";
         if (!first) {
             return {
                 ...base,
-                reason: unknown ? "unsampled-present" : "no-rival-sample",
-                ...(unknown && missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
+                reason: unknown ? waiting : "no-rival-sample",
+                ...(unknown && (missing.length === 1 || few.has(unknown.person))
+                    ? { next: { person: unknown.person, score: 0 } }
+                    : {}),
             };
         }
         const scored = { ...base, score: first.score, ...(second ? { next: second } : {}) };
@@ -377,7 +395,7 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             exclusion?.enabled &&
             unknown &&
             missing.length === 1 &&
-            !enrolled.has(unknown.person) &&
+            (!enrolled.has(unknown.person) || few.has(unknown.person)) &&
             !options.certain?.has(line.index) &&
             touching.every((stay) => present.has(stay.person)) &&
             (!line.eligible ||
@@ -405,8 +423,10 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
         if (unknown && first.score < gate.unsampledScore) {
             return {
                 ...scored,
-                ...(missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
-                reason: "unsampled-present",
+                ...(missing.length === 1 || few.has(unknown.person)
+                    ? { next: { person: unknown.person, score: 0 } }
+                    : {}),
+                reason: waiting,
             };
         }
         if (!second && first.score < gate.loneScore) {

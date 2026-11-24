@@ -37,6 +37,7 @@ export interface LineLabel {
         | "below-gate"
         | "no-rival-sample"
         | "unsampled-present"
+        | "few-samples"
         | "not-the-seat-person"
         | "no-voice"
         | "seat-of-one"

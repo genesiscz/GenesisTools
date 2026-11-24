@@ -163,6 +163,15 @@ const catalog = [
         max: 60,
         step: 0.1,
     }),
+    threshold({
+        name: "voice.minSamples",
+        path: "speakerLabels.voice.minSamples",
+        title: "Samples to share a seat",
+        meaning: "Let a person share a voice split at one seat only with at least this many samples.",
+        min: 1,
+        max: 50,
+        step: 1,
+    }),
 ];
 const defaults = meetingsConfigSchema.parse({});
 const byName = new Map(catalog.map((row) => [row.name, row]));

@@ -46,6 +46,10 @@ const LABELER_REASON_WORDS: Record<LabelerReason, (evidence: ReasonEvidence) => 
         const waiting = next?.person ?? person;
         return waiting ? `Waits for a voice sample of ${waiting}` : "Waits for a voice sample of somebody here";
     },
+    "few-samples": ({ person, next }) => {
+        const waiting = next?.person ?? person;
+        return `Waits for more voice samples of ${waiting ?? "somebody here"}: too few to tell their voice from the others here`;
+    },
     "not-the-seat-person": ({ person, next }) =>
         `Does not sound like ${person ?? next?.person ?? "the person at this seat"}`,
     "no-voice": () => "The line is too short or has no clear voice to compare",
