@@ -40,12 +40,20 @@ final class RequestPresentTests: XCTestCase {
     }
 
     func testNoticeWordsAndAnswersUseTheSharedApprovalModel() throws {
-        let request = try Self.request()
+        // A caller from before the declared fields sends text only, and gets the plain notice it always got.
+        var request = try Self.request()
+        request.fields = nil
+        request.actions = nil
+        request.buttons = nil
         let model = RequestWindowContent.build(request)
         XCTAssertEqual(model.title, request.title)
         XCTAssertEqual(model.purpose, request.reason)
         XCTAssertEqual(model.allowTitle, "Acknowledge")
         XCTAssertEqual(model.denyTitle, "Not now", "a notice runs nothing, so it is put off, never denied")
+        XCTAssertEqual(model.footnote, RequestWindowContent.plainNoticeFootnote)
+        XCTAssertTrue(model.facts.isEmpty)
+        XCTAssertEqual(model.details.map(\.value), [request.id], "the request id folds under Details")
+        XCTAssertTrue(model.links.isEmpty)
         XCTAssertNil(model.verifier)
         XCTAssertEqual(model.deadlineLabel, "Stops waiting in ")
         var allows = 0
@@ -132,6 +140,121 @@ final class RequestPresentTests: XCTestCase {
         for index in 0..<3 { harness.panel.shown[index].allow() }
         XCTAssertEqual(harness.results.map(\.id), ["d", "a", "b", "c"])
         XCTAssertEqual(harness.busies, 3, "a refused request does not count as busy")
+    }
+
+    // MARK: Declared rows, extra buttons and answer words (D443)
+
+    /// Answers each fake call by hand: the test decides when `tools` returns and when a player exits.
+    private final class FakeActions {
+        var runs: [[String]] = []
+        var replies: [@MainActor (Int32, String, String) -> Void] = []
+        var exits: [Int32: @MainActor () -> Void] = [:]
+        var stopped: [Int32] = []
+        var opened: [URL] = []
+
+        var context: RequestActionContext {
+            RequestActionContext(
+                tools: { argv, done in self.runs.append(argv); self.replies.append(done) },
+                whenExits: { pid, done in self.exits[pid] = done },
+                stop: { pid in self.stopped.append(pid) },
+                open: { url in self.opened.append(url) })
+        }
+    }
+
+    private static func declared(actions: String = "") throws -> RequestPresentParams {
+        let json = """
+        {"kind":"notice","id":"voice-sample:fixture","title":"Confirm a voice sample of Alice Example",
+         "reason":"An agent asks whether only Alice Example speaks here.","createdAt":"2026-11-24T21:00:00.000Z",
+         "fields":[{"label":"Meeting","value":"Planning","help":"2026-01-12_10-00-planning"},{"label":"Time","value":"01:15 to 01:30"}],
+         "actions":[\(actions.isEmpty ? #"{"kind":"play-meeting","label":"Play clip","meeting":"2026-01-12_10-00-planning","fromSec":75.4,"toSec":89.2},{"kind":"open-link","label":"Open page","url":"https://example.com/x"}"# : actions)],
+         "buttons":{"confirm":"Confirm sample","decline":"Not now"}}
+        """
+        return try JSONDecoder().decode(RequestPresentParams.self, from: Data(json.utf8))
+    }
+
+    func testTheCallerDeclaresRowsButtonsAndAnswerWords() throws {
+        let fake = FakeActions()
+        let params = try Self.declared()
+        let actions = RequestActions.buttons(for: params, context: fake.context)
+        let model = RequestWindowContent.build(params, actions: actions)
+        XCTAssertEqual(model.purpose, params.reason, "the body keeps only what the decision means")
+        XCTAssertEqual(model.facts.map(\.label), ["Meeting", "Time"])
+        XCTAssertEqual(model.facts.map(\.value), ["Planning", "01:15 to 01:30"])
+        XCTAssertEqual(model.facts.first?.help, "2026-01-12_10-00-planning")
+        XCTAssertEqual(model.details.map(\.value), ["voice-sample:fixture"])
+        XCTAssertEqual(model.allowTitle, "Confirm sample")
+        XCTAssertEqual(model.denyTitle, "Not now")
+        XCTAssertEqual(model.links.map(\.title), ["Play clip", "Open page"])
+        XCTAssertEqual(
+            model.footnote,
+            "Play clip only plays the clip. Open page only opens the page. Confirm sample and Not now answer the request; the window itself saves and runs nothing else.")
+        XCTAssertTrue(fake.runs.isEmpty, "building the window runs nothing")
+    }
+
+    func testPlayClipPlaysTheCLICutTogglesToStopAndStopsWithTheWindow() throws {
+        let fake = FakeActions()
+        let params = try Self.declared(actions: #"{"kind":"play-meeting","label":"Play clip","meeting":"2026-01-12_10-00-planning","fromSec":75.4,"toSec":89.2}"#)
+        let play = try XCTUnwrap(RequestActions.buttons(for: params, context: fake.context).first as? PlayMeetingButton)
+        var changes = 0
+        play.changed = { changes += 1 }
+
+        play.link.action()
+        XCTAssertEqual(fake.runs, [["meetings", "play", "2026-01-12_10-00-planning", "--at", "75", "--to", "90", "--json"]])
+        play.link.action()
+        XCTAssertEqual(fake.runs.count, 1, "a click while the player starts starts no second one")
+        fake.replies.removeFirst()(0, #"{"pid":4242,"player":"afplay"}"#, "")
+        XCTAssertEqual(play.link.title, "Stop")
+        play.link.action()
+        XCTAssertEqual(fake.stopped, [4242])
+        XCTAssertEqual(play.link.title, "Play clip")
+
+        // The clip ends by itself: the button turns back to Play.
+        play.link.action()
+        fake.replies.removeFirst()(0, #"{"pid":4343}"#, "")
+        XCTAssertEqual(play.link.title, "Stop")
+        fake.exits[4343]?()
+        XCTAssertEqual(play.link.title, "Play clip")
+
+        // A play that fails says why under the rows, and the window still answers nothing.
+        play.link.action()
+        fake.replies.removeFirst()(1, "", "error: No audio for this meeting")
+        XCTAssertEqual(play.note, "The clip could not play: error: No audio for this meeting")
+        XCTAssertEqual(play.link.title, "Play clip")
+
+        // The window closes while the clip plays: the player stops with it.
+        play.link.action()
+        fake.replies.removeFirst()(0, #"{"pid":4444}"#, "")
+        play.close()
+        XCTAssertEqual(fake.stopped, [4242, 4444])
+        XCTAssertGreaterThan(changes, 0)
+    }
+
+    func testOpenLinkOpensOnlyAWebPage() throws {
+        let fake = FakeActions()
+        let params = try Self.declared(actions: #"{"kind":"open-link","label":"Open page","url":"https://example.com/x"},{"kind":"open-link","label":"Local file","url":"file:///etc/hosts"}"#)
+        let buttons = RequestActions.buttons(for: params, context: fake.context)
+        XCTAssertEqual(buttons.map(\.link.title), ["Open page"], "a file URL never becomes a button")
+        buttons.first?.link.action()
+        XCTAssertEqual(fake.opened, [URL(string: "https://example.com/x")!])
+    }
+
+    func testAPresentedRequestShowsItsButtonsAndStopsThemWhenAnswered() throws {
+        let fake = FakeActions()
+        let panel = FakeRequestPanel()
+        let clock = ManualClock()
+        let presenter = RequestPresenter(panel: panel, clock: clock.clock, activate: {}, actionContext: fake.context)
+        let params = try Self.declared(actions: #"{"kind":"play-meeting","label":"Play clip","meeting":"m","fromSec":1,"toSec":2}"#)
+        var results: [RequestPresentResult] = []
+        presenter.enqueue(params) { results.append($0) }
+        let model = try XCTUnwrap(panel.shown.last)
+        XCTAssertEqual(model.links.map(\.title), ["Play clip"])
+        model.links.first?.action()
+        fake.replies.removeFirst()(0, #"{"pid":5151}"#, "")
+        XCTAssertEqual(model.links.map(\.title), ["Stop"], "the window shows the button's new words")
+        XCTAssertTrue(results.isEmpty, "a play answers nothing")
+        model.allow()
+        XCTAssertEqual(results.map(\.status), [.value0])
+        XCTAssertEqual(fake.stopped, [5151], "the answer stops the clip")
     }
 }
 

@@ -479,6 +479,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -512,6 +518,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -553,6 +579,18 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -591,6 +629,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -609,6 +653,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -637,6 +687,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -662,6 +718,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -695,6 +757,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -736,6 +818,18 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -774,6 +868,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -792,6 +892,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -820,6 +926,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -995,6 +1107,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1027,6 +1145,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1067,6 +1205,18 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1104,6 +1254,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1121,6 +1277,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1148,6 +1310,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       }
     },
     "result": {
@@ -1174,6 +1342,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1209,6 +1383,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1254,6 +1448,18 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1295,6 +1501,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1316,6 +1528,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1347,6 +1565,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1374,6 +1598,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1410,6 +1640,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1455,6 +1705,18 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1496,6 +1758,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1516,6 +1784,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1548,6 +1822,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1575,6 +1855,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1611,6 +1897,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1656,6 +1962,18 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1697,6 +2015,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1717,6 +2041,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1749,6 +2079,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1776,6 +2112,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1812,6 +2154,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1857,6 +2219,18 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1898,6 +2272,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1918,6 +2298,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -1950,6 +2336,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1977,6 +2369,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -2013,6 +2411,26 @@
         "args": [
           "fixture"
         ]
+      },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -2058,6 +2476,18 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2099,6 +2529,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2119,6 +2555,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -2150,6 +2592,12 @@
       "open": {
         "window": "--features",
         "args": []
+      },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
@@ -4743,6 +5191,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -4818,6 +5267,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -4874,6 +5324,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -4905,6 +5356,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -4946,6 +5398,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -9590,6 +10043,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9604,6 +10063,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9639,6 +10104,26 @@
           "args": [
             "fixture"
           ]
+        },
+        "fields": [
+          {
+            "label": "fixture",
+            "value": "fixture",
+            "help": "fixture"
+          }
+        ],
+        "actions": [
+          {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 1
@@ -9655,6 +10140,26 @@
           "args": [
             "fixture"
           ]
+        },
+        "fields": [
+          {
+            "label": "fixture",
+            "value": "fixture",
+            "help": "fixture"
+          }
+        ],
+        "actions": [
+          {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9673,6 +10178,12 @@
             "open": {
               "window": "--features",
               "args": []
+            },
+            "fields": [],
+            "actions": [],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
             },
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
@@ -9712,6 +10223,18 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [
+          {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9726,6 +10249,18 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [
+          {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9746,6 +10281,26 @@
               "args": [
                 "fixture"
               ]
+            },
+            "fields": [
+              {
+                "label": "fixture",
+                "value": "fixture",
+                "help": "fixture"
+              }
+            ],
+            "actions": [
+              {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1
+              }
+            ],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
             },
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
@@ -9780,6 +10335,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9794,6 +10355,107 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "posted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "request": {
+            "kind": "notice",
+            "id": "fixture",
+            "title": "fixture",
+            "reason": "fixture",
+            "open": {
+              "window": "--features",
+              "args": []
+            },
+            "fields": [],
+            "actions": [
+              {
+                "kind": "open-link",
+                "label": "fixture",
+                "url": "https://example.com/fixture"
+              }
+            ],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
+            },
+            "createdAt": "2026-11-17T12:00:00.000Z",
+            "deadlineSeconds": 1,
+            "takesFocus": true
+          },
+          "asker": {
+            "agent": "fixture",
+            "session": "fixture",
+            "project": "fixture",
+            "branch": "fixture"
+          }
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9834,6 +10496,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9848,6 +10516,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9888,6 +10562,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9902,6 +10582,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9943,6 +10629,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -9957,6 +10649,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -9998,6 +10696,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10012,6 +10716,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10053,6 +10763,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10067,6 +10783,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10108,6 +10830,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10122,6 +10850,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10162,6 +10896,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10176,6 +10916,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10218,6 +10964,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10232,6 +10984,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10274,6 +11032,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10288,6 +11052,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10327,6 +11097,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         }
       },
       "timeoutMs": 120000
@@ -10341,6 +11117,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10385,6 +11167,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10424,6 +11212,26 @@
             "fixture"
           ]
         },
+        "fields": [
+          {
+            "label": "fixture",
+            "value": "fixture",
+            "help": "fixture"
+          }
+        ],
+        "actions": [
+          {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10441,6 +11249,12 @@
             "open": {
               "window": "--features",
               "args": []
+            },
+            "fields": [],
+            "actions": [],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
             },
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
@@ -10485,6 +11299,18 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [
+          {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        ],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10504,6 +11330,26 @@
               "args": [
                 "fixture"
               ]
+            },
+            "fields": [
+              {
+                "label": "fixture",
+                "value": "fixture",
+                "help": "fixture"
+              }
+            ],
+            "actions": [
+              {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1
+              }
+            ],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
             },
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
@@ -10542,6 +11388,91 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "posted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "request": {
+            "kind": "notice",
+            "id": "fixture",
+            "title": "fixture",
+            "reason": "fixture",
+            "open": {
+              "window": "--features",
+              "args": []
+            },
+            "fields": [],
+            "actions": [
+              {
+                "kind": "open-link",
+                "label": "fixture",
+                "url": "https://example.com/fixture"
+              }
+            ],
+            "buttons": {
+              "confirm": "fixture",
+              "decline": "fixture"
+            },
+            "createdAt": "2026-11-17T12:00:00.000Z",
+            "deadlineSeconds": 1,
+            "takesFocus": true
+          },
+          "asker": {
+            "agent": "fixture",
+            "session": "fixture",
+            "project": "fixture",
+            "branch": "fixture"
+          }
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10587,6 +11518,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10630,6 +11567,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10676,6 +11619,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10720,6 +11669,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10766,6 +11721,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10811,6 +11772,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10854,6 +11821,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -10901,6 +11874,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10947,6 +11926,12 @@
           "window": "--features",
           "args": []
         },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10989,6 +11974,12 @@
         "open": {
           "window": "--features",
           "args": []
+        },
+        "fields": [],
+        "actions": [],
+        "buttons": {
+          "confirm": "fixture",
+          "decline": "fixture"
         },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
@@ -11048,6 +12039,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11089,6 +12086,26 @@
               "fixture"
             ]
           },
+          "fields": [
+            {
+              "label": "fixture",
+              "value": "fixture",
+              "help": "fixture"
+            }
+          ],
+          "actions": [
+            {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1
+            }
+          ],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11106,6 +12123,12 @@
               "open": {
                 "window": "--features",
                 "args": []
+              },
+              "fields": [],
+              "actions": [],
+              "buttons": {
+                "confirm": "fixture",
+                "decline": "fixture"
               },
               "createdAt": "2026-11-17T12:00:00.000Z",
               "deadlineSeconds": 1,
@@ -11152,6 +12175,18 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [
+            {
+              "kind": "open-link",
+              "label": "fixture",
+              "url": "https://example.com/fixture"
+            }
+          ],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11171,6 +12206,26 @@
                 "args": [
                   "fixture"
                 ]
+              },
+              "fields": [
+                {
+                  "label": "fixture",
+                  "value": "fixture",
+                  "help": "fixture"
+                }
+              ],
+              "actions": [
+                {
+                  "kind": "play-meeting",
+                  "label": "fixture",
+                  "meeting": "fixture",
+                  "fromSec": 0,
+                  "toSec": 1
+                }
+              ],
+              "buttons": {
+                "confirm": "fixture",
+                "decline": "fixture"
               },
               "createdAt": "2026-11-17T12:00:00.000Z",
               "deadlineSeconds": 1,
@@ -11211,6 +12266,93 @@
           "open": {
             "window": "--features",
             "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "posted",
+            "at": "2026-11-17T12:00:00.000Z",
+            "request": {
+              "kind": "notice",
+              "id": "fixture",
+              "title": "fixture",
+              "reason": "fixture",
+              "open": {
+                "window": "--features",
+                "args": []
+              },
+              "fields": [],
+              "actions": [
+                {
+                  "kind": "open-link",
+                  "label": "fixture",
+                  "url": "https://example.com/fixture"
+                }
+              ],
+              "buttons": {
+                "confirm": "fixture",
+                "decline": "fixture"
+              },
+              "createdAt": "2026-11-17T12:00:00.000Z",
+              "deadlineSeconds": 1,
+              "takesFocus": true
+            },
+            "asker": {
+              "agent": "fixture",
+              "session": "fixture",
+              "project": "fixture",
+              "branch": "fixture"
+            }
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
           },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
@@ -11258,6 +12400,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11303,6 +12451,12 @@
           "open": {
             "window": "--features",
             "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
           },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
@@ -11351,6 +12505,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11397,6 +12557,12 @@
           "open": {
             "window": "--features",
             "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
           },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
@@ -11445,6 +12611,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11492,6 +12664,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11537,6 +12715,12 @@
           "open": {
             "window": "--features",
             "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
           },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
@@ -11586,6 +12770,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11634,6 +12824,12 @@
             "window": "--features",
             "args": []
           },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
+          },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -11678,6 +12874,12 @@
           "open": {
             "window": "--features",
             "args": []
+          },
+          "fields": [],
+          "actions": [],
+          "buttons": {
+            "confirm": "fixture",
+            "decline": "fixture"
           },
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
@@ -11796,6 +12998,12 @@
         "window": "--features",
         "args": []
       },
+      "fields": [],
+      "actions": [],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -11827,6 +13035,26 @@
           "fixture"
         ]
       },
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture",
+          "help": "fixture"
+        }
+      ],
+      "actions": [
+        {
+          "kind": "play-meeting",
+          "label": "fixture",
+          "meeting": "fixture",
+          "fromSec": 0,
+          "toSec": 1
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -11842,6 +13070,47 @@
       "exitCode": null,
       "outputTail": "fixture",
       "verified": null,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "request.present",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
+      "fields": [],
+      "actions": [
+        {
+          "kind": "open-link",
+          "label": "fixture",
+          "url": "https://example.com/fixture"
+        }
+      ],
+      "buttons": {
+        "confirm": "fixture",
+        "decline": "fixture"
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": "fixture",
+      "method": "click",
+      "via": "fixture",
+      "elevation": "fixture",
+      "note": "fixture",
+      "exitCode": -9007199254740991,
+      "outputTail": "fixture",
+      "verified": true,
       "manual": "fixture"
     }
   }

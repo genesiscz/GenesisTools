@@ -4,15 +4,31 @@ import Darwin
 
 @MainActor
 enum RequestWindowContent {
-    /// `deadline` is when the caller stops waiting; nil counts the request's own seconds from now.
-    static func build(_ params: RequestPresentParams, deadline: Date? = nil) -> ApprovalDialogModel {
-        ApprovalDialogModel(
+    /// The footnote of a request that declares neither buttons nor actions: it is a plain notice.
+    static let plainNoticeFootnote = "This notice asks for an acknowledgement. It runs no command."
+
+    /// `deadline` is when the caller stops waiting; nil counts the request's own seconds from now. The caller declares
+    /// what the window shows: its `fields` as rows, its `actions` as buttons that answer nothing, its `buttons` as the
+    /// words on the answers. The request id is for a reader of the journal, so it sits folded under Details.
+    static func build(_ params: RequestPresentParams, deadline: Date? = nil, actions: [RequestActionButton] = []) -> ApprovalDialogModel {
+        let allow = params.buttons?.confirm ?? "Acknowledge"
+        let deny = params.buttons?.decline ?? "Not now"
+        return ApprovalDialogModel(
             title: params.title, purpose: params.reason, symbol: "info.circle",
-            facts: [ApprovalFact("Request", params.id, monospaced: true)], details: [],
-            warning: nil, footnote: "This notice asks for an acknowledgement. It runs no command.",
-            rememberChoices: [], rememberNote: nil, allowTitle: "Acknowledge",
-            deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present", deadlineLabel: "Stops waiting in ",
-            denyTitle: "Not now")
+            facts: (params.fields ?? []).map { ApprovalFact($0.label, $0.value, help: $0.help) },
+            details: [ApprovalFact("Request", params.id, monospaced: true)],
+            warning: nil, footnote: footnote(allow: allow, deny: deny, declared: params.buttons != nil, actions: actions),
+            rememberChoices: [], rememberNote: nil, allowTitle: allow,
+            deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present",
+            links: actions.map(\.link), deadlineLabel: "Stops waiting in ", denyTitle: deny)
+    }
+
+    /// What the window can do, all of it true: each extra button's sentence, then that the answers change nothing here
+    /// (the asking tool acts on the answer).
+    static func footnote(allow: String, deny: String, declared: Bool, actions: [RequestActionButton]) -> String {
+        guard declared || !actions.isEmpty else { return plainNoticeFootnote }
+        let answers = "\(allow) and \(deny) answer the request; the window itself saves and runs nothing else."
+        return (actions.map(\.footnote) + [answers]).joined(separator: " ")
     }
 }
 
@@ -53,6 +69,7 @@ final class RequestPresenter {
 
     private let panel: RequestPanel
     private let clock: RequestClock
+    private let actionContext: RequestActionContext
     private let capacity: Int
     private let activate: () -> Void
     private var active: String?
@@ -63,9 +80,11 @@ final class RequestPresenter {
     var onIdle: (() -> Void)?
     var onBusy: (() -> Void)?
 
-    init(panel: RequestPanel? = nil, clock: RequestClock = .live, capacity: Int? = nil, activate: (() -> Void)? = nil) {
+    init(panel: RequestPanel? = nil, clock: RequestClock = .live, capacity: Int? = nil, activate: (() -> Void)? = nil,
+         actionContext: RequestActionContext = .live) {
         self.panel = panel ?? ApprovalPanelPresenter()
         self.clock = clock
+        self.actionContext = actionContext
         self.capacity = capacity ?? Self.defaultCapacity
         self.activate = activate ?? { NSApp.activate(ignoringOtherApps: true) }
     }
@@ -120,11 +139,20 @@ final class RequestPresenter {
     private func present(_ entry: Entry, for remaining: TimeInterval) {
         let params = entry.params
         active = params.id
-        let model = RequestWindowContent.build(params, deadline: entry.deadline)
+        let actions = RequestActions.buttons(for: params, context: actionContext)
+        let model = RequestWindowContent.build(params, deadline: entry.deadline, actions: actions)
+        for action in actions {
+            action.changed = { [weak model] in
+                model?.refresh(links: actions.map(\.link))
+                model?.refresh(items: [], summary: actions.compactMap(\.note).first)
+            }
+        }
         var answered = false
         let finish: (RequestPresentResultStatus, String?) -> Void = { [weak self] status, reason in
             guard !answered, let self else { return }
             answered = true
+            // A clip still playing stops with the window.
+            actions.forEach { $0.close() }
             cancelTimeout?()
             cancelTimeout = nil
             panel.close()

@@ -104,8 +104,9 @@ public final class ApprovalDialogModel: ObservableObject {
     /// Touch ID inside the window: the sensor listens from the first frame and a touch approves (`onVerified`).
     /// nil keeps the Allow button, whose `onAllow` runs the host's own authentication.
     public let verifier: ApprovalVerifier?
-    /// Links under the purpose (the asking session's inbox and terminal).
-    public let links: [ApprovalLink]
+    /// Links under the purpose (the asking session's inbox and terminal, a request's Play clip). `refresh(links:)`
+    /// replaces them when one changes its words (Play clip becomes Stop while the clip plays).
+    @Published public private(set) var links: [ApprovalLink]
     /// One line under the rows ("5 items, 34 kB, 1 already gone").
     @Published public private(set) var summary: String?
     /// The ways out the person picks from before confirming; empty shows none, the first is picked.
@@ -186,6 +187,11 @@ public final class ApprovalDialogModel: ObservableObject {
     /// (with nothing ticked, from the first tick).
     public func armTouchID() {
         verifier?.arm(listen: !denying && !(selectable && selected.isEmpty))
+    }
+
+    /// The same links with their current words and actions; a click on a link never answers the request.
+    public func refresh(links: [ApprovalLink]) {
+        self.links = links
     }
 
     /// The same rows with newer facts (a size measured after the window opened); the ticks stay as the person left them.
