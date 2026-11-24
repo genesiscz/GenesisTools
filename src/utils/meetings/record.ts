@@ -745,19 +745,31 @@ export function heldSourceMeetings(record: MeetingRecord): Array<{ sourceId: str
     return held;
 }
 
+/** The joined record a part folder's marker names. Undefined for a marker that is missing, unreadable or not JSON. */
+function markedJoin(marker: string): string | undefined {
+    if (!existsSync(marker)) {
+        return undefined;
+    }
+
+    try {
+        return joinMarkerSchema.safeParse(SafeJSON.parse(readFileSync(marker, "utf8"))).data?.joinedInto;
+    } catch (error) {
+        log.warn({ marker, error }, "join marker cannot be read; the records' join blocks are searched instead");
+        return undefined;
+    }
+}
+
 /**
  * The joined record that absorbed the recording `id` (a later recording's old id), with that recording's part: read
- * from the marker its folder keeps, else from the records' join blocks. Undefined for any other id.
+ * from the marker its folder keeps, else (also when the marker is unreadable) from the records' join blocks. Undefined
+ * for any other id.
  */
 export function joinedAway(store: MeetingStore, id: string): { record: MeetingRecord; part: JoinPart } | undefined {
     if (!FOLDER_NAME.test(id)) {
         return undefined;
     }
 
-    const marker = join(store.folder(id), JOIN_PART_FILE);
-    const named = existsSync(marker)
-        ? joinMarkerSchema.safeParse(SafeJSON.parse(readFileSync(marker, "utf8"))).data?.joinedInto
-        : undefined;
+    const named = markedJoin(join(store.folder(id), JOIN_PART_FILE));
     const candidates = named ? [store.read(named)] : store.list();
 
     for (const record of candidates) {
