@@ -103,16 +103,24 @@ function toSummary(db: Database, row: MeetingRow, dir: string): MeetingSummary {
     };
 }
 
+/**
+ * Whether a meeting's title, summary or notes contain `query`, read as the user sees them: a person the summary names
+ * is stored as `<@personN:n=Ale%C5%A1%20Example>`, so SQL `LIKE` on the stored text cannot find the name.
+ */
+function matchesQuery(row: MeetingRow, query: string): boolean {
+    const participants = resolveSpeakers(row.speakerMap);
+    const needle = query.toLowerCase();
+
+    return [row.title, fillMentions(row.summary ?? "", participants), fillMentions(row.notes ?? "", participants)].some(
+        (text) => text.toLowerCase().includes(needle)
+    );
+}
+
 export function listLocalMeetings(filter: ListFilter, dir = WISPR_DIR): MeetingSummary[] {
     return withDb((db) => {
         const where = ["isDeleted = 0"];
         const params: string[] = [];
-
-        if (filter.query) {
-            where.push("(title LIKE ? OR summary LIKE ? OR notes LIKE ?)");
-            const like = `%${filter.query}%`;
-            params.push(like, like, like);
-        }
+        const query = filter.query;
 
         if (filter.since) {
             where.push("createdAt >= ?");
@@ -131,8 +139,16 @@ export function listLocalMeetings(filter: ListFilter, dir = WISPR_DIR): MeetingS
             params.push(`%${filter.folder}%`);
         }
 
-        const sql = `SELECT * FROM Meetings WHERE ${where.join(" AND ")} ORDER BY createdAt DESC LIMIT ?`;
-        const rows = db.query<MeetingRow, (string | number)[]>(sql).all(...params, rowLimit(filter.limit));
+        const limit = rowLimit(filter.limit);
+        const sql = `SELECT * FROM Meetings WHERE ${where.join(" AND ")} ORDER BY createdAt DESC`;
+        // With a query, the limit counts the meetings that match, so it applies after the text filter.
+        const rows = query
+            ? db
+                  .query<MeetingRow, string[]>(sql)
+                  .all(...params)
+                  .filter((row) => matchesQuery(row, query))
+                  .slice(0, limit)
+            : db.query<MeetingRow, (string | number)[]>(`${sql} LIMIT ?`).all(...params, limit);
         log.debug({ count: rows.length, filter }, "listed local meetings");
 
         return rows.map((row) => toSummary(db, row, dir));
