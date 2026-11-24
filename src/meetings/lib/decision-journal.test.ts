@@ -974,6 +974,37 @@ describe("speaker answers and their project voice prints", () => {
             fx.restore();
         }
     });
+    test("a question of one second learns the whole line that starts there, and a later backfill finds it present", async () => {
+        const fx = await voiceAnswerFixture(undefined, [
+            speakerRange("i6", 10),
+            question("i7", {
+                about: "speaker",
+                heard: undefined,
+                fromSec: 10,
+                toSec: 10,
+                choices: ["Alice Example", "Bob Example"],
+                decides: ["i6"],
+                evidence: { labels: ["Voice"] },
+            }),
+        ]);
+        try {
+            const { entry } = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i7", answer: "Bob Example" },
+                actor: person,
+            });
+            const learned = await fx.learn(entry!.token);
+            // The line at 10 runs to the next line's start: the whole of it is the sample, never an empty stretch.
+            expect(learned.voices?.map((voice) => [voice.person, voice.after.fromSec, voice.after.toSec])).toEqual([
+                ["Bob Example", 10, 15],
+            ]);
+            const { backfillVoices } = await import("./voice-backfill");
+            const again = await backfillVoices({ store: fx.store, meetings: [fx.meeting.id], dryRun: true });
+            expect(again).toMatchObject({ added: 0, present: 1 });
+        } finally {
+            fx.restore();
+        }
+    });
     test("a Listen replay of a known answer is not a second voice confirmation", async () => {
         const fx = await voiceAnswerFixture();
         try {
