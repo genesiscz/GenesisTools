@@ -52,6 +52,7 @@ import {
     type measure,
     meetingsToolsetApi,
     overview,
+    play,
     polishBuild,
     polishCheck,
     polishInit,
@@ -180,6 +181,27 @@ export class MeetingsToolset extends ReplToolset {
                     withMeetingsClient(async (client) =>
                         readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
                     ),
+                // The CLI's own core: tools meetings play <meeting> <time> [--to --track] [--no-start].
+                play: async (input: z.input<typeof play.params>) => {
+                    const { meeting, track, start, ...rest } = play.params.parse(input);
+                    const [{ playMeetingSound }, { TRACK_KINDS }] = await Promise.all([
+                        import("@app/meetings/lib/sound-playback"),
+                        import("@app/meetings/lib/sound"),
+                    ]);
+                    const kind = track === undefined ? undefined : TRACK_KINDS.find((one) => one === track);
+
+                    if (track !== undefined && !kind) {
+                        throw new Error(`track needs ${TRACK_KINDS.join(", ")}.`);
+                    }
+
+                    return playMeetingSound({
+                        store,
+                        record: recordOf(store, meeting),
+                        ...rest,
+                        ...(kind ? { track: kind } : {}),
+                        start: start !== false,
+                    });
+                },
                 lineEligibility: async ({ meeting, line }: z.input<typeof lineEligibility.params>) =>
                     lineEligibilityFor(OpenedMeeting.of(store, recordOf(store, meeting)), line),
                 voices: Object.assign(

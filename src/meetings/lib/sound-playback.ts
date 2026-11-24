@@ -3,15 +3,17 @@ import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync } f
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { LISTEN_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { LISTEN_PLAYERS, MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { segmentsEndSec } from "./audio";
 import { momentCacheDir, trimMomentCache } from "./moment";
-import type { OpenedMeeting } from "./opened-meeting";
+import { OpenedMeeting } from "./opened-meeting";
 import {
     channelFilter,
+    choosePlayer,
     PLAYERS,
     type PlaybackPlan,
     type PlayerList,
@@ -419,4 +421,49 @@ export async function playbackRun(options: {
         throw new Error("No audible track covers this time; choose another --track with a track listed by show.");
     }
     return [first, ...next];
+}
+
+/** What `tools meetings play <meeting> <time> --json` prints: the first part's slice, the plan, the transcript second the play starts at, and the player's pid once started. */
+export type MeetingPlay = SoundSlice & SlicePlaybackPlan & { fromSec: number; pid?: number };
+
+/**
+ * The one core of `tools meetings play <meeting> <time>` (and `--to` with `--track`) and of the REPL's `meetings.play`:
+ * the track heard at `atSec` (`track`, else the line seat's best one), from `beforeSec` earlier (default
+ * `playback.beforeSec`; 0 for a range), on through its later pieces, or the range to `toSec`, in `player` (default
+ * `playback.player`). With `start` false it only plans: nothing is cut or written and no player starts.
+ */
+export async function playMeetingSound(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    atSec: number;
+    toSec?: number;
+    beforeSec?: number;
+    track?: TrackKind;
+    player?: string;
+    start: boolean;
+}): Promise<MeetingPlay> {
+    const { record, atSec, toSec, track } = options;
+    const playback = (await new MeetingsConfigStore().read()).global.playback;
+    const chosen = choosePlayer({ requested: options.player, configured: playback.player, all: MEETING_PLAYERS });
+
+    if ("error" in chosen) {
+        throw new Error(chosen.error);
+    }
+
+    const fromSec = Math.max(0, atSec - (options.beforeSec ?? (toSec === undefined ? playback.beforeSec : 0)));
+    const opened = OpenedMeeting.of(options.store, record);
+    // A range is the slice, or the pieces it covers; a play from a time runs on through the track's later pieces.
+    const [slice, ...next] =
+        toSec === undefined
+            ? await playbackRun({ opened, atSec, fromSec, ...(track ? { track } : {}) })
+            : await playbackRange({ opened, atSec, fromSec, toSec, ...(track ? { track } : {}) });
+    // Open-ended from a time: the recording itself at its second; a range or one channel of a stereo source: a cut.
+    const plan = slicePlaybackPlan({
+        slice: { ...slice, meeting: record.id, fromSec },
+        next,
+        openEnded: toSec === undefined,
+        player: chosen.player,
+    });
+    const pid = options.start ? await startPlaybackPlan(plan) : undefined;
+    return { ...slice, ...plan, fromSec, ...(pid === undefined ? {} : { pid }) };
 }
