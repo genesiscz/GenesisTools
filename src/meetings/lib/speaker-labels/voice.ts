@@ -15,6 +15,7 @@ import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/v
 import {
     groupedOwners,
     meetingVoiceOwner,
+    oneNamePerVoiceOwner,
     predictionPrints,
     readVoiceLibrary,
     refused,
@@ -271,7 +272,9 @@ export function meetingPredictionVoices(options: {
     const owners = options.people.map((name) => meetingVoiceOwner(options.record, name));
     const prints = predictionPrints({ project: options.project, scope: options.scope, owners, view });
     const directory = groupedOwners(view);
-    const names = new Map(owners.map((owner) => [directory.select(owner), owner.name]));
+    // A roster address and a seat name of one person are one voice owner, so they are one person of the pass.
+    const canonical = oneNamePerVoiceOwner(options.record, options.people, directory);
+    const names = new Map(owners.map((owner) => [directory.select(owner), canonical(owner.name)]));
     const store: VoiceStore = { version: 1, model: prints.model, people: Object.create(null) };
     const sources = new Map<VoicePrint, SampleSource>();
     for (const sample of prints.samples) {
@@ -283,7 +286,7 @@ export function meetingPredictionVoices(options: {
             sources.set(sample, sample.source);
         }
     }
-    return { view, directory, store, sources };
+    return { view, directory, store, sources, canonical };
 }
 
 /** Address an embedded line on the transcript clock. A pass hashes each recording at most once. */
@@ -362,7 +365,7 @@ export function voiceLabeler(options: {
                 people: context.attended.map((stay) => stay.person),
                 view: options.voiceLibrary,
             });
-            const { store, sources } = prediction;
+            const { store, sources, canonical } = prediction;
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
@@ -379,10 +382,10 @@ export function voiceLabeler(options: {
                 lineKeys,
                 sources,
                 applyAbove: context.applyAbove,
-                attended: context.attended,
+                attended: context.attended.map((stay) => ({ ...stay, person: canonical(stay.person) })),
                 lines,
             };
-            const certain = new Map(context.certain);
+            const certain = new Map([...(context.certain ?? [])].map(([index, name]) => [index, canonical(name)]));
             const hashes = new Map<string, string>();
             for (const line of lines) {
                 const name = certain.get(line.index);
@@ -418,7 +421,7 @@ export function voiceLabeler(options: {
                         label.score !== undefined &&
                         owner &&
                         line &&
-                        sameName(label.person, owner)
+                        sameName(label.person, canonical(owner))
                     ) {
                         supports.set(label.index, {
                             person: label.person,

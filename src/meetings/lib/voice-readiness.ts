@@ -5,6 +5,7 @@ import { roomSeatNames, seatIntervalsFor } from "@genesiscz/utils/meetings/seats
 import {
     groupedOwners,
     meetingVoiceOwner,
+    oneNamePerVoiceOwner,
     predictionPrints,
     readVoiceLibrary,
 } from "@genesiscz/utils/meetings/voice-library";
@@ -47,6 +48,8 @@ export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {})
             : [];
     const occupied = new Set<Seat>();
     const covered = new Set<Seat>();
+    // A roster address and a seat name of one voice owner count its samples once, under one name.
+    const shownAs = directory ? oneNamePerVoiceOwner(record, attended, directory) : (name: string) => name;
     const people = Object.fromEntries(
         attended.map((name) => {
             const binding = directory?.select(meetingVoiceOwner(record, name));
@@ -65,7 +68,7 @@ export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {})
                     }
                 }
             }
-            return [name, prints.length] as const;
+            return [shownAs(name), prints.length] as const;
         })
     );
     const samples = Object.values(people).reduce((sum, count) => sum + count, 0);
