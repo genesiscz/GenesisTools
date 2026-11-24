@@ -235,6 +235,7 @@ export async function startGenesisToolsService(
                 return journal.settle(view.id, outcome.status, outcome.reason, {
                     via: outcome.via,
                     method: outcome.method,
+                    picked: outcome.picked,
                 });
             }
 

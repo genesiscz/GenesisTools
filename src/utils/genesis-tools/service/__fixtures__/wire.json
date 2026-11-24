@@ -485,7 +485,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -501,7 +517,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -539,7 +556,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -555,7 +588,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -592,7 +628,20 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -608,7 +657,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -636,7 +686,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -660,7 +726,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -694,7 +776,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -725,7 +823,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -741,7 +855,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -779,7 +894,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -795,7 +926,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -832,7 +966,20 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -848,7 +995,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -876,7 +1024,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -900,7 +1064,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -934,7 +1114,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -970,7 +1166,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -996,7 +1193,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -1032,7 +1232,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -1115,7 +1316,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -1131,7 +1348,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -1168,7 +1386,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -1184,7 +1418,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -1220,7 +1457,20 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "ran",
@@ -1236,7 +1486,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -1263,7 +1514,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -1286,7 +1553,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -1319,7 +1602,23 @@
       "buttons": {
         "confirm": "fixture",
         "decline": "fixture"
-      }
+      },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ]
     },
     "result": {
       "status": "unreachable",
@@ -1351,6 +1650,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1369,7 +1684,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -1408,6 +1724,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1426,7 +1758,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -1464,6 +1799,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1482,7 +1830,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -1511,6 +1860,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1538,6 +1903,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1575,6 +1956,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1609,6 +2006,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1627,7 +2040,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -1666,6 +2080,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1684,7 +2114,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -1722,6 +2155,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1740,7 +2186,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -1769,6 +2216,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1796,6 +2259,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1833,6 +2312,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1867,6 +2362,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1885,7 +2396,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -1924,6 +2436,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1942,7 +2470,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -1980,6 +2511,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -1998,7 +2542,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -2027,6 +2572,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2054,6 +2615,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2091,6 +2668,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2125,6 +2718,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2143,7 +2752,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -2182,6 +2792,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2200,7 +2826,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -2238,6 +2867,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2256,7 +2898,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -2285,6 +2928,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2312,6 +2971,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2349,6 +3024,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2383,6 +3074,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2401,7 +3108,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": []
     }
@@ -2440,6 +3148,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2458,7 +3182,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       },
       "skipped": [
         {
@@ -2496,6 +3223,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2514,7 +3254,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       },
       "skipped": [
         {
@@ -2543,6 +3284,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2570,6 +3327,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -2607,6 +3380,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -10057,7 +10846,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10078,6 +10883,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10095,7 +10916,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10133,7 +10955,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 1
     },
@@ -10171,6 +11009,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10195,6 +11049,22 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "play-meeting",
+                  "label": "fixture",
+                  "meeting": "fixture",
+                  "fromSec": 0,
+                  "toSec": 1,
+                  "track": "fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -10218,7 +11088,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       }
     }
   },
@@ -10245,7 +11118,20 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "open-link",
+              "label": "fixture",
+              "url": "https://example.com/fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10272,6 +11158,19 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "open-link",
+              "label": "fixture",
+              "url": "https://example.com/fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10313,6 +11212,22 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "play-meeting",
+                  "label": "fixture",
+                  "meeting": "fixture",
+                  "fromSec": 0,
+                  "toSec": 1,
+                  "track": "fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -10331,7 +11246,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10352,7 +11268,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10373,6 +11305,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10403,6 +11351,19 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "open-link",
+                  "label": "fixture",
+                  "url": "https://example.com/fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -10426,7 +11387,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10447,7 +11409,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10468,6 +11446,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10492,7 +11486,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10513,7 +11508,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10534,6 +11545,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10558,7 +11585,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10579,7 +11607,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10600,6 +11644,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10611,7 +11671,8 @@
           "at": "2026-11-17T12:00:00.000Z",
           "via": "fixture",
           "elevation": "fixture",
-          "method": "click"
+          "method": "click",
+          "picked": []
         }
       ],
       "outcome": {
@@ -10625,7 +11686,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10646,7 +11708,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10667,6 +11745,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10678,7 +11772,10 @@
           "at": "2026-11-17T12:00:00.000Z",
           "via": "fixture",
           "elevation": null,
-          "method": "click"
+          "method": "click",
+          "picked": [
+            "fixture"
+          ]
         }
       ],
       "outcome": {
@@ -10692,7 +11789,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10713,7 +11811,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10734,6 +11848,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10759,7 +11889,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10780,7 +11911,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10801,6 +11948,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10826,7 +11989,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10847,7 +12011,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10868,6 +12048,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10892,7 +12088,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10913,7 +12110,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -10934,6 +12147,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -10960,7 +12189,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -10981,7 +12211,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -11002,6 +12248,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11028,7 +12290,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11049,7 +12312,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -11070,6 +12349,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11093,7 +12388,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11114,7 +12410,23 @@
         "buttons": {
           "confirm": "fixture",
           "decline": "fixture"
-        }
+        },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ]
       },
       "timeoutMs": 120000
     },
@@ -11135,6 +12447,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11158,7 +12486,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11184,6 +12513,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11201,7 +12546,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11244,6 +12590,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11268,6 +12630,22 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "play-meeting",
+                  "label": "fixture",
+                  "meeting": "fixture",
+                  "fromSec": 0,
+                  "toSec": 1,
+                  "track": "fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -11291,7 +12669,10 @@
         "exitCode": null,
         "outputTail": "fixture",
         "verified": null,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": [
+          "fixture"
+        ]
       }
     }
   },
@@ -11323,6 +12704,19 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "open-link",
+              "label": "fixture",
+              "url": "https://example.com/fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11364,6 +12758,22 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "play-meeting",
+                  "label": "fixture",
+                  "meeting": "fixture",
+                  "fromSec": 0,
+                  "toSec": 1,
+                  "track": "fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -11382,7 +12792,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11408,6 +12819,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11438,6 +12865,19 @@
               "confirm": "fixture",
               "decline": "fixture"
             },
+            "rows": [
+              {
+                "id": "fixture",
+                "title": "fixture",
+                "quote": "fixture",
+                "detail": "fixture",
+                "action": {
+                  "kind": "open-link",
+                  "label": "fixture",
+                  "url": "https://example.com/fixture"
+                }
+              }
+            ],
             "createdAt": "2026-11-17T12:00:00.000Z",
             "deadlineSeconds": 1,
             "takesFocus": true
@@ -11461,7 +12901,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11487,6 +12928,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11511,7 +12968,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11537,6 +12995,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11561,7 +13035,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11587,6 +13062,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11598,7 +13089,8 @@
           "at": "2026-11-17T12:00:00.000Z",
           "via": "fixture",
           "elevation": "fixture",
-          "method": "click"
+          "method": "click",
+          "picked": []
         }
       ],
       "outcome": {
@@ -11612,7 +13104,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11638,6 +13131,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11649,7 +13158,10 @@
           "at": "2026-11-17T12:00:00.000Z",
           "via": "fixture",
           "elevation": null,
-          "method": "click"
+          "method": "click",
+          "picked": [
+            "fixture"
+          ]
         }
       ],
       "outcome": {
@@ -11663,7 +13175,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11689,6 +13202,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11714,7 +13243,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11740,6 +13270,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11765,7 +13311,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11791,6 +13338,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11815,7 +13378,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11841,6 +13405,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11867,7 +13447,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11893,6 +13474,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11919,7 +13516,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11945,6 +13543,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -11968,7 +13582,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -11994,6 +13609,22 @@
           "confirm": "fixture",
           "decline": "fixture"
         },
+        "rows": [
+          {
+            "id": "fixture",
+            "title": "fixture",
+            "quote": "fixture",
+            "detail": "fixture",
+            "action": {
+              "kind": "play-meeting",
+              "label": "fixture",
+              "meeting": "fixture",
+              "fromSec": 0,
+              "toSec": 1,
+              "track": "fixture"
+            }
+          }
+        ],
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -12017,7 +13648,8 @@
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
         "verified": true,
-        "manual": "fixture"
+        "manual": "fixture",
+        "picked": []
       }
     }
   },
@@ -12058,6 +13690,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12075,7 +13723,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12120,6 +13769,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12144,6 +13809,22 @@
                 "confirm": "fixture",
                 "decline": "fixture"
               },
+              "rows": [
+                {
+                  "id": "fixture",
+                  "title": "fixture",
+                  "quote": "fixture",
+                  "detail": "fixture",
+                  "action": {
+                    "kind": "play-meeting",
+                    "label": "fixture",
+                    "meeting": "fixture",
+                    "fromSec": 0,
+                    "toSec": 1,
+                    "track": "fixture"
+                  }
+                }
+              ],
               "createdAt": "2026-11-17T12:00:00.000Z",
               "deadlineSeconds": 1,
               "takesFocus": true
@@ -12167,7 +13848,10 @@
           "exitCode": null,
           "outputTail": "fixture",
           "verified": null,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": [
+            "fixture"
+          ]
         }
       }
     ]
@@ -12201,6 +13885,19 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "open-link",
+                "label": "fixture",
+                "url": "https://example.com/fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12242,6 +13939,22 @@
                 "confirm": "fixture",
                 "decline": "fixture"
               },
+              "rows": [
+                {
+                  "id": "fixture",
+                  "title": "fixture",
+                  "quote": "fixture",
+                  "detail": "fixture",
+                  "action": {
+                    "kind": "play-meeting",
+                    "label": "fixture",
+                    "meeting": "fixture",
+                    "fromSec": 0,
+                    "toSec": 1,
+                    "track": "fixture"
+                  }
+                }
+              ],
               "createdAt": "2026-11-17T12:00:00.000Z",
               "deadlineSeconds": 1,
               "takesFocus": true
@@ -12260,7 +13973,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12288,6 +14002,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12318,6 +14048,19 @@
                 "confirm": "fixture",
                 "decline": "fixture"
               },
+              "rows": [
+                {
+                  "id": "fixture",
+                  "title": "fixture",
+                  "quote": "fixture",
+                  "detail": "fixture",
+                  "action": {
+                    "kind": "open-link",
+                    "label": "fixture",
+                    "url": "https://example.com/fixture"
+                  }
+                }
+              ],
               "createdAt": "2026-11-17T12:00:00.000Z",
               "deadlineSeconds": 1,
               "takesFocus": true
@@ -12341,7 +14084,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12369,6 +14113,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12393,7 +14153,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12421,6 +14182,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12445,7 +14222,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12473,6 +14251,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12484,7 +14278,8 @@
             "at": "2026-11-17T12:00:00.000Z",
             "via": "fixture",
             "elevation": "fixture",
-            "method": "click"
+            "method": "click",
+            "picked": []
           }
         ],
         "outcome": {
@@ -12498,7 +14293,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12526,6 +14322,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12537,7 +14349,10 @@
             "at": "2026-11-17T12:00:00.000Z",
             "via": "fixture",
             "elevation": null,
-            "method": "click"
+            "method": "click",
+            "picked": [
+              "fixture"
+            ]
           }
         ],
         "outcome": {
@@ -12551,7 +14366,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12579,6 +14395,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12604,7 +14436,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12632,6 +14465,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12657,7 +14506,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12685,6 +14535,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12709,7 +14575,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12737,6 +14604,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12763,7 +14646,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12791,6 +14675,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12817,7 +14717,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12845,6 +14746,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12868,7 +14785,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12896,6 +14814,22 @@
             "confirm": "fixture",
             "decline": "fixture"
           },
+          "rows": [
+            {
+              "id": "fixture",
+              "title": "fixture",
+              "quote": "fixture",
+              "detail": "fixture",
+              "action": {
+                "kind": "play-meeting",
+                "label": "fixture",
+                "meeting": "fixture",
+                "fromSec": 0,
+                "toSec": 1,
+                "track": "fixture"
+              }
+            }
+          ],
           "createdAt": "2026-11-17T12:00:00.000Z",
           "deadlineSeconds": 1,
           "takesFocus": true
@@ -12919,7 +14853,8 @@
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
           "verified": true,
-          "manual": "fixture"
+          "manual": "fixture",
+          "picked": []
         }
       }
     ]
@@ -12941,7 +14876,8 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": []
     }
   },
   {
@@ -12961,7 +14897,10 @@
       "exitCode": null,
       "outputTail": "fixture",
       "verified": null,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": [
+        "fixture"
+      ]
     }
   },
   {
@@ -12980,7 +14919,8 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": []
     }
   },
   {
@@ -12999,7 +14939,10 @@
       "exitCode": null,
       "outputTail": "fixture",
       "verified": null,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": [
+        "fixture"
+      ]
     }
   },
   {
@@ -13019,6 +14962,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -13034,7 +14993,8 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": []
     }
   },
   {
@@ -13071,6 +15031,22 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "play-meeting",
+            "label": "fixture",
+            "meeting": "fixture",
+            "fromSec": 0,
+            "toSec": 1,
+            "track": "fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -13086,7 +15062,10 @@
       "exitCode": null,
       "outputTail": "fixture",
       "verified": null,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": [
+        "fixture"
+      ]
     }
   },
   {
@@ -13112,6 +15091,19 @@
         "confirm": "fixture",
         "decline": "fixture"
       },
+      "rows": [
+        {
+          "id": "fixture",
+          "title": "fixture",
+          "quote": "fixture",
+          "detail": "fixture",
+          "action": {
+            "kind": "open-link",
+            "label": "fixture",
+            "url": "https://example.com/fixture"
+          }
+        }
+      ],
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -13127,7 +15119,8 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
-      "manual": "fixture"
+      "manual": "fixture",
+      "picked": []
     }
   }
 ]

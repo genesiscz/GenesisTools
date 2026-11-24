@@ -1123,6 +1123,122 @@ public struct PersonAskParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonAskParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonAskParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonAskParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonAskParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonAskParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonAskParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonAskParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonAskParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonAskParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonAskParamsRowsItemActionOption0)
+    case option1(PersonAskParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonAskParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonAskParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonAskParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonAskParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonAskParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonAskParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonAskParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonAskParams: Codable, Sendable {
     public var `kind`: PersonAskParamsKind
     public var `id`: String
@@ -1132,7 +1248,8 @@ public struct PersonAskParams: Codable, Sendable {
     public var `fields`: [PersonAskParamsFieldsItem]?
     public var `actions`: [PersonAskParamsActionsItem]?
     public var `buttons`: PersonAskParamsButtons?
-    public init(`kind`: PersonAskParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskParamsOpen? = nil, `fields`: [PersonAskParamsFieldsItem]? = nil, `actions`: [PersonAskParamsActionsItem]? = nil, `buttons`: PersonAskParamsButtons? = nil) {
+    public var `rows`: [PersonAskParamsRowsItem]?
+    public init(`kind`: PersonAskParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskParamsOpen? = nil, `fields`: [PersonAskParamsFieldsItem]? = nil, `actions`: [PersonAskParamsActionsItem]? = nil, `buttons`: PersonAskParamsButtons? = nil, `rows`: [PersonAskParamsRowsItem]? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -1141,8 +1258,9 @@ public struct PersonAskParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskParamsKind.self, forKey: .`kind`)
@@ -1153,6 +1271,7 @@ public struct PersonAskParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonAskParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonAskParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonAskParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonAskParamsRowsItem].self, forKey: .`rows`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1164,6 +1283,7 @@ public struct PersonAskParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
     }
 }
 
@@ -1199,7 +1319,8 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1211,8 +1332,9 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -1226,6 +1348,7 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1240,6 +1363,7 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -1576,6 +1700,122 @@ public struct PersonConfirmParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonConfirmParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonConfirmParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonConfirmParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonConfirmParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonConfirmParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonConfirmParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonConfirmParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonConfirmParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonConfirmParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonConfirmParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonConfirmParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonConfirmParamsRowsItemActionOption0)
+    case option1(PersonConfirmParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonConfirmParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonConfirmParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonConfirmParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonConfirmParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonConfirmParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonConfirmParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonConfirmParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonConfirmParams: Codable, Sendable {
     public var `kind`: PersonConfirmParamsKind
     public var `id`: String
@@ -1585,7 +1825,8 @@ public struct PersonConfirmParams: Codable, Sendable {
     public var `fields`: [PersonConfirmParamsFieldsItem]?
     public var `actions`: [PersonConfirmParamsActionsItem]?
     public var `buttons`: PersonConfirmParamsButtons?
-    public init(`kind`: PersonConfirmParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonConfirmParamsOpen? = nil, `fields`: [PersonConfirmParamsFieldsItem]? = nil, `actions`: [PersonConfirmParamsActionsItem]? = nil, `buttons`: PersonConfirmParamsButtons? = nil) {
+    public var `rows`: [PersonConfirmParamsRowsItem]?
+    public init(`kind`: PersonConfirmParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonConfirmParamsOpen? = nil, `fields`: [PersonConfirmParamsFieldsItem]? = nil, `actions`: [PersonConfirmParamsActionsItem]? = nil, `buttons`: PersonConfirmParamsButtons? = nil, `rows`: [PersonConfirmParamsRowsItem]? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -1594,8 +1835,9 @@ public struct PersonConfirmParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonConfirmParamsKind.self, forKey: .`kind`)
@@ -1606,6 +1848,7 @@ public struct PersonConfirmParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonConfirmParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonConfirmParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonConfirmParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonConfirmParamsRowsItem].self, forKey: .`rows`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1617,6 +1860,7 @@ public struct PersonConfirmParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
     }
 }
 
@@ -1652,7 +1896,8 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonConfirmResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonConfirmResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonConfirmResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonConfirmResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1664,8 +1909,9 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -1679,6 +1925,7 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1693,6 +1940,7 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -1920,7 +2168,8 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1932,8 +2181,9 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -1947,6 +2197,7 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1961,6 +2212,7 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -2293,6 +2545,122 @@ public struct PersonWindowNoticeParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonWindowNoticeParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonWindowNoticeParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonWindowNoticeParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonWindowNoticeParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonWindowNoticeParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonWindowNoticeParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonWindowNoticeParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonWindowNoticeParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonWindowNoticeParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonWindowNoticeParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonWindowNoticeParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonWindowNoticeParamsRowsItemActionOption0)
+    case option1(PersonWindowNoticeParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonWindowNoticeParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonWindowNoticeParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonWindowNoticeParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonWindowNoticeParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonWindowNoticeParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonWindowNoticeParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonWindowNoticeParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonWindowNoticeParams: Codable, Sendable {
     public var `id`: String
     public var `title`: String
@@ -2301,7 +2669,8 @@ public struct PersonWindowNoticeParams: Codable, Sendable {
     public var `fields`: [PersonWindowNoticeParamsFieldsItem]?
     public var `actions`: [PersonWindowNoticeParamsActionsItem]?
     public var `buttons`: PersonWindowNoticeParamsButtons?
-    public init(`id`: String, `title`: String, `reason`: String, `open`: PersonWindowNoticeParamsOpen, `fields`: [PersonWindowNoticeParamsFieldsItem]? = nil, `actions`: [PersonWindowNoticeParamsActionsItem]? = nil, `buttons`: PersonWindowNoticeParamsButtons? = nil) {
+    public var `rows`: [PersonWindowNoticeParamsRowsItem]?
+    public init(`id`: String, `title`: String, `reason`: String, `open`: PersonWindowNoticeParamsOpen, `fields`: [PersonWindowNoticeParamsFieldsItem]? = nil, `actions`: [PersonWindowNoticeParamsActionsItem]? = nil, `buttons`: PersonWindowNoticeParamsButtons? = nil, `rows`: [PersonWindowNoticeParamsRowsItem]? = nil) {
         self.`id` = `id`
         self.`title` = `title`
         self.`reason` = `reason`
@@ -2309,8 +2678,9 @@ public struct PersonWindowNoticeParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -2320,6 +2690,7 @@ public struct PersonWindowNoticeParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonWindowNoticeParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonWindowNoticeParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonWindowNoticeParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonWindowNoticeParamsRowsItem].self, forKey: .`rows`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -2330,6 +2701,7 @@ public struct PersonWindowNoticeParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
     }
 }
 
@@ -2365,7 +2737,8 @@ public struct PersonWindowNoticeResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonWindowNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonWindowNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonWindowNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonWindowNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -2377,8 +2750,9 @@ public struct PersonWindowNoticeResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -2392,6 +2766,7 @@ public struct PersonWindowNoticeResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -2406,6 +2781,7 @@ public struct PersonWindowNoticeResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -2742,6 +3118,122 @@ public struct PersonShowWindowParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonShowWindowParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonShowWindowParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonShowWindowParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonShowWindowParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonShowWindowParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonShowWindowParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonShowWindowParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonShowWindowParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonShowWindowParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonShowWindowParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonShowWindowParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonShowWindowParamsRowsItemActionOption0)
+    case option1(PersonShowWindowParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonShowWindowParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonShowWindowParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonShowWindowParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonShowWindowParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonShowWindowParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonShowWindowParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonShowWindowParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonShowWindowParams: Codable, Sendable {
     public var `kind`: PersonShowWindowParamsKind
     public var `id`: String
@@ -2751,10 +3243,11 @@ public struct PersonShowWindowParams: Codable, Sendable {
     public var `fields`: [PersonShowWindowParamsFieldsItem]?
     public var `actions`: [PersonShowWindowParamsActionsItem]?
     public var `buttons`: PersonShowWindowParamsButtons?
+    public var `rows`: [PersonShowWindowParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: PersonShowWindowParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonShowWindowParamsOpen? = nil, `fields`: [PersonShowWindowParamsFieldsItem]? = nil, `actions`: [PersonShowWindowParamsActionsItem]? = nil, `buttons`: PersonShowWindowParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: PersonShowWindowParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonShowWindowParamsOpen? = nil, `fields`: [PersonShowWindowParamsFieldsItem]? = nil, `actions`: [PersonShowWindowParamsActionsItem]? = nil, `buttons`: PersonShowWindowParamsButtons? = nil, `rows`: [PersonShowWindowParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -2763,11 +3256,12 @@ public struct PersonShowWindowParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonShowWindowParamsKind.self, forKey: .`kind`)
@@ -2778,6 +3272,7 @@ public struct PersonShowWindowParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonShowWindowParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonShowWindowParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonShowWindowParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonShowWindowParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -2792,6 +3287,7 @@ public struct PersonShowWindowParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -2830,7 +3326,8 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonShowWindowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonShowWindowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonShowWindowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonShowWindowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -2842,8 +3339,9 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -2857,6 +3355,7 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -2871,6 +3370,7 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -3207,6 +3707,122 @@ public struct PersonNotifyThenAskParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonNotifyThenAskParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonNotifyThenAskParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonNotifyThenAskParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonNotifyThenAskParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonNotifyThenAskParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonNotifyThenAskParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonNotifyThenAskParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonNotifyThenAskParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonNotifyThenAskParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonNotifyThenAskParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonNotifyThenAskParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonNotifyThenAskParamsRowsItemActionOption0)
+    case option1(PersonNotifyThenAskParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonNotifyThenAskParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonNotifyThenAskParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonNotifyThenAskParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonNotifyThenAskParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonNotifyThenAskParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonNotifyThenAskParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonNotifyThenAskParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonNotifyThenAskParams: Codable, Sendable {
     public var `kind`: PersonNotifyThenAskParamsKind
     public var `id`: String
@@ -3216,10 +3832,11 @@ public struct PersonNotifyThenAskParams: Codable, Sendable {
     public var `fields`: [PersonNotifyThenAskParamsFieldsItem]?
     public var `actions`: [PersonNotifyThenAskParamsActionsItem]?
     public var `buttons`: PersonNotifyThenAskParamsButtons?
+    public var `rows`: [PersonNotifyThenAskParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: PersonNotifyThenAskParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonNotifyThenAskParamsOpen? = nil, `fields`: [PersonNotifyThenAskParamsFieldsItem]? = nil, `actions`: [PersonNotifyThenAskParamsActionsItem]? = nil, `buttons`: PersonNotifyThenAskParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: PersonNotifyThenAskParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonNotifyThenAskParamsOpen? = nil, `fields`: [PersonNotifyThenAskParamsFieldsItem]? = nil, `actions`: [PersonNotifyThenAskParamsActionsItem]? = nil, `buttons`: PersonNotifyThenAskParamsButtons? = nil, `rows`: [PersonNotifyThenAskParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -3228,11 +3845,12 @@ public struct PersonNotifyThenAskParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonNotifyThenAskParamsKind.self, forKey: .`kind`)
@@ -3243,6 +3861,7 @@ public struct PersonNotifyThenAskParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonNotifyThenAskParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonNotifyThenAskParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonNotifyThenAskParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonNotifyThenAskParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -3257,6 +3876,7 @@ public struct PersonNotifyThenAskParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -3295,7 +3915,8 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonNotifyThenAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNotifyThenAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonNotifyThenAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNotifyThenAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3307,8 +3928,9 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -3322,6 +3944,7 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -3336,6 +3959,7 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -3672,6 +4296,122 @@ public struct PersonAskNowParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonAskNowParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonAskNowParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonAskNowParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonAskNowParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskNowParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonAskNowParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonAskNowParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonAskNowParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonAskNowParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskNowParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonAskNowParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonAskNowParamsRowsItemActionOption0)
+    case option1(PersonAskNowParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonAskNowParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonAskNowParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonAskNowParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonAskNowParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonAskNowParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonAskNowParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonAskNowParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonAskNowParams: Codable, Sendable {
     public var `kind`: PersonAskNowParamsKind
     public var `id`: String
@@ -3681,10 +4421,11 @@ public struct PersonAskNowParams: Codable, Sendable {
     public var `fields`: [PersonAskNowParamsFieldsItem]?
     public var `actions`: [PersonAskNowParamsActionsItem]?
     public var `buttons`: PersonAskNowParamsButtons?
+    public var `rows`: [PersonAskNowParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: PersonAskNowParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskNowParamsOpen? = nil, `fields`: [PersonAskNowParamsFieldsItem]? = nil, `actions`: [PersonAskNowParamsActionsItem]? = nil, `buttons`: PersonAskNowParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: PersonAskNowParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskNowParamsOpen? = nil, `fields`: [PersonAskNowParamsFieldsItem]? = nil, `actions`: [PersonAskNowParamsActionsItem]? = nil, `buttons`: PersonAskNowParamsButtons? = nil, `rows`: [PersonAskNowParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -3693,11 +4434,12 @@ public struct PersonAskNowParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskNowParamsKind.self, forKey: .`kind`)
@@ -3708,6 +4450,7 @@ public struct PersonAskNowParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonAskNowParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonAskNowParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonAskNowParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonAskNowParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -3722,6 +4465,7 @@ public struct PersonAskNowParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -3760,7 +4504,8 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonAskNowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskNowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonAskNowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskNowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3772,8 +4517,9 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -3787,6 +4533,7 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -3801,6 +4548,7 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -4137,6 +4885,122 @@ public struct PersonAskElseNotifyParamsButtons: Codable, Sendable {
     }
 }
 
+public enum PersonAskElseNotifyParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct PersonAskElseNotifyParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: PersonAskElseNotifyParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: PersonAskElseNotifyParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskElseNotifyParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum PersonAskElseNotifyParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct PersonAskElseNotifyParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: PersonAskElseNotifyParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: PersonAskElseNotifyParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskElseNotifyParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum PersonAskElseNotifyParamsRowsItemAction: Codable, Sendable {
+    case option0(PersonAskElseNotifyParamsRowsItemActionOption0)
+    case option1(PersonAskElseNotifyParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? PersonAskElseNotifyParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? PersonAskElseNotifyParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No PersonAskElseNotifyParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct PersonAskElseNotifyParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: PersonAskElseNotifyParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: PersonAskElseNotifyParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(PersonAskElseNotifyParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct PersonAskElseNotifyParams: Codable, Sendable {
     public var `kind`: PersonAskElseNotifyParamsKind
     public var `id`: String
@@ -4146,10 +5010,11 @@ public struct PersonAskElseNotifyParams: Codable, Sendable {
     public var `fields`: [PersonAskElseNotifyParamsFieldsItem]?
     public var `actions`: [PersonAskElseNotifyParamsActionsItem]?
     public var `buttons`: PersonAskElseNotifyParamsButtons?
+    public var `rows`: [PersonAskElseNotifyParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: PersonAskElseNotifyParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskElseNotifyParamsOpen? = nil, `fields`: [PersonAskElseNotifyParamsFieldsItem]? = nil, `actions`: [PersonAskElseNotifyParamsActionsItem]? = nil, `buttons`: PersonAskElseNotifyParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: PersonAskElseNotifyParamsKind, `id`: String, `title`: String, `reason`: String, `open`: PersonAskElseNotifyParamsOpen? = nil, `fields`: [PersonAskElseNotifyParamsFieldsItem]? = nil, `actions`: [PersonAskElseNotifyParamsActionsItem]? = nil, `buttons`: PersonAskElseNotifyParamsButtons? = nil, `rows`: [PersonAskElseNotifyParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -4158,11 +5023,12 @@ public struct PersonAskElseNotifyParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskElseNotifyParamsKind.self, forKey: .`kind`)
@@ -4173,6 +5039,7 @@ public struct PersonAskElseNotifyParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([PersonAskElseNotifyParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([PersonAskElseNotifyParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(PersonAskElseNotifyParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([PersonAskElseNotifyParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -4187,6 +5054,7 @@ public struct PersonAskElseNotifyParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -4225,7 +5093,8 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: PersonAskElseNotifyResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskElseNotifyResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: PersonAskElseNotifyResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskElseNotifyResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -4237,8 +5106,9 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -4252,6 +5122,7 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -4266,6 +5137,7 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -4602,6 +5474,122 @@ public struct TerminalPromptParamsButtons: Codable, Sendable {
     }
 }
 
+public enum TerminalPromptParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct TerminalPromptParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: TerminalPromptParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: TerminalPromptParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(TerminalPromptParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum TerminalPromptParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct TerminalPromptParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: TerminalPromptParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: TerminalPromptParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(TerminalPromptParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum TerminalPromptParamsRowsItemAction: Codable, Sendable {
+    case option0(TerminalPromptParamsRowsItemActionOption0)
+    case option1(TerminalPromptParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? TerminalPromptParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? TerminalPromptParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No TerminalPromptParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct TerminalPromptParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: TerminalPromptParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: TerminalPromptParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(TerminalPromptParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct TerminalPromptParams: Codable, Sendable {
     public var `kind`: TerminalPromptParamsKind
     public var `id`: String
@@ -4611,10 +5599,11 @@ public struct TerminalPromptParams: Codable, Sendable {
     public var `fields`: [TerminalPromptParamsFieldsItem]?
     public var `actions`: [TerminalPromptParamsActionsItem]?
     public var `buttons`: TerminalPromptParamsButtons?
+    public var `rows`: [TerminalPromptParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: TerminalPromptParamsKind, `id`: String, `title`: String, `reason`: String, `open`: TerminalPromptParamsOpen? = nil, `fields`: [TerminalPromptParamsFieldsItem]? = nil, `actions`: [TerminalPromptParamsActionsItem]? = nil, `buttons`: TerminalPromptParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: TerminalPromptParamsKind, `id`: String, `title`: String, `reason`: String, `open`: TerminalPromptParamsOpen? = nil, `fields`: [TerminalPromptParamsFieldsItem]? = nil, `actions`: [TerminalPromptParamsActionsItem]? = nil, `buttons`: TerminalPromptParamsButtons? = nil, `rows`: [TerminalPromptParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -4623,11 +5612,12 @@ public struct TerminalPromptParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(TerminalPromptParamsKind.self, forKey: .`kind`)
@@ -4638,6 +5628,7 @@ public struct TerminalPromptParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([TerminalPromptParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([TerminalPromptParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(TerminalPromptParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([TerminalPromptParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -4652,6 +5643,7 @@ public struct TerminalPromptParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -4690,7 +5682,8 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: TerminalPromptResultOption0ValueStatus, `reason`: String? = nil, `method`: TerminalPromptResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: TerminalPromptResultOption0ValueStatus, `reason`: String? = nil, `method`: TerminalPromptResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -4702,8 +5695,9 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -4717,6 +5711,7 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -4731,6 +5726,7 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -19102,6 +20098,122 @@ public struct RequestsPostParamsInputButtons: Codable, Sendable {
     }
 }
 
+public enum RequestsPostParamsInputRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsPostParamsInputRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsPostParamsInputRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsPostParamsInputRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostParamsInputRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsPostParamsInputRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsPostParamsInputRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsPostParamsInputRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsPostParamsInputRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostParamsInputRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsPostParamsInputRowsItemAction: Codable, Sendable {
+    case option0(RequestsPostParamsInputRowsItemActionOption0)
+    case option1(RequestsPostParamsInputRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsPostParamsInputRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsPostParamsInputRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsPostParamsInputRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsPostParamsInputRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsPostParamsInputRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsPostParamsInputRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsPostParamsInputRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsPostParamsInput: Codable, Sendable {
     public var `kind`: RequestsPostParamsInputKind
     public var `id`: String
@@ -19111,7 +20223,8 @@ public struct RequestsPostParamsInput: Codable, Sendable {
     public var `fields`: [RequestsPostParamsInputFieldsItem]?
     public var `actions`: [RequestsPostParamsInputActionsItem]?
     public var `buttons`: RequestsPostParamsInputButtons?
-    public init(`kind`: RequestsPostParamsInputKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostParamsInputOpen? = nil, `fields`: [RequestsPostParamsInputFieldsItem]? = nil, `actions`: [RequestsPostParamsInputActionsItem]? = nil, `buttons`: RequestsPostParamsInputButtons? = nil) {
+    public var `rows`: [RequestsPostParamsInputRowsItem]?
+    public init(`kind`: RequestsPostParamsInputKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostParamsInputOpen? = nil, `fields`: [RequestsPostParamsInputFieldsItem]? = nil, `actions`: [RequestsPostParamsInputActionsItem]? = nil, `buttons`: RequestsPostParamsInputButtons? = nil, `rows`: [RequestsPostParamsInputRowsItem]? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -19120,8 +20233,9 @@ public struct RequestsPostParamsInput: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostParamsInputKind.self, forKey: .`kind`)
@@ -19132,6 +20246,7 @@ public struct RequestsPostParamsInput: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsPostParamsInputFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsPostParamsInputActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsPostParamsInputButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsPostParamsInputRowsItem].self, forKey: .`rows`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19143,6 +20258,7 @@ public struct RequestsPostParamsInput: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
     }
 }
 
@@ -19331,6 +20447,122 @@ public struct RequestsPostResultRequestButtons: Codable, Sendable {
     }
 }
 
+public enum RequestsPostResultRequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsPostResultRequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsPostResultRequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsPostResultRequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultRequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsPostResultRequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsPostResultRequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsPostResultRequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsPostResultRequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultRequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsPostResultRequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsPostResultRequestRowsItemActionOption0)
+    case option1(RequestsPostResultRequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsPostResultRequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsPostResultRequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsPostResultRequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsPostResultRequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsPostResultRequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsPostResultRequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsPostResultRequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsPostResultRequest: Codable, Sendable {
     public var `kind`: RequestsPostResultRequestKind
     public var `id`: String
@@ -19340,10 +20572,11 @@ public struct RequestsPostResultRequest: Codable, Sendable {
     public var `fields`: [RequestsPostResultRequestFieldsItem]?
     public var `actions`: [RequestsPostResultRequestActionsItem]?
     public var `buttons`: RequestsPostResultRequestButtons?
+    public var `rows`: [RequestsPostResultRequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsPostResultRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostResultRequestOpen? = nil, `fields`: [RequestsPostResultRequestFieldsItem]? = nil, `actions`: [RequestsPostResultRequestActionsItem]? = nil, `buttons`: RequestsPostResultRequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsPostResultRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostResultRequestOpen? = nil, `fields`: [RequestsPostResultRequestFieldsItem]? = nil, `actions`: [RequestsPostResultRequestActionsItem]? = nil, `buttons`: RequestsPostResultRequestButtons? = nil, `rows`: [RequestsPostResultRequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -19352,11 +20585,12 @@ public struct RequestsPostResultRequest: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostResultRequestKind.self, forKey: .`kind`)
@@ -19367,6 +20601,7 @@ public struct RequestsPostResultRequest: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsPostResultRequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsPostResultRequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsPostResultRequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsPostResultRequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -19381,6 +20616,7 @@ public struct RequestsPostResultRequest: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -19568,6 +20804,122 @@ public struct RequestsPostResultEventsItemOption0RequestButtons: Codable, Sendab
     }
 }
 
+public enum RequestsPostResultEventsItemOption0RequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsPostResultEventsItemOption0RequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsPostResultEventsItemOption0RequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsPostResultEventsItemOption0RequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultEventsItemOption0RequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsPostResultEventsItemOption0RequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsPostResultEventsItemOption0RequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsPostResultEventsItemOption0RequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsPostResultEventsItemOption0RequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultEventsItemOption0RequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsPostResultEventsItemOption0RequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsPostResultEventsItemOption0RequestRowsItemActionOption0)
+    case option1(RequestsPostResultEventsItemOption0RequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsPostResultEventsItemOption0RequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsPostResultEventsItemOption0RequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsPostResultEventsItemOption0RequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsPostResultEventsItemOption0RequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsPostResultEventsItemOption0RequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsPostResultEventsItemOption0RequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsPostResultEventsItemOption0RequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
     public var `kind`: RequestsPostResultEventsItemOption0RequestKind
     public var `id`: String
@@ -19577,10 +20929,11 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
     public var `fields`: [RequestsPostResultEventsItemOption0RequestFieldsItem]?
     public var `actions`: [RequestsPostResultEventsItemOption0RequestActionsItem]?
     public var `buttons`: RequestsPostResultEventsItemOption0RequestButtons?
+    public var `rows`: [RequestsPostResultEventsItemOption0RequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsPostResultEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostResultEventsItemOption0RequestOpen? = nil, `fields`: [RequestsPostResultEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsPostResultEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsPostResultEventsItemOption0RequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsPostResultEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsPostResultEventsItemOption0RequestOpen? = nil, `fields`: [RequestsPostResultEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsPostResultEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsPostResultEventsItemOption0RequestButtons? = nil, `rows`: [RequestsPostResultEventsItemOption0RequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -19589,11 +20942,12 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostResultEventsItemOption0RequestKind.self, forKey: .`kind`)
@@ -19604,6 +20958,7 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsPostResultEventsItemOption0RequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsPostResultEventsItemOption0RequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsPostResultEventsItemOption0RequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsPostResultEventsItemOption0RequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -19618,6 +20973,7 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -19735,14 +21091,16 @@ public struct RequestsPostResultEventsItemOption2: Codable, Sendable {
     public var `via`: String
     public var `elevation`: String?
     public var `method`: RequestsPostResultEventsItemOption2Method
-    public init(`type`: RequestsPostResultEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsPostResultEventsItemOption2Method) {
+    public var `picked`: [String]?
+    public init(`type`: RequestsPostResultEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsPostResultEventsItemOption2Method, `picked`: [String]? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`elevation` = `elevation`
         self.`method` = `method`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsPostResultEventsItemOption2Type.self, forKey: .`type`)
@@ -19750,6 +21108,7 @@ public struct RequestsPostResultEventsItemOption2: Codable, Sendable {
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
         self.`method` = try box.decode(RequestsPostResultEventsItemOption2Method.self, forKey: .`method`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19758,6 +21117,7 @@ public struct RequestsPostResultEventsItemOption2: Codable, Sendable {
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`elevation`, forKey: .`elevation`)
         try box.encode(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -19992,7 +21352,8 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsPostResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsPostResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestsPostResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsPostResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -20004,8 +21365,9 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -20019,6 +21381,7 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20033,6 +21396,7 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -20249,6 +21613,122 @@ public struct RequestsGetResultRequestButtons: Codable, Sendable {
     }
 }
 
+public enum RequestsGetResultRequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsGetResultRequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsGetResultRequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsGetResultRequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultRequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsGetResultRequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsGetResultRequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsGetResultRequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsGetResultRequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultRequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsGetResultRequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsGetResultRequestRowsItemActionOption0)
+    case option1(RequestsGetResultRequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsGetResultRequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsGetResultRequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsGetResultRequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsGetResultRequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsGetResultRequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsGetResultRequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsGetResultRequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsGetResultRequest: Codable, Sendable {
     public var `kind`: RequestsGetResultRequestKind
     public var `id`: String
@@ -20258,10 +21738,11 @@ public struct RequestsGetResultRequest: Codable, Sendable {
     public var `fields`: [RequestsGetResultRequestFieldsItem]?
     public var `actions`: [RequestsGetResultRequestActionsItem]?
     public var `buttons`: RequestsGetResultRequestButtons?
+    public var `rows`: [RequestsGetResultRequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsGetResultRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsGetResultRequestOpen? = nil, `fields`: [RequestsGetResultRequestFieldsItem]? = nil, `actions`: [RequestsGetResultRequestActionsItem]? = nil, `buttons`: RequestsGetResultRequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsGetResultRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsGetResultRequestOpen? = nil, `fields`: [RequestsGetResultRequestFieldsItem]? = nil, `actions`: [RequestsGetResultRequestActionsItem]? = nil, `buttons`: RequestsGetResultRequestButtons? = nil, `rows`: [RequestsGetResultRequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -20270,11 +21751,12 @@ public struct RequestsGetResultRequest: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsGetResultRequestKind.self, forKey: .`kind`)
@@ -20285,6 +21767,7 @@ public struct RequestsGetResultRequest: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsGetResultRequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsGetResultRequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsGetResultRequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsGetResultRequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -20299,6 +21782,7 @@ public struct RequestsGetResultRequest: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -20486,6 +21970,122 @@ public struct RequestsGetResultEventsItemOption0RequestButtons: Codable, Sendabl
     }
 }
 
+public enum RequestsGetResultEventsItemOption0RequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsGetResultEventsItemOption0RequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsGetResultEventsItemOption0RequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsGetResultEventsItemOption0RequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultEventsItemOption0RequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsGetResultEventsItemOption0RequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsGetResultEventsItemOption0RequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsGetResultEventsItemOption0RequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsGetResultEventsItemOption0RequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultEventsItemOption0RequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsGetResultEventsItemOption0RequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsGetResultEventsItemOption0RequestRowsItemActionOption0)
+    case option1(RequestsGetResultEventsItemOption0RequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsGetResultEventsItemOption0RequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsGetResultEventsItemOption0RequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsGetResultEventsItemOption0RequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsGetResultEventsItemOption0RequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsGetResultEventsItemOption0RequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsGetResultEventsItemOption0RequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsGetResultEventsItemOption0RequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
     public var `kind`: RequestsGetResultEventsItemOption0RequestKind
     public var `id`: String
@@ -20495,10 +22095,11 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
     public var `fields`: [RequestsGetResultEventsItemOption0RequestFieldsItem]?
     public var `actions`: [RequestsGetResultEventsItemOption0RequestActionsItem]?
     public var `buttons`: RequestsGetResultEventsItemOption0RequestButtons?
+    public var `rows`: [RequestsGetResultEventsItemOption0RequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsGetResultEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsGetResultEventsItemOption0RequestOpen? = nil, `fields`: [RequestsGetResultEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsGetResultEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsGetResultEventsItemOption0RequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsGetResultEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsGetResultEventsItemOption0RequestOpen? = nil, `fields`: [RequestsGetResultEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsGetResultEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsGetResultEventsItemOption0RequestButtons? = nil, `rows`: [RequestsGetResultEventsItemOption0RequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -20507,11 +22108,12 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsGetResultEventsItemOption0RequestKind.self, forKey: .`kind`)
@@ -20522,6 +22124,7 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsGetResultEventsItemOption0RequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsGetResultEventsItemOption0RequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsGetResultEventsItemOption0RequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsGetResultEventsItemOption0RequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -20536,6 +22139,7 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -20653,14 +22257,16 @@ public struct RequestsGetResultEventsItemOption2: Codable, Sendable {
     public var `via`: String
     public var `elevation`: String?
     public var `method`: RequestsGetResultEventsItemOption2Method
-    public init(`type`: RequestsGetResultEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsGetResultEventsItemOption2Method) {
+    public var `picked`: [String]?
+    public init(`type`: RequestsGetResultEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsGetResultEventsItemOption2Method, `picked`: [String]? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`elevation` = `elevation`
         self.`method` = `method`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsGetResultEventsItemOption2Type.self, forKey: .`type`)
@@ -20668,6 +22274,7 @@ public struct RequestsGetResultEventsItemOption2: Codable, Sendable {
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
         self.`method` = try box.decode(RequestsGetResultEventsItemOption2Method.self, forKey: .`method`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20676,6 +22283,7 @@ public struct RequestsGetResultEventsItemOption2: Codable, Sendable {
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`elevation`, forKey: .`elevation`)
         try box.encode(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -20910,7 +22518,8 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsGetResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsGetResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestsGetResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsGetResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -20922,8 +22531,9 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -20937,6 +22547,7 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20951,6 +22562,7 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -21167,6 +22779,122 @@ public struct RequestsListResultItemRequestButtons: Codable, Sendable {
     }
 }
 
+public enum RequestsListResultItemRequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsListResultItemRequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsListResultItemRequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsListResultItemRequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemRequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsListResultItemRequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsListResultItemRequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsListResultItemRequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsListResultItemRequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemRequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsListResultItemRequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsListResultItemRequestRowsItemActionOption0)
+    case option1(RequestsListResultItemRequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsListResultItemRequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsListResultItemRequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsListResultItemRequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsListResultItemRequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsListResultItemRequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsListResultItemRequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsListResultItemRequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsListResultItemRequest: Codable, Sendable {
     public var `kind`: RequestsListResultItemRequestKind
     public var `id`: String
@@ -21176,10 +22904,11 @@ public struct RequestsListResultItemRequest: Codable, Sendable {
     public var `fields`: [RequestsListResultItemRequestFieldsItem]?
     public var `actions`: [RequestsListResultItemRequestActionsItem]?
     public var `buttons`: RequestsListResultItemRequestButtons?
+    public var `rows`: [RequestsListResultItemRequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsListResultItemRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsListResultItemRequestOpen? = nil, `fields`: [RequestsListResultItemRequestFieldsItem]? = nil, `actions`: [RequestsListResultItemRequestActionsItem]? = nil, `buttons`: RequestsListResultItemRequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsListResultItemRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsListResultItemRequestOpen? = nil, `fields`: [RequestsListResultItemRequestFieldsItem]? = nil, `actions`: [RequestsListResultItemRequestActionsItem]? = nil, `buttons`: RequestsListResultItemRequestButtons? = nil, `rows`: [RequestsListResultItemRequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -21188,11 +22917,12 @@ public struct RequestsListResultItemRequest: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsListResultItemRequestKind.self, forKey: .`kind`)
@@ -21203,6 +22933,7 @@ public struct RequestsListResultItemRequest: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestsListResultItemRequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsListResultItemRequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsListResultItemRequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsListResultItemRequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -21217,6 +22948,7 @@ public struct RequestsListResultItemRequest: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -21404,6 +23136,122 @@ public struct RequestsListResultItemEventsItemOption0RequestButtons: Codable, Se
     }
 }
 
+public enum RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestsListResultItemEventsItemOption0RequestRowsItemAction: Codable, Sendable {
+    case option0(RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0)
+    case option1(RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestsListResultItemEventsItemOption0RequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestsListResultItemEventsItemOption0RequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestsListResultItemEventsItemOption0RequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestsListResultItemEventsItemOption0RequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestsListResultItemEventsItemOption0RequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestsListResultItemEventsItemOption0RequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestsListResultItemEventsItemOption0RequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable {
     public var `kind`: RequestsListResultItemEventsItemOption0RequestKind
     public var `id`: String
@@ -21413,10 +23261,11 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
     public var `fields`: [RequestsListResultItemEventsItemOption0RequestFieldsItem]?
     public var `actions`: [RequestsListResultItemEventsItemOption0RequestActionsItem]?
     public var `buttons`: RequestsListResultItemEventsItemOption0RequestButtons?
+    public var `rows`: [RequestsListResultItemEventsItemOption0RequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestsListResultItemEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsListResultItemEventsItemOption0RequestOpen? = nil, `fields`: [RequestsListResultItemEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsListResultItemEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsListResultItemEventsItemOption0RequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestsListResultItemEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestsListResultItemEventsItemOption0RequestOpen? = nil, `fields`: [RequestsListResultItemEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestsListResultItemEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestsListResultItemEventsItemOption0RequestButtons? = nil, `rows`: [RequestsListResultItemEventsItemOption0RequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -21425,11 +23274,12 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsListResultItemEventsItemOption0RequestKind.self, forKey: .`kind`)
@@ -21440,6 +23290,7 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
         self.`fields` = try box.decodeIfPresent([RequestsListResultItemEventsItemOption0RequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestsListResultItemEventsItemOption0RequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestsListResultItemEventsItemOption0RequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestsListResultItemEventsItemOption0RequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -21454,6 +23305,7 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -21571,14 +23423,16 @@ public struct RequestsListResultItemEventsItemOption2: Codable, Sendable {
     public var `via`: String
     public var `elevation`: String?
     public var `method`: RequestsListResultItemEventsItemOption2Method
-    public init(`type`: RequestsListResultItemEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsListResultItemEventsItemOption2Method) {
+    public var `picked`: [String]?
+    public init(`type`: RequestsListResultItemEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestsListResultItemEventsItemOption2Method, `picked`: [String]? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`elevation` = `elevation`
         self.`method` = `method`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsListResultItemEventsItemOption2Type.self, forKey: .`type`)
@@ -21586,6 +23440,7 @@ public struct RequestsListResultItemEventsItemOption2: Codable, Sendable {
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
         self.`method` = try box.decode(RequestsListResultItemEventsItemOption2Method.self, forKey: .`method`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -21594,6 +23449,7 @@ public struct RequestsListResultItemEventsItemOption2: Codable, Sendable {
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`elevation`, forKey: .`elevation`)
         try box.encode(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -21828,7 +23684,8 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsListResultItemOutcomeStatus, `reason`: String? = nil, `method`: RequestsListResultItemOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestsListResultItemOutcomeStatus, `reason`: String? = nil, `method`: RequestsListResultItemOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -21840,8 +23697,9 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -21855,6 +23713,7 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -21869,6 +23728,7 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -21952,7 +23812,8 @@ public struct RequestsPresentResult: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsPresentResultStatus, `reason`: String? = nil, `method`: RequestsPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestsPresentResultStatus, `reason`: String? = nil, `method`: RequestsPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -21964,8 +23825,9 @@ public struct RequestsPresentResult: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -21979,6 +23841,7 @@ public struct RequestsPresentResult: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -21993,6 +23856,7 @@ public struct RequestsPresentResult: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -22040,7 +23904,8 @@ public struct RequestsWithdrawResult: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsWithdrawResultStatus, `reason`: String? = nil, `method`: RequestsWithdrawResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestsWithdrawResultStatus, `reason`: String? = nil, `method`: RequestsWithdrawResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -22052,8 +23917,9 @@ public struct RequestsWithdrawResult: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -22067,6 +23933,7 @@ public struct RequestsWithdrawResult: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -22081,6 +23948,7 @@ public struct RequestsWithdrawResult: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -22249,6 +24117,122 @@ public struct RequestPresentParamsButtons: Codable, Sendable {
     }
 }
 
+public enum RequestPresentParamsRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestPresentParamsRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestPresentParamsRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestPresentParamsRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestPresentParamsRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestPresentParamsRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestPresentParamsRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestPresentParamsRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestPresentParamsRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestPresentParamsRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestPresentParamsRowsItemAction: Codable, Sendable {
+    case option0(RequestPresentParamsRowsItemActionOption0)
+    case option1(RequestPresentParamsRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestPresentParamsRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestPresentParamsRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestPresentParamsRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestPresentParamsRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestPresentParamsRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestPresentParamsRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestPresentParamsRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestPresentParams: Codable, Sendable {
     public var `kind`: RequestPresentParamsKind
     public var `id`: String
@@ -22258,10 +24242,11 @@ public struct RequestPresentParams: Codable, Sendable {
     public var `fields`: [RequestPresentParamsFieldsItem]?
     public var `actions`: [RequestPresentParamsActionsItem]?
     public var `buttons`: RequestPresentParamsButtons?
+    public var `rows`: [RequestPresentParamsRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestPresentParamsKind, `id`: String, `title`: String, `reason`: String, `open`: RequestPresentParamsOpen? = nil, `fields`: [RequestPresentParamsFieldsItem]? = nil, `actions`: [RequestPresentParamsActionsItem]? = nil, `buttons`: RequestPresentParamsButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestPresentParamsKind, `id`: String, `title`: String, `reason`: String, `open`: RequestPresentParamsOpen? = nil, `fields`: [RequestPresentParamsFieldsItem]? = nil, `actions`: [RequestPresentParamsActionsItem]? = nil, `buttons`: RequestPresentParamsButtons? = nil, `rows`: [RequestPresentParamsRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -22270,11 +24255,12 @@ public struct RequestPresentParams: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestPresentParamsKind.self, forKey: .`kind`)
@@ -22285,6 +24271,7 @@ public struct RequestPresentParams: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestPresentParamsFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestPresentParamsActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestPresentParamsButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestPresentParamsRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -22299,6 +24286,7 @@ public struct RequestPresentParams: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -22333,7 +24321,8 @@ public struct RequestPresentResult: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestPresentResultStatus, `reason`: String? = nil, `method`: RequestPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestPresentResultStatus, `reason`: String? = nil, `method`: RequestPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -22345,8 +24334,9 @@ public struct RequestPresentResult: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -22360,6 +24350,7 @@ public struct RequestPresentResult: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -22374,6 +24365,7 @@ public struct RequestPresentResult: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -22582,6 +24574,122 @@ public struct RequestChangedEventRequestButtons: Codable, Sendable {
     }
 }
 
+public enum RequestChangedEventRequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestChangedEventRequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestChangedEventRequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestChangedEventRequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventRequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestChangedEventRequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestChangedEventRequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestChangedEventRequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestChangedEventRequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventRequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestChangedEventRequestRowsItemAction: Codable, Sendable {
+    case option0(RequestChangedEventRequestRowsItemActionOption0)
+    case option1(RequestChangedEventRequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestChangedEventRequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestChangedEventRequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestChangedEventRequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestChangedEventRequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestChangedEventRequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestChangedEventRequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestChangedEventRequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestChangedEventRequest: Codable, Sendable {
     public var `kind`: RequestChangedEventRequestKind
     public var `id`: String
@@ -22591,10 +24699,11 @@ public struct RequestChangedEventRequest: Codable, Sendable {
     public var `fields`: [RequestChangedEventRequestFieldsItem]?
     public var `actions`: [RequestChangedEventRequestActionsItem]?
     public var `buttons`: RequestChangedEventRequestButtons?
+    public var `rows`: [RequestChangedEventRequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestChangedEventRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestChangedEventRequestOpen? = nil, `fields`: [RequestChangedEventRequestFieldsItem]? = nil, `actions`: [RequestChangedEventRequestActionsItem]? = nil, `buttons`: RequestChangedEventRequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestChangedEventRequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestChangedEventRequestOpen? = nil, `fields`: [RequestChangedEventRequestFieldsItem]? = nil, `actions`: [RequestChangedEventRequestActionsItem]? = nil, `buttons`: RequestChangedEventRequestButtons? = nil, `rows`: [RequestChangedEventRequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -22603,11 +24712,12 @@ public struct RequestChangedEventRequest: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestChangedEventRequestKind.self, forKey: .`kind`)
@@ -22618,6 +24728,7 @@ public struct RequestChangedEventRequest: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestChangedEventRequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestChangedEventRequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestChangedEventRequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestChangedEventRequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -22632,6 +24743,7 @@ public struct RequestChangedEventRequest: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -22819,6 +24931,122 @@ public struct RequestChangedEventEventsItemOption0RequestButtons: Codable, Senda
     }
 }
 
+public enum RequestChangedEventEventsItemOption0RequestRowsItemActionOption0Kind: String, Codable, Sendable {
+    case value0 = "play-meeting"
+}
+
+public struct RequestChangedEventEventsItemOption0RequestRowsItemActionOption0: Codable, Sendable {
+    public var `kind`: RequestChangedEventEventsItemOption0RequestRowsItemActionOption0Kind
+    public var `label`: String
+    public var `meeting`: String
+    public var `fromSec`: Double
+    public var `toSec`: Double
+    public var `track`: String?
+    public init(`kind`: RequestChangedEventEventsItemOption0RequestRowsItemActionOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`meeting` = `meeting`
+        self.`fromSec` = `fromSec`
+        self.`toSec` = `toSec`
+        self.`track` = `track`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventEventsItemOption0RequestRowsItemActionOption0Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
+        self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
+        self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`meeting`, forKey: .`meeting`)
+        try box.encode(`fromSec`, forKey: .`fromSec`)
+        try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
+    }
+}
+
+public enum RequestChangedEventEventsItemOption0RequestRowsItemActionOption1Kind: String, Codable, Sendable {
+    case value0 = "open-link"
+}
+
+public struct RequestChangedEventEventsItemOption0RequestRowsItemActionOption1: Codable, Sendable {
+    public var `kind`: RequestChangedEventEventsItemOption0RequestRowsItemActionOption1Kind
+    public var `label`: String
+    public var `url`: String
+    public init(`kind`: RequestChangedEventEventsItemOption0RequestRowsItemActionOption1Kind, `label`: String, `url`: String) {
+        self.`kind` = `kind`
+        self.`label` = `label`
+        self.`url` = `url`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `url` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventEventsItemOption0RequestRowsItemActionOption1Kind.self, forKey: .`kind`)
+        self.`label` = try box.decode(String.self, forKey: .`label`)
+        self.`url` = try box.decode(String.self, forKey: .`url`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`label`, forKey: .`label`)
+        try box.encode(`url`, forKey: .`url`)
+    }
+}
+
+public enum RequestChangedEventEventsItemOption0RequestRowsItemAction: Codable, Sendable {
+    case option0(RequestChangedEventEventsItemOption0RequestRowsItemActionOption0)
+    case option1(RequestChangedEventEventsItemOption0RequestRowsItemActionOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? RequestChangedEventEventsItemOption0RequestRowsItemActionOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? RequestChangedEventEventsItemOption0RequestRowsItemActionOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No RequestChangedEventEventsItemOption0RequestRowsItemAction variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct RequestChangedEventEventsItemOption0RequestRowsItem: Codable, Sendable {
+    public var `id`: String
+    public var `title`: String
+    public var `quote`: String?
+    public var `detail`: String?
+    public var `action`: RequestChangedEventEventsItemOption0RequestRowsItemAction?
+    public init(`id`: String, `title`: String, `quote`: String? = nil, `detail`: String? = nil, `action`: RequestChangedEventEventsItemOption0RequestRowsItemAction? = nil) {
+        self.`id` = `id`
+        self.`title` = `title`
+        self.`quote` = `quote`
+        self.`detail` = `detail`
+        self.`action` = `action`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `quote`; case `detail`; case `action` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`quote` = try box.decodeIfPresent(String.self, forKey: .`quote`)
+        self.`detail` = try box.decodeIfPresent(String.self, forKey: .`detail`)
+        self.`action` = try box.decodeIfPresent(RequestChangedEventEventsItemOption0RequestRowsItemAction.self, forKey: .`action`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encodeIfPresent(`quote`, forKey: .`quote`)
+        try box.encodeIfPresent(`detail`, forKey: .`detail`)
+        try box.encodeIfPresent(`action`, forKey: .`action`)
+    }
+}
+
 public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
     public var `kind`: RequestChangedEventEventsItemOption0RequestKind
     public var `id`: String
@@ -22828,10 +25056,11 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
     public var `fields`: [RequestChangedEventEventsItemOption0RequestFieldsItem]?
     public var `actions`: [RequestChangedEventEventsItemOption0RequestActionsItem]?
     public var `buttons`: RequestChangedEventEventsItemOption0RequestButtons?
+    public var `rows`: [RequestChangedEventEventsItemOption0RequestRowsItem]?
     public var `createdAt`: String
     public var `deadlineSeconds`: Double?
     public var `takesFocus`: Bool?
-    public init(`kind`: RequestChangedEventEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestChangedEventEventsItemOption0RequestOpen? = nil, `fields`: [RequestChangedEventEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestChangedEventEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestChangedEventEventsItemOption0RequestButtons? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
+    public init(`kind`: RequestChangedEventEventsItemOption0RequestKind, `id`: String, `title`: String, `reason`: String, `open`: RequestChangedEventEventsItemOption0RequestOpen? = nil, `fields`: [RequestChangedEventEventsItemOption0RequestFieldsItem]? = nil, `actions`: [RequestChangedEventEventsItemOption0RequestActionsItem]? = nil, `buttons`: RequestChangedEventEventsItemOption0RequestButtons? = nil, `rows`: [RequestChangedEventEventsItemOption0RequestRowsItem]? = nil, `createdAt`: String, `deadlineSeconds`: Double? = nil, `takesFocus`: Bool? = nil) {
         self.`kind` = `kind`
         self.`id` = `id`
         self.`title` = `title`
@@ -22840,11 +25069,12 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
         self.`fields` = `fields`
         self.`actions` = `actions`
         self.`buttons` = `buttons`
+        self.`rows` = `rows`
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `open`; case `fields`; case `actions`; case `buttons`; case `rows`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestChangedEventEventsItemOption0RequestKind.self, forKey: .`kind`)
@@ -22855,6 +25085,7 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
         self.`fields` = try box.decodeIfPresent([RequestChangedEventEventsItemOption0RequestFieldsItem].self, forKey: .`fields`)
         self.`actions` = try box.decodeIfPresent([RequestChangedEventEventsItemOption0RequestActionsItem].self, forKey: .`actions`)
         self.`buttons` = try box.decodeIfPresent(RequestChangedEventEventsItemOption0RequestButtons.self, forKey: .`buttons`)
+        self.`rows` = try box.decodeIfPresent([RequestChangedEventEventsItemOption0RequestRowsItem].self, forKey: .`rows`)
         self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
         self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
         self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
@@ -22869,6 +25100,7 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`actions`, forKey: .`actions`)
         try box.encodeIfPresent(`buttons`, forKey: .`buttons`)
+        try box.encodeIfPresent(`rows`, forKey: .`rows`)
         try box.encode(`createdAt`, forKey: .`createdAt`)
         try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
         try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
@@ -22986,14 +25218,16 @@ public struct RequestChangedEventEventsItemOption2: Codable, Sendable {
     public var `via`: String
     public var `elevation`: String?
     public var `method`: RequestChangedEventEventsItemOption2Method
-    public init(`type`: RequestChangedEventEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestChangedEventEventsItemOption2Method) {
+    public var `picked`: [String]?
+    public init(`type`: RequestChangedEventEventsItemOption2Type, `at`: String, `via`: String, `elevation`: String? = nil, `method`: RequestChangedEventEventsItemOption2Method, `picked`: [String]? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`elevation` = `elevation`
         self.`method` = `method`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestChangedEventEventsItemOption2Type.self, forKey: .`type`)
@@ -23001,6 +25235,7 @@ public struct RequestChangedEventEventsItemOption2: Codable, Sendable {
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
         self.`method` = try box.decode(RequestChangedEventEventsItemOption2Method.self, forKey: .`method`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -23009,6 +25244,7 @@ public struct RequestChangedEventEventsItemOption2: Codable, Sendable {
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`elevation`, forKey: .`elevation`)
         try box.encode(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 
@@ -23243,7 +25479,8 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestChangedEventOutcomeStatus, `reason`: String? = nil, `method`: RequestChangedEventOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public var `picked`: [String]?
+    public init(`id`: String, `status`: RequestChangedEventOutcomeStatus, `reason`: String? = nil, `method`: RequestChangedEventOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil, `picked`: [String]? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -23255,8 +25492,9 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
         self.`manual` = `manual`
+        self.`picked` = `picked`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual`; case `picked` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
@@ -23270,6 +25508,7 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
         self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
         self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+        self.`picked` = try box.decodeIfPresent([String].self, forKey: .`picked`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -23284,6 +25523,7 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
         try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
         try box.encodeIfPresent(`verified`, forKey: .`verified`)
         try box.encodeIfPresent(`manual`, forKey: .`manual`)
+        try box.encodeIfPresent(`picked`, forKey: .`picked`)
     }
 }
 

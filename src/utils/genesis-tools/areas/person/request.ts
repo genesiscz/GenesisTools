@@ -12,6 +12,17 @@ import { Delivery, type DeliveryName, deliverySchema, personConfigSchema } from 
 import type { RequestJournal, RequestView } from "./journal";
 import { requestActionLine, requestActionSchema, requestButtonLabelSchema } from "./request-actions";
 
+/** One thing a request asks about, ticked on its own: what it is, the words it rests on, and a button to check it. */
+export const requestRowSchema = z.object({
+    id: z.string().min(1).max(200),
+    title: z.string().min(1).max(200),
+    /** The words the row rests on, shown quoted (what the person said, as an agent relayed it). */
+    quote: z.string().max(2000).optional(),
+    /** One more line under the title (where, when, who relayed it). */
+    detail: z.string().max(500).optional(),
+    action: requestActionSchema.optional(),
+});
+
 /** A request id: the journal stores it whole in the posted event and names the file by its digest. */
 export const REQUEST_ID_PATTERN = /^[a-zA-Z0-9:._-]{1,500}$/;
 
@@ -47,17 +58,33 @@ export const noticeInputSchema = z.object({
     buttons: z
         .object({ confirm: requestButtonLabelSchema.optional(), decline: requestButtonLabelSchema.optional() })
         .optional(),
+    /**
+     * The things one answer covers, each with its own tick (all ticked at first) and its own extra button (Play the
+     * clip it is about). `confirm` answers done with the ids still ticked (`picked` on the outcome); with every row
+     * unticked it cannot be pressed. A surface without ticks (the system dialog, a terminal) lists the rows, and its
+     * confirm covers every row.
+     */
+    rows: z.array(requestRowSchema).min(1).max(40).optional(),
 });
 export type NoticeInput = z.infer<typeof noticeInputSchema>;
+export type RequestRow = z.infer<typeof requestRowSchema>;
 
 /**
  * The request as plain text, for a surface that shows no rows and no buttons (the system dialog, a terminal): the
  * reason, then each field as `Label: value`, then each action as the command or page a person can use instead.
  */
-export function requestPlainText(request: Pick<NoticeInput, "reason" | "fields" | "actions">): string {
+export function requestPlainText(request: Pick<NoticeInput, "reason" | "fields" | "actions" | "rows">): string {
     const fields = (request.fields ?? []).map((field) => `${field.label}: ${field.value}`);
     const actions = (request.actions ?? []).map((action) => requestActionLine(action));
-    return [request.reason, ...(fields.length || actions.length ? ["", ...fields, ...actions] : [])].join("\n");
+    const rows = (request.rows ?? []).flatMap((row) => [
+        `- ${row.title}${row.quote ? `: "${row.quote}"` : ""}`,
+        ...(row.detail ? [`  ${row.detail}`] : []),
+        ...(row.action ? [`  ${requestActionLine(row.action)}`] : []),
+    ]);
+    const covers = rows.length ? ["", "Confirming here covers every row above.", ...rows] : [];
+    return [request.reason, ...(fields.length || actions.length ? ["", ...fields, ...actions] : []), ...covers].join(
+        "\n"
+    );
 }
 
 export const requestSchema = noticeInputSchema.extend({
@@ -80,6 +107,8 @@ export const requestOutcomeSchema = z.object({
     outputTail: z.string().optional(),
     verified: z.boolean().nullable().optional(),
     manual: z.string().optional(),
+    /** A request with `rows` answered done in a window with ticks: the ids still ticked. Absent covers every row. */
+    picked: z.array(z.string()).optional(),
 });
 export type RequestOutcome = z.infer<typeof requestOutcomeSchema>;
 export const requestConfigSchema = z.object({ delivery: deliverySchema.default(Delivery.askNow) });
@@ -247,6 +276,7 @@ export function defineRequest<TArgs extends z.ZodType>(spec: {
                     return journal.settle(current.id, value.status, value.reason, {
                         via: value.via,
                         method: value.method,
+                        picked: value.picked,
                     });
                 }
 
