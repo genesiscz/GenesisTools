@@ -336,17 +336,21 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
 }
 
 /**
- * A play from `fromSec` on through one track: each of its pieces from there to the track's end, in order, as a slice of
- * its file. A piece starts where the one before it ended, so an overlap plays once, and the time between two pieces
- * (nothing was recorded) is skipped. A muted or lost span plays as the silence the file holds: the asked second chose
- * the track, and a later span that was not heard never switches it.
+ * A play from `span.fromSec` on through one track: each of its pieces from there to `span.toSec` (else the track's end),
+ * in order, as a slice of its file. A piece starts where the one before it ended, so an overlap plays once, and the
+ * time between two pieces (nothing was recorded) is skipped. A muted or lost span plays as the silence the file holds:
+ * the asked second chose the track, and a later span that was not heard never switches it.
  */
-export function soundRun(track: SoundTrack, fromSec: number): SoundSlice[] {
+export function soundRun(track: SoundTrack, span: { fromSec: number; toSec?: number }): SoundSlice[] {
     const parts: SoundSlice[] = [];
-    let playedToSec = fromSec;
+    let playedToSec = span.fromSec;
 
     for (const piece of track.pieces) {
         const endSec = piece.zeroSec + piece.durationSec;
+
+        if (span.toSec !== undefined && piece.zeroSec >= span.toSec) {
+            break;
+        }
 
         if (endSec <= playedToSec) {
             continue;
@@ -357,7 +361,8 @@ export function soundRun(track: SoundTrack, fromSec: number): SoundSlice[] {
             path: piece.path,
             ...(piece.channel !== undefined ? { channel: piece.channel } : {}),
             fileFromSec: Math.max(playedToSec, piece.zeroSec) - piece.zeroSec,
-            fileToSec: piece.durationSec,
+            fileToSec:
+                span.toSec === undefined ? piece.durationSec : Math.min(piece.durationSec, span.toSec - piece.zeroSec),
             clock: track.clock,
         });
         playedToSec = endSec;

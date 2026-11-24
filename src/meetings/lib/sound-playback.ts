@@ -34,8 +34,10 @@ export type PlayPart = Pick<SoundSlice, "path" | "channel" | "fileFromSec" | "fi
 export interface SliceOpening {
     audioPath: string;
     startSec: number;
-    /** `audioPath` is a WAV cut from the first part into the clip cache; it exists once `cutSlice` ran. */
+    /** `audioPath` is a WAV cut into the clip cache from the first `cutParts` parts; it exists once `cutSlice` ran. */
     cut: boolean;
+    /** With `cut`: how many of the first `parts` the WAV holds, joined (a range over two pieces holds both). */
+    cutParts?: number;
     /** What plays, in order: a range is one part; a play from a time goes on through the track's later pieces. */
     parts: PlayPart[];
     /** The list the player reads the parts from (ffplay's concat list), written into the clip cache at the start. */
@@ -68,12 +70,15 @@ export function slicePlaybackPlan(options: {
     const { slice, player } = options;
 
     if (!options.openEnded) {
-        const audioPath = sliceCachePath(slice);
+        // A range is one WAV: a range over a piece boundary joins the pieces it covers.
+        const parts = [slice, ...(options.next ?? [])].map(playPart);
+        const audioPath = sliceCachePath(slice, parts.slice(1));
         return {
             audioPath,
             startSec: 0,
             cut: true,
-            parts: [playPart(slice)],
+            cutParts: parts.length,
+            parts,
             player: player.id,
             argv: player.fromArgv(audioPath, 0),
         };
@@ -120,6 +125,7 @@ export function slicePlaybackPlan(options: {
         audioPath,
         startSec: 0,
         cut: true,
+        cutParts: 1,
         parts,
         ...(opening.list ? { list: opening.list } : {}),
         player: player.id,
@@ -141,10 +147,10 @@ function playPart(slice: PlayPart): PlayPart {
  * `play`. A list is renamed into place, so a player never reads it half written.
  */
 export async function startPlaybackPlan(plan: SlicePlaybackPlan): Promise<number> {
-    const [first] = plan.parts;
+    const [first, ...rest] = plan.parts.slice(0, plan.cutParts ?? 1);
 
     if (plan.cut && first) {
-        await cutSlice({ slice: first, path: plan.audioPath });
+        await cutSlice({ slice: first, next: rest, path: plan.audioPath });
     }
 
     if (plan.list) {
@@ -164,7 +170,7 @@ export async function startPlaybackPlan(plan: SlicePlaybackPlan): Promise<number
  * Where a cut slice goes: `<clip cache>/<meeting>/<time>-<track>-<key>.wav`, the key from the recording (its path, time
  * and size), the channel and the file seconds, so the same slice of the same recording is cut once.
  */
-function sliceCachePath(slice: MeetingSlice): string {
+function sliceCachePath(slice: MeetingSlice, next: readonly PlayPart[] = []): string {
     const { mtimeMs, size } = statSync(slice.path);
     const key = Bun.hash(
         SafeJSON.stringify([
@@ -175,6 +181,8 @@ function sliceCachePath(slice: MeetingSlice): string {
             slice.channel ?? null,
             slice.fileFromSec,
             slice.fileToSec,
+            // A cut that joins later pieces names them; a cut of one file keeps its earlier key.
+            ...(next.length > 0 ? [next.map((part) => [part.path, part.fileFromSec, part.fileToSec])] : []),
         ])
     ).toString(36);
     const name = `${formatClock(slice.fromSec)}-${slice.track}`.replace(/[^\p{L}\p{N}]+/gu, "-");
@@ -182,12 +190,13 @@ function sliceCachePath(slice: MeetingSlice): string {
 }
 
 /**
- * Cuts a slice to the WAV `path` at the recording's own rate, one channel when the slice names one. A cut made before
- * is used again (its time is touched, so the cache keeps it longest); a new one is written beside it and renamed over
- * it, so a player never opens it half written.
+ * Cuts a slice to the WAV `path` at the recording's own rate, one channel when the slice names one; `next` parts (the
+ * later pieces of a range) are joined after it. A cut made before is used again (its time is touched, so the cache
+ * keeps it longest); a new one is written beside it and renamed over it, so a player never opens it half written.
  */
-export async function cutSlice(options: { slice: PlayPart; path: string }): Promise<void> {
+export async function cutSlice(options: { slice: PlayPart; next?: readonly PlayPart[]; path: string }): Promise<void> {
     const { slice, path } = options;
+    const parts = [slice, ...(options.next ?? [])];
 
     if (existsSync(path)) {
         const now = new Date();
@@ -208,13 +217,37 @@ export async function cutSlice(options: { slice: PlayPart; path: string }): Prom
         "error",
         "-nostdin",
         "-y",
-        "-ss",
-        String(slice.fileFromSec),
-        "-i",
-        slice.path,
-        "-t",
-        String(slice.fileToSec - slice.fileFromSec),
-        ...(slice.channel === undefined ? [] : ["-af", channelFilter(slice.channel)]),
+        ...(parts.length === 1
+            ? [
+                  "-ss",
+                  String(slice.fileFromSec),
+                  "-i",
+                  slice.path,
+                  "-t",
+                  String(slice.fileToSec - slice.fileFromSec),
+                  ...(slice.channel === undefined ? [] : ["-af", channelFilter(slice.channel)]),
+              ]
+            : [
+                  ...parts.flatMap((part) => [
+                      "-ss",
+                      String(part.fileFromSec),
+                      "-t",
+                      String(part.fileToSec - part.fileFromSec),
+                      "-i",
+                      part.path,
+                  ]),
+                  "-filter_complex",
+                  `${parts
+                      .map(
+                          (part, index) =>
+                              `[${index}:a]${part.channel === undefined ? "anull" : channelFilter(part.channel)}[a${index}]`
+                      )
+                      .join(
+                          ";"
+                      )};${parts.map((_, index) => `[a${index}]`).join("")}concat=n=${parts.length}:v=0:a=1[out]`,
+                  "-map",
+                  "[out]",
+              ]),
         "-c:a",
         "pcm_s16le",
         partial,
@@ -334,15 +367,19 @@ async function listenAt(options: {
     return { sound, seat, ...(at ? { at } : {}) };
 }
 
-/** A range in one file: the best track of the seat heard at `atSec` (or `track`) from `fromSec` to `toSec`. */
-export async function playbackSlice(options: {
+/**
+ * A range: the best track of the seat heard at `atSec` (or `track`) from `fromSec` to `toSec`, in one file when one
+ * piece holds it. A range over a piece boundary of a recorder track is the pieces it covers (`soundRun`), cut joined;
+ * a muted or lost span in it plays as the silence the file holds.
+ */
+export async function playbackRange(options: {
     opened: OpenedMeeting;
     atSec: number;
     fromSec: number;
     toSec: number;
     track?: TrackKind;
-}): Promise<SoundSlice> {
-    const { sound, seat } = await listenAt(options);
+}): Promise<[SoundSlice, ...SoundSlice[]]> {
+    const { sound, seat, at } = await listenAt(options);
     const slice = sound.slice({
         seat,
         fromSec: options.fromSec,
@@ -350,10 +387,19 @@ export async function playbackSlice(options: {
         purpose: "listen",
         ...(options.track ? { track: options.track } : {}),
     });
-    if (!slice) {
+
+    if (slice) {
+        return [slice];
+    }
+
+    const track = sound.tracks.find((one) => one.kind === at?.track);
+    const [first, ...next] = track ? soundRun(track, { fromSec: options.fromSec, toSec: options.toSec }) : [];
+
+    if (!first || next.length === 0) {
         throw new Error("No audible track covers this interval; choose a shorter interval or another --track.");
     }
-    return slice;
+
+    return [first, ...next];
 }
 
 /**
@@ -368,7 +414,7 @@ export async function playbackRun(options: {
 }): Promise<[SoundSlice, ...SoundSlice[]]> {
     const { sound, at } = await listenAt(options);
     const track = sound.tracks.find((one) => one.kind === at?.track);
-    const [first, ...next] = track ? soundRun(track, options.fromSec) : [];
+    const [first, ...next] = track ? soundRun(track, { fromSec: options.fromSec }) : [];
     if (!first) {
         throw new Error("No audible track covers this time; choose another --track with a track listed by show.");
     }

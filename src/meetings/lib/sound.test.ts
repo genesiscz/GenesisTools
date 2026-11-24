@@ -825,14 +825,11 @@ describe("soundRun", () => {
             ],
             source: { path: "/sources/call.ogg", source: "wisprflow", layout: "right-mic", durationSec: 3600 },
         });
-        const run = (kind: string, fromSec: number) => {
+        const run = (kind: string, fromSec: number, toSec?: number) => {
             const track = sound.tracks.find((one) => one.kind === kind);
-            return (track ? soundRun(track, fromSec) : []).map((part) => [
-                part.path,
-                part.channel,
-                Number(part.fileFromSec.toFixed(3)),
-                part.fileToSec,
-            ]);
+            return (track ? soundRun(track, { fromSec, ...(toSec === undefined ? {} : { toSec }) }) : []).map(
+                (part) => [part.path, part.channel, Number(part.fileFromSec.toFixed(3)), part.fileToSec]
+            );
         };
 
         expect(run("mic-raw", 45)).toEqual([
@@ -844,6 +841,12 @@ describe("soundRun", () => {
         expect(run("mic-raw", 125)).toEqual([["/meetings/run/audio/p3-mic.m4a", undefined, 0, 60]]);
         expect(run("source-mic", 100)).toEqual([["/sources/call.ogg", 1, 100, 3600]]);
         expect(run("mic-raw", 200)).toEqual([]);
+        // A range ends in the piece that holds its end.
+        expect(run("mic-raw", 45, 135)).toEqual([
+            ["/meetings/run/audio/p1-mic.m4a", undefined, 45, 60],
+            ["/meetings/run/audio/p2-mic.m4a", undefined, 0.002, 60],
+            ["/meetings/run/audio/p3-mic.m4a", undefined, 0, 5],
+        ]);
     });
 });
 
