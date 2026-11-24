@@ -2,7 +2,14 @@ import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { createIdleCloser, DarwinKit, getDarwinKit, type IdleCloser, leaseDarwinKit } from "./darwinkit";
+import {
+    createIdleCloser,
+    type DarwinKit,
+    GuardedDarwinKit,
+    getDarwinKit,
+    type IdleCloser,
+    leaseDarwinKit,
+} from "./darwinkit";
 import type { OcrBlock, OcrLevel, OcrResult } from "./types";
 
 export const OCR_READS = ["frame", "tiles"] as const;
@@ -73,7 +80,7 @@ function recoveryClient(failed: OcrClient): OcrClient {
     }
 
     if (!recoveredClient) {
-        const client = new DarwinKit({ timeout: 60_000, logger, logLevel: "warn" });
+        const client = new GuardedDarwinKit({ timeout: 60_000, logger, logLevel: "warn" });
         const closer = createIdleCloser(() => {
             void client.close();
         });

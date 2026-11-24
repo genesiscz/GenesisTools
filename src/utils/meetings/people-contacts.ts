@@ -1,6 +1,6 @@
 import { meetingsConfigSetCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
-import { createIdleCloser, DarwinKit, type IdleCloser } from "@genesiscz/utils/macos/darwinkit";
+import { createIdleCloser, GuardedDarwinKit, type IdleCloser } from "@genesiscz/utils/macos/darwinkit";
 import { describeResponsibleIdentity } from "@genesiscz/utils/macos/genesis-app";
 import type { PeopleQuery, PeopleSource, SourceAnswer, SourcePerson } from "./people-directory";
 
@@ -62,7 +62,9 @@ export function darwinkitContacts(options: { createClient?: () => ContactsClient
         return createContactsReader(options.createClient);
     }
 
-    sharedContactsReader ??= createContactsReader(() => new DarwinKit({ timeout: 60_000, logger, logLevel: "warn" }));
+    sharedContactsReader ??= createContactsReader(
+        () => new GuardedDarwinKit({ timeout: 60_000, logger, logLevel: "warn" })
+    );
     return sharedContactsReader;
 }
 
