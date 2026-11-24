@@ -274,6 +274,50 @@ function liveDisplaySpans(store: MeetingStore, meetingId: string) {
     return live.running && live.state?.meetingId === meetingId ? live.state.displaySpans : undefined;
 }
 
+/** A meeting's kept frames and when the recorder covered the screen, read once for many moments. */
+export interface ScreenRecordRead {
+    folder: string;
+    /** Transcript second 0 on the wall clock. */
+    zeroMs: number;
+    rows: OcrRow[];
+    /** The rows as frames, without their OCR blocks. */
+    lines: OcrLine[];
+    /** Kept frames the OCR worker has not read yet. */
+    pending: number;
+    spans: RecordedSpan[];
+    displaySpans?: Array<RecordedSpan & { displayId: number }>;
+}
+
+export function readScreenRecord(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    zeroMs: number;
+}): ScreenRecordRead {
+    const { store, record } = options;
+    const folder = store.folder(record.id);
+    const { rows, pending } = readScreenRows(folder);
+    return {
+        folder,
+        zeroMs: options.zeroMs,
+        rows,
+        lines: rows.map((row) => ocrLineSchema.parse(row)),
+        pending,
+        spans: recordedSpans(record),
+        displaySpans: recordedDisplaySpans(record, { live: liveDisplaySpans(store, record.id) }),
+    };
+}
+
+/** The frames on each display at a transcript second: those within half the window of it, and the one still shown. */
+export function screenFramesAt(read: ScreenRecordRead, atSec: number, windowSec: number) {
+    return framesAtPerDisplay({
+        lines: read.lines,
+        spans: read.spans,
+        displaySpans: read.displaySpans,
+        targetMs: read.zeroMs + atSec * 1000,
+        windowMs: windowSec * 1000,
+    });
+}
+
 /** The frames of a meeting at a transcript moment or for a search text, with their boxes when asked. */
 export async function meetingScreen(request: MeetingScreenRequest): Promise<MeetingScreen> {
     const { store, record } = request;
@@ -286,10 +330,8 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
         throw new Error("give a transcript time (atSec) or a text to match");
     }
 
-    const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
-    const { rows, pending } = readScreenRows(folder);
-    const spans = recordedSpans(record);
-    const lines: OcrLine[] = rows.map((row) => ocrLineSchema.parse(row));
+    const read = readScreenRecord({ store, record, zeroMs: (await CallTimeline.forRecord(record)).zeroMs });
+    const { zeroMs, rows, pending, spans } = read;
     const picked =
         request.atSec === undefined
             ? {
@@ -302,13 +344,7 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
                       },
                   ],
               }
-            : framesAtPerDisplay({
-                  lines,
-                  spans,
-                  displaySpans: recordedDisplaySpans(record, { live: liveDisplaySpans(store, record.id) }),
-                  targetMs: zeroMs + request.atSec * 1000,
-                  windowMs: (request.windowSec ?? 30) * 1000,
-              });
+            : screenFramesAt(read, request.atSec, request.windowSec ?? 30);
     const frames = picked.displays
         .flatMap((display) => display.frames)
         .map((frame) => ({ ...frame, meetingSec: (Date.parse(frame.at) - zeroMs) / 1000 }));
