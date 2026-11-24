@@ -566,3 +566,64 @@ test("a people-book merge joins a name-only owner to the one addressed owner of 
     );
     expect(readVoiceLibrary().library.samples).toHaveLength(3);
 });
+
+test("two spellings of one name key without an address stay two owners until a people-book merge holds both", async () => {
+    legacy("one", [print(1)], { name: "alice.example" });
+    legacy("two", [print(2), print(4)], { name: "Example Alice (QT)" });
+    const { readVoiceLibrary, voicesIn } = await library();
+    const rows = () => voicesIn(readVoiceLibrary(), { kind: "all" }).map((r) => [r.owner.name, r.samples.length]);
+    // The people list joins the two by their name key; the voice library waits for an explicit merge.
+    expect(rows()).toEqual([
+        ["alice.example", 1],
+        ["Example Alice (QT)", 2],
+    ]);
+
+    const merge = await new PeopleBook().merge({
+        people: [{ name: "alice.example" }, { name: "Example Alice (QT)" }],
+        name: "Example Alice (QT)",
+    });
+    expect(rows()).toEqual([["Example Alice (QT)", 3]]);
+    await new PeopleBook().unmerge(merge.token);
+    expect(rows()).toHaveLength(2);
+});
+
+test("a rename re-keys every sample of the owner with no refusal, joins an existing owner, and its undo restores them", async () => {
+    legacy("one", [print(1), print(3)], { name: "Speaker Example" });
+    legacy("two", [print(2)], { name: "Wren Example" });
+    const { correctVoiceSample, readVoiceLibrary, refused, upgradeVoiceLibrary, voicesIn } = await library();
+    upgradeVoiceLibrary();
+    const original = readVoiceLibrary().library;
+    const rows = () => voicesIn(readVoiceLibrary(), { kind: "all" }).map((r) => [r.owner.name, r.samples.length]);
+    const ids = original.samples.filter((s) => s.owner.name === "Speaker Example").map((s) => s.id);
+    expect(ids).toHaveLength(2);
+
+    const renamed = correctVoiceSample({ kind: "rename", ids, to: { name: "Finch Example" } });
+    expect(renamed.addedRefusals).toEqual([]);
+    expect(rows()).toEqual([
+        ["Finch Example", 2],
+        ["Wren Example", 1],
+    ]);
+    const after = readVoiceLibrary().library;
+    expect(after.rejected).toEqual([]);
+    expect(after.samples.filter((s) => ids.includes(s.id)).map((s) => [s.owner, s.transferred])).toEqual([
+        [{ name: "Finch Example" }, undefined],
+        [{ name: "Finch Example" }, undefined],
+    ]);
+    expect(after.samples.map((s) => refused(after, s.source, { name: "Speaker Example" }))).toEqual([
+        undefined,
+        undefined,
+        undefined,
+    ]);
+    expect(() => correctVoiceSample({ kind: "rename", ids, to: { name: "Finch Example" } })).toThrow(
+        "Voice attachment conflict: the samples already belong to Finch Example"
+    );
+
+    correctVoiceSample({ kind: "revert", correction: renamed.token });
+    expect(readVoiceLibrary().library.samples).toEqual(original.samples);
+
+    correctVoiceSample({ kind: "rename", ids, to: { name: "Wren Example" } });
+    expect(rows()).toEqual([["Wren Example", 3]]);
+    expect(() => correctVoiceSample({ kind: "rename", ids: ["vs_missing"], to: { name: "Wren Example" } })).toThrow(
+        "Stale voice sample selection."
+    );
+});

@@ -1233,6 +1233,8 @@ type StoredCorrection = Extract<VoiceReceipt, { kind: "correct" }>;
 export type VoiceCorrection = (
     | { kind: "remove"; ids: SampleId[] }
     | { kind: "move"; id: SampleId; to: VoiceOwner }
+    /** Names the owner of these samples again. The voice stays the same person, so no owner is refused. */
+    | { kind: "rename"; ids: SampleId[]; to: VoiceOwner }
     | { kind: "reject"; id: SampleId; reason: Refusal }
     | { kind: "revert"; correction: string }
 ) & {
@@ -1322,6 +1324,18 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
         restoreAt =
             original.positions &&
             receipt.after.map((s) => original.positions![original.before.findIndex((row) => row.id === s.id)]!);
+    } else if (action.kind === "rename") {
+        // Each sample keeps its source, confirmation and position; only its owner's name changes.
+        const ids = new Set(action.ids);
+        receipt.before = library.samples.filter((s) => ids.has(s.id));
+        if (!ids.size || receipt.before.length !== ids.size) {
+            throw new Error("Stale voice sample selection.");
+        }
+        const to = ownerSchema.parse(action.to);
+        if (receipt.before.every((s) => isDeepStrictEqual(s.owner, to))) {
+            throw new Error(`Voice attachment conflict: the samples already belong to ${to.name}.`);
+        }
+        receipt.after = receipt.before.map((s) => ({ ...s, owner: to }));
     } else {
         const ids = new Set(action.kind === "remove" ? action.ids : [action.id]);
         receipt.before = library.samples.filter((s) => ids.has(s.id));
