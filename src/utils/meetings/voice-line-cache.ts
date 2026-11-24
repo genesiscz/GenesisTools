@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -37,12 +38,29 @@ export async function voiceLineCachePath(audioPath: string): Promise<string | un
     return join(store.folder(id), "evidence", "voice-lines.json");
 }
 
-function readEntries(file: string): Entries {
+/**
+ * Parsed cache files, each served while the file keeps its identity. A pass opens one `VoiceLineCache` per audio piece,
+ * and all of them read the meeting's one file: 93 parses of 6.6 MB, 1.3 s of a 2 s naming pass on a 3-hour joined
+ * meeting. A parsed file holds about 3.4 MB of memory.
+ */
+const parsedFiles = new FileIdentityCache<Readonly<Entries>>({ limit: 4 });
+
+function readEntries(file: string): Readonly<Entries> {
     if (!existsSync(file)) {
         return {};
     }
+    // The identity before the read: a write during the read leaves a newer identity, and the next call parses again.
+    const identity = fileIdentity(file);
+    const parsed = parsedFiles.get(file, identity);
+    if (parsed) {
+        return parsed;
+    }
     try {
-        return cacheSchema.parse(SafeJSON.parse(readFileSync(file, "utf8"))).entries;
+        const entries = Object.freeze(cacheSchema.parse(SafeJSON.parse(readFileSync(file, "utf8"))).entries);
+        if (identity) {
+            parsedFiles.set(file, identity, entries);
+        }
+        return entries;
     } catch (error) {
         logger.debug({ error, file }, "Voice line cache is unreadable; recomputing embeddings");
         return {};
@@ -52,7 +70,9 @@ function readEntries(file: string): Entries {
 /** A call-local view; each new embedding pass reopens the persisted results. */
 export class VoiceLineCache {
     private readonly file: string | undefined;
-    private readonly entries: Entries;
+    /** Read only, shared with every other view of the same file version; a lookup takes `changed` first. */
+    private readonly saved: Readonly<Entries>;
+    private readonly fallback: Readonly<Entries>;
     private readonly changed: Entries = {};
 
     constructor(
@@ -65,10 +85,8 @@ export class VoiceLineCache {
         }
     ) {
         this.file = options.cachePath;
-        this.entries = {
-            ...(options.fallbackCachePath ? readEntries(options.fallbackCachePath) : {}),
-            ...(this.file ? readEntries(this.file) : {}),
-        };
+        this.saved = this.file ? readEntries(this.file) : {};
+        this.fallback = options.fallbackCachePath ? readEntries(options.fallbackCachePath) : {};
     }
 
     private key(span: Omit<VoiceEmbeddingProvenance, "source">): string {
@@ -87,13 +105,14 @@ export class VoiceLineCache {
     }
 
     get(span: Omit<VoiceEmbeddingProvenance, "source">): VoiceLineResult | undefined {
-        return this.entries[this.key(span)];
+        const key = this.key(span);
+        return this.changed[key] ?? this.saved[key] ?? this.fallback[key];
     }
 
     set(span: Omit<VoiceEmbeddingProvenance, "source">, result: VoiceLineResult): void {
         const key = this.key(span);
         // Keep the original on-disk representation even when validation of a worker reply reordered its fields.
-        this.changed[key] = this.entries[key] =
+        this.changed[key] =
             result.quality === "ready"
                 ? { model: result.model, embedding: result.embedding, quality: "ready" }
                 : result;
