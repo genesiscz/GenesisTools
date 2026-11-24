@@ -2067,6 +2067,86 @@ describe("play --at past the meeting's end (R2-MC5)", () => {
         expect(pastTheEnd(2800, 2772)).toBeUndefined();
         expect(pastTheEnd(356_400, undefined)).toBeUndefined();
     });
+
+    test("play takes the end from the source's speech segments, for a source-only meeting and a native recording alike", async () => {
+        const store = new MeetingStore();
+        const linked = { sources: { wisprflow: { meetingId: "alice-call", folders: [] } } };
+        const sourceOnly = await store.create(
+            { title: "Source only", start: "2026-11-01T10:00:00Z", createdBy: "new", ...linked },
+            { command: "new", change: "fixture" }
+        );
+        const native = await store.create(
+            { title: "Native", start: "2026-11-01T11:00:00Z", createdBy: "record", ...linked },
+            { command: "new", change: "fixture" }
+        );
+        const unlinked = await store.create(
+            { title: "Recording only", start: "2026-11-01T12:00:00Z", createdBy: "record" },
+            { command: "new", change: "fixture" }
+        );
+        const source = {
+            path: "/fixture/call.ogg",
+            source: "wisprflow" as const,
+            layout: "left-mic" as const,
+            durationSec: 600,
+        };
+        // The recorder ran on to 600 s, long after the last speech at 100 s.
+        const pieces = Array.from({ length: 10 }, (_, index) => ({
+            file: `mic-${index}.m4a`,
+            source: "mic" as const,
+            at: new Date(index * 60_000).toISOString(),
+            durationMs: 60_000,
+            mutedSpans: [],
+        }));
+        const sound = spyOn(OpenedMeeting.prototype, "sound").mockImplementation(async function (this: OpenedMeeting) {
+            return meetingSound({
+                folder: "/fixture",
+                timelineZeroMs: 0,
+                tracks: "best",
+                rows: this.record.id === sourceOnly.id ? [] : pieces,
+                ...(this.record.id === unlinked.id ? {} : { source }),
+            });
+        });
+        const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue({
+            segments: [{ channel: "mic", startSec: 90, endSec: 100 }],
+            speaking: [],
+            files: [],
+        });
+        const printed = spyOn(out, "result").mockImplementation(() => {});
+        const errors: string[] = [];
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+        const raw = spyOn(ui, "raw").mockImplementation(() => {});
+        const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
+        const play = async (...args: string[]) => {
+            errors.length = 0;
+            process.exitCode = 0;
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+            await program.parseAsync(["play", ...args, "--no-start", "--json"], { from: "user" });
+            return { exitCode: process.exitCode, errors: [...errors] };
+        };
+
+        try {
+            const refused = { exitCode: 1, errors: ["--at 03:20 is after the meeting's last speech (01:40)."] };
+            expect(await play(sourceOnly.id, "200", "--track", "source-mic")).toEqual(refused);
+            // The recorder's pieces hold sound to 600 s; the end is still the source's last speech.
+            expect(await play(native.id, "200", "--track", "mic-raw")).toEqual(refused);
+            expect(await play(native.id, "125", "--track", "mic-raw")).toEqual({ exitCode: 0, errors: [] });
+            evidence.mockClear();
+            // No source: no speech end is read, and the recorder's track plays.
+            expect(await play(unlinked.id, "200", "--track", "mic-raw")).toEqual({ exitCode: 0, errors: [] });
+            expect(evidence).not.toHaveBeenCalled();
+        } finally {
+            sound.mockRestore();
+            evidence.mockRestore();
+            printed.mockRestore();
+            err.mockRestore();
+            raw.mockRestore();
+            vlc.mockRestore();
+            process.exitCode = 0;
+        }
+    });
 });
 
 describe("list --json prints one summary row per meeting, and --limit keeps the newest (R2-NR-X3)", () => {
