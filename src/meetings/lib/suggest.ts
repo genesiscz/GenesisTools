@@ -1,6 +1,7 @@
 import { sha256Json } from "@genesiscz/utils/hash";
 import { DEFAULT_APPLY_ABOVE } from "@genesiscz/utils/meetings/config";
 import type { RoomDevice } from "@genesiscz/utils/meetings/people";
+import { RangeStrength, rangeStrength } from "@genesiscz/utils/meetings/range-strength";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople, roomSeatNames, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
@@ -465,6 +466,38 @@ function agreeing(first: NewItem, second: NewItem, applyAbove = DEFAULT_APPLY_AB
     };
 }
 
+/**
+ * The names that the ranges a person or an agent stated give the line of `label` at `at` (a one-second range with a
+ * line address names only that line). A rule's pass may agree with them, never replace them (`rangeStrength`).
+ */
+function statedNames(items: readonly MeetingItem[]) {
+    const byLabel = new Map<string, Array<Extract<MeetingItem, { kind: "speaker-range" }>>>();
+
+    for (const item of items) {
+        if (
+            item.kind === "speaker-range" &&
+            item.status === "suggested" &&
+            item.speaker &&
+            rangeStrength(item) === RangeStrength.Stated
+        ) {
+            byLabel.set(item.label, [...(byLabel.get(item.label) ?? []), item]);
+        }
+    }
+
+    return (label: string, at: number, index: number | undefined): string[] =>
+        (byLabel.get(label) ?? []).flatMap((item) =>
+            item.speaker &&
+            item.fromSec <= at &&
+            at <= item.toSec &&
+            (item.fromSec !== item.toSec ||
+                index === undefined ||
+                typeof item.evidence?.transcriptLine !== "number" ||
+                item.evidence.transcriptLine === index)
+                ? [item.speaker]
+                : []
+        );
+}
+
 /** Reconcile line proposals here, where the old rules already meet; labelers never create or save items. */
 function labeledItems(options: {
     labels: LineLabel[];
@@ -491,6 +524,7 @@ function labeledItems(options: {
     };
     const ranges = (items: readonly NewItem[]) => byLabel(items.filter((item) => item.kind === "speaker-range"));
     const confirmed = ranges(record.items.filter((item) => item.status === "confirmed"));
+    const statedAt = statedNames(record.items);
     const assignments = byLabel(record.speakers.assignments ?? []);
     const foundByLabel = ranges(options.found);
     const storedByLabel = ranges(record.items.filter((one) => one.status === "suggested" || one.status === "rejected"));
@@ -510,6 +544,12 @@ function labeledItems(options: {
             confirmed.get(entry.speaker)?.some((item) => covers(item, entry.speaker, at)) ||
             assignments.get(entry.speaker)?.some((item) => item.fromSec <= at && item.toSec >= at)
         ) {
+            continue;
+        }
+
+        // A range a person or an agent stated names this line: the pass may agree with it, never give the line to
+        // anyone else, whatever the stated range's age or confidence.
+        if (statedAt(entry.speaker, at, label.index).some((name) => !label.person || !sameName(name, label.person))) {
             continue;
         }
 
@@ -1220,6 +1260,7 @@ function buildSuggestions(options: SuggestInputs): void {
     // Old recordings can contain an automatic above-threshold attribution for the same elimination.
     // Keep its ID so open questions and the decision journal still address the same target.
     const priorByKey = new Map(record.items.map((item) => [itemKey(item), item]));
+    const statedAt = statedNames(record.items);
     const known = decidedKeys;
     const fresh: MeetingItem[] = [];
     const taken = [...record.items];
@@ -1276,6 +1317,20 @@ function buildSuggestions(options: SuggestInputs): void {
         // Older removals can address a passage only by its time and words.
         if (known.has(key) || (item.kind === "removal" && known.has(`removal|${item.fromSec}|${item.heard}`))) {
             continue;
+        }
+
+        // A rule's one-line range never contradicts a line a person or an agent named, whatever its age: it would
+        // only stand beside the stated name as a weaker doubt.
+        if (
+            item.kind === "speaker-range" &&
+            item.fromSec === item.toSec &&
+            rangeStrength(item) === RangeStrength.Automatic
+        ) {
+            const index = typeof item.evidence?.transcriptLine === "number" ? item.evidence.transcriptLine : undefined;
+            const speaker = item.speaker;
+            if (statedAt(item.label, item.fromSec, index).some((name) => !speaker || !sameName(name, speaker))) {
+                continue;
+            }
         }
 
         known.add(key);

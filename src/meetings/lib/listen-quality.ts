@@ -1,3 +1,4 @@
+import { strongestRange } from "@genesiscz/utils/meetings/range-strength";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
@@ -192,7 +193,7 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
                 (entry.startSec ?? -1) >= one.fromSec &&
                 (entry.startSec ?? Infinity) <= one.toSec
         );
-        const item = matches.findLast((one) => one.status === "confirmed") ?? matches.at(-1);
+        const item = strongestRange(matches);
         const at = entry.startSec;
         const assigned =
             at !== undefined &&
