@@ -7,6 +7,7 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingRecordSchema,
+    missingMeetingText,
     voiceRootMeeting,
 } from "@genesiscz/utils/meetings/record";
 import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
@@ -53,7 +54,7 @@ export async function duplicateMeeting(request: DuplicateRequest): Promise<Dupli
     const original = store.resolve(request.ref);
 
     if (!original) {
-        throw new Error(`No meeting "${request.ref}".`);
+        throw new Error(missingMeetingText(store, request.ref));
     }
 
     return store.storage.withFileLock({
@@ -135,7 +136,7 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
     const { store } = request;
     const original = store.read(request.ref);
     if (!original) {
-        throw new Error(`No meeting "${request.ref}".`);
+        throw new Error(missingMeetingText(store, request.ref));
     }
 
     const recorder = readRecorderState(store);

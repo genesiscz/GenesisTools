@@ -6,7 +6,7 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import type { Command } from "commander";
 import pc from "picocolors";
 import { applyAnswer, askMeeting, assignSweep, defaultAssignDeps, viewProposals } from "../lib/assign";
-import { fail, TOOL } from "../lib/shared";
+import { fail, TOOL, unknownMeetingText } from "../lib/shared";
 import { proposalsJsonView, proposalsRead, windowJson } from "../lib/window-reads";
 
 const MEETING_REF = "meeting id, a unique prefix, last, or wisprflow:<id>";
@@ -15,7 +15,7 @@ function meetingOrFail(store: MeetingStore, ref: string): MeetingRecord | undefi
     const record = store.resolve(ref);
 
     if (!record) {
-        fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        fail(unknownMeetingText(store, ref));
     }
 
     return record;

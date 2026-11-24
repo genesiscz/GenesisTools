@@ -11,7 +11,7 @@ import {
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
-import { type MeetingRecord, MeetingStore, parseSourceRef } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore, missingMeetingText, parseSourceRef } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { meetingRuleSentences } from "@genesiscz/utils/meetings/rules";
 import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
@@ -233,7 +233,10 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     }
 
     if (!record) {
-        throw refusal("meeting-not-found", missingMeetingMessage({ ref, root: store.root }));
+        throw refusal(
+            "meeting-not-found",
+            missingMeetingText(store, ref, missingMeetingMessage({ ref, root: store.root }))
+        );
     }
 
     return record;

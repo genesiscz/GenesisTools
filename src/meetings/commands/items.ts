@@ -48,7 +48,7 @@ import { missingProjectWarning, projectRequired, resolveProject } from "../lib/p
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL, unknownMeetingText } from "../lib/shared";
 import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
@@ -67,7 +67,7 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
         const record = store.resolve(ref);
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
         }
 
         return record;

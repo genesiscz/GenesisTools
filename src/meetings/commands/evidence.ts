@@ -25,7 +25,7 @@ import {
     screenRecordFacts,
     screenRecordLine,
 } from "../lib/screen-leads";
-import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
+import { fail, formatFlag, resolveEnum, unknownMeetingText } from "../lib/shared";
 import { meetingVoices } from "../lib/voice";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
@@ -95,7 +95,7 @@ async function evidence(
         const record = store.resolve(ref);
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
             return;
         }
 

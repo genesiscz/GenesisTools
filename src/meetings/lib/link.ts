@@ -10,6 +10,7 @@ import {
     type MeetingParticipant,
     type MeetingRecord,
     type MeetingStore,
+    missingMeetingText,
     parseSourceRef,
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
@@ -188,7 +189,13 @@ async function linkSourceUnlocked(options: {
         : options.store.resolve(`${ref.source}:${meeting.sourceMeetingId}`);
 
     if (options.meetingRef && !existing) {
-        throw new Error(`No meeting "${options.meetingRef}" (${toolCommand("meetings", "list")})`);
+        throw new Error(
+            missingMeetingText(
+                options.store,
+                options.meetingRef,
+                `No meeting "${options.meetingRef}" (${toolCommand("meetings", "list")})`
+            )
+        );
     }
 
     if (existing) {

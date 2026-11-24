@@ -36,6 +36,7 @@ import {
     MeetingStore,
     meetingAddress,
     meetingRecordSchema,
+    missingMeetingText,
     nextId,
     titleSlug,
     toJoinedSec,
@@ -1720,18 +1721,20 @@ test("project person details are additive and survive a reopened config without 
 });
 
 describe("a later recording's old id after a join", () => {
-    test("names the joined record and the offset its seconds move by, from the part folder's marker", async () => {
+    const later = "2026-11-01_10-11-later-fixture";
+    const part = (record: string, offsetMs: number) => ({
+        record,
+        title: "Fixture",
+        sourceId: "wisprflow",
+        sourceMeetingId: `m-${record}`,
+        zeroAt: new Date(Date.UTC(2026, 10, 1, 9) + offsetMs).toISOString(),
+        offsetMs,
+        endSec: 100,
+    });
+
+    /** A joined record that kept its first recording, and the later recording's folder with only its marker left. */
+    async function joinedPair() {
         const store = new MeetingStore();
-        const later = "2026-11-01_10-11-later-fixture";
-        const part = (record: string, offsetMs: number) => ({
-            record,
-            title: "Fixture",
-            sourceId: "wisprflow",
-            sourceMeetingId: `m-${record}`,
-            zeroAt: new Date(Date.UTC(2026, 10, 1, 9) + offsetMs).toISOString(),
-            offsetMs,
-            endSec: 100,
-        });
         const kept = await store.create(
             { title: "Joined fixture", start: "2026-11-01T09:00:00Z", createdBy: "new" },
             { command: "test", change: "fixture" }
@@ -1747,6 +1750,37 @@ describe("a later recording's old id after a join", () => {
         });
         mkdirSync(store.folder(later), { recursive: true });
         writeFileSync(join(store.folder(later), JOIN_PART_FILE), SafeJSON.stringify({ joinedInto: kept.id }));
+        return { store, kept, joined };
+    }
+
+    test("the missing-meeting sentence names the joined record and its clock, and never resolves the old id", async () => {
+        const { store, kept } = await joinedPair();
+        const sentence = `"${later}" was joined into ${kept.id} (its times now start at 10:54); use ${kept.id}.`;
+        expect(missingMeetingText(store, later)).toBe(sentence);
+        expect(missingMeetingText(store, later, `No meeting "${later}". List them: tools meetings list`)).toBe(
+            sentence
+        );
+        expect(store.resolve(later)).toBeUndefined();
+
+        // A recording the join absorbed, with no marker folder left, is found from the join block.
+        const unmarked = "2026-11-01_11-30-unmarked-fixture";
+        await store.update(kept.id, { command: "test", change: "a third part" }, (current) => {
+            current.join?.parts.push(part(unmarked, 3_723_000));
+        });
+        expect(missingMeetingText(store, unmarked)).toBe(
+            `"${unmarked}" was joined into ${kept.id} (its times now start at 1:02:03); use ${kept.id}.`
+        );
+
+        // Any other ref reads as the caller's own text: a never-joined id, the joined record's id, a prefix of an old id.
+        const never = "2026-11-01_12-00-never-fixture";
+        expect(missingMeetingText(store, never)).toBe(`No meeting "${never}".`);
+        expect(missingMeetingText(store, never, "plain text")).toBe("plain text");
+        expect(missingMeetingText(store, kept.id, "plain text")).toBe("plain text");
+        expect(missingMeetingText(store, later.slice(0, 16), "plain text")).toBe("plain text");
+    });
+
+    test("names the joined record and the offset its seconds move by, from the part folder's marker", async () => {
+        const { store, kept, joined } = await joinedPair();
 
         expect(store.resolve(later)).toBeUndefined();
         const address = meetingAddress(store, later);

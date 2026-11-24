@@ -8,7 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { CHANNEL_LAYOUTS } from "@genesiscz/utils/meetings/energy";
 import { type MeetingLevelRow, MeetingLevels } from "@genesiscz/utils/meetings/levels";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
 import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import { z } from "zod";
 
@@ -45,7 +45,7 @@ export function appendMeetingLevels(folder: string, row: MeetingLevelRow): void 
 export function savedMeetingLevels(store: MeetingStore, ref: string): MeetingLevelRow[] {
     const record = store.resolve(ref);
     if (!record) {
-        throw new Error(`No meeting "${ref}".`);
+        throw new Error(missingMeetingText(store, ref));
     }
     const file = levelFile(store.folder(record.id));
     if (!existsSync(file)) {

@@ -10,7 +10,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { exportMeeting } from "../lib/export";
 import type { MeetingBadges } from "../lib/overview";
-import { fail, resolveEnum, TOOL } from "../lib/shared";
+import { fail, resolveEnum, unknownMeetingText } from "../lib/shared";
 import { isWindowTab, openMeetingsWindow, WINDOW_TABS } from "../lib/window";
 import { overviewRead, windowJson } from "../lib/window-reads";
 
@@ -85,7 +85,7 @@ async function exportCommand(
         const record = store.resolve(ref);
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
             return;
         }
 
@@ -128,10 +128,11 @@ async function windowCommand(
     opts: { place?: string; tab?: string; focus?: boolean; build?: boolean; newWindow?: boolean }
 ): Promise<void> {
     try {
-        const meeting = ref ? new MeetingStore().resolve(ref)?.id : undefined;
+        const store = new MeetingStore();
+        const meeting = ref ? store.resolve(ref)?.id : undefined;
 
         if (ref && !meeting) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
             return;
         }
 

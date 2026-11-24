@@ -9,7 +9,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, TOOL, unknownMeetingText } from "../lib/shared";
 
 function seconds(value: string | undefined): number | undefined {
     if (value === undefined) {
@@ -40,7 +40,7 @@ async function attendance(
         const record = store.resolve(ref);
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
             return;
         }
 

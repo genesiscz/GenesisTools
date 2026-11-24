@@ -21,7 +21,7 @@ import { mergeMeetings } from "../lib/merge";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, hintIfSeatsUnset, locateMeeting, TOOL } from "../lib/shared";
+import { fail, hintIfSeatsUnset, locateMeeting, TOOL, unknownMeetingText } from "../lib/shared";
 import { showText } from "../lib/show-text";
 import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
@@ -39,7 +39,7 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
         const record = store.resolve(ref);
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
         }
 
         return record;

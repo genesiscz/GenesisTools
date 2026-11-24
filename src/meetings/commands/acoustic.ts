@@ -1,7 +1,7 @@
 import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import { withMeetingsClient } from "../lib/service/client";
@@ -122,9 +122,10 @@ export function registerLegacyVoiceCommands(voice: Command): void {
                     actor: callerActor(),
                     confirmed: opts.confirmed === true,
                     ask: () => {
-                        const record = new MeetingStore().resolve(meeting);
+                        const store = new MeetingStore();
+                        const record = store.resolve(meeting);
                         if (!record) {
-                            throw new Error(`No meeting "${meeting}".`);
+                            throw new Error(missingMeetingText(store, meeting));
                         }
                         const rerun = [
                             `${TOOL} voices enroll ${shellWord(record.id)} --from ${opts.from} --to ${opts.to}`,

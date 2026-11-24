@@ -20,7 +20,7 @@ import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, moment
 import { PLAYERS, pickPlayer } from "../lib/players";
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { errorText, fail, TOOL, unknownMeetingText } from "../lib/shared";
 import { TRACK_KINDS, type TrackKind } from "../lib/sound";
 import { playMeetingSound } from "../lib/sound-playback";
 import { playInOpenWindow } from "../lib/window";
@@ -385,7 +385,7 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
         }
 
         if (!record) {
-            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            fail(unknownMeetingText(store, ref));
             return;
         }
 
