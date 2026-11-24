@@ -49,7 +49,6 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { OpenedMeeting } from "./opened-meeting";
 import {
-    joinedSound,
     type MeetingSound,
     measureSoundClock,
     meetingSound,
@@ -146,23 +145,6 @@ function withJoinAliases(access: VoicesAccess, scope: VoiceScope): VoiceScope {
 
 /** Clock measurement belongs to an explicit writer; a preview keeps it in memory. */
 export async function voiceReadMeeting(opened: OpenedMeeting): Promise<OpenedMeeting> {
-    const parts = opened.joinedParts();
-
-    if (parts) {
-        // A joined meeting reads each recording as that recording alone would, then on the joined clock.
-        const sounds = await Promise.all(parts.map(async (view) => (await voiceReadMeeting(view.opened)).sound()));
-        const joined = joinedSound(
-            parts.map((view, index) => ({
-                offsetMs: view.part.offsetMs,
-                fromSec: view.fromSec,
-                untilSec: view.untilSec,
-                sound: sounds[index]!,
-            }))
-        );
-        opened.sound = async () => joined;
-        return opened;
-    }
-
     const inputs = await readSoundInputs(opened);
     let sound = meetingSound(inputs);
 
@@ -404,35 +386,6 @@ export async function previewVoices(
     lines: Array<LineLabel & { fromSec: number; toSec: number; text: string; current: string }>;
 }> {
     const record = recordOf(options, options.meeting);
-
-    if (record.join) {
-        // A joined meeting previews each recording as it was before the join, then tells it on the joined clock.
-        const joined = openedOf(options, record);
-        const lines: Awaited<ReturnType<typeof previewVoices>>["lines"] = [];
-        let indexBase = 0;
-
-        for (const part of record.join.parts) {
-            const reading = joined.recordingReading(part.record);
-
-            if (!reading) {
-                continue;
-            }
-
-            const own = await previewRecording(options, reading.opened.record, reading.opened);
-            lines.push(
-                ...own.map((line) => ({
-                    ...line,
-                    index: line.index + indexBase,
-                    fromSec: reading.toJoinedSec(line.fromSec),
-                    toSec: reading.toJoinedSec(line.toSec),
-                }))
-            );
-            indexBase += (await reading.opened.meeting()).transcript.length;
-        }
-
-        return { meeting: record.id, ...(record.project ? { project: record.project } : {}), lines };
-    }
-
     return {
         meeting: record.id,
         ...(record.project ? { project: record.project } : {}),

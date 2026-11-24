@@ -890,7 +890,7 @@ describe("listen --clip-out (MC22)", () => {
             transcript: words,
             listen,
             pads: { beforeSec: 5, afterSec: 5 },
-            audioPath: "/clips/call.ogg",
+            audioAt: async () => ({ path: "/clips/call.ogg", offsetMs: 0 }),
             dir: "/clips/out",
             cut: async (options) => {
                 cuts.push(options);

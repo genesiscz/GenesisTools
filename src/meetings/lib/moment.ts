@@ -21,10 +21,9 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
 import { hasFrameIndex } from "./frame-index";
-import { clockMove, movedValue } from "./join-clock";
 import { decidedLines } from "./listen-answers";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
-import { OpenedMeeting } from "./opened-meeting";
+import { OpenedMeeting, onFileClock, onRecordClock } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
 import {
     askedSpotSec,
@@ -1134,31 +1133,34 @@ export async function clipMoment(
     const { store, record } = options;
     options.control?.signal?.throwIfAborted();
     const opened = options.opened ?? OpenedMeeting.of(store, record);
-
-    if (record.join) {
-        return joinedClipMoment({ ...options, opened });
-    }
-
     let moment = await momentIn(opened, options);
-    const audioPath = await opened.audioPath();
+    // The span is cut from the recording that holds it, on that recording's own seconds (one part of a joined meeting).
+    const file = await opened.audioAt(moment.fromSec, moment.toSec);
+    const audioPath = file.path;
     const itemId = options.target.kind === "item" ? questionIdOf(record, options.target.id) : undefined;
     const item = record.items.find((one) => one.id === itemId);
     if (item?.kind === "question" && item.question.startsWith('Who says "')) {
         const { refineSplitClip, questionClip } = await import("./listen-clips");
         const wordTimedLines = await meetingWordTimedLines({ store, record, opened });
-        const refined = await refineSplitClip({
-            plan: questionClip({
-                record,
-                question: item,
-                transcript: (await opened.meeting()).transcript,
-                ...(wordTimedLines ? { wordTimedLines } : {}),
-                listen: (await opened.config()).global.playback.listen,
-                pads: { beforeSec: moment.padSec, afterSec: moment.padAfterSec ?? moment.padSec },
-                ...(moment.tone ? { toneSound: moment.tone.sound } : {}),
+        const refined = onRecordClock(
+            await refineSplitClip({
+                plan: onFileClock(
+                    questionClip({
+                        record,
+                        question: item,
+                        transcript: (await opened.meeting()).transcript,
+                        ...(wordTimedLines ? { wordTimedLines } : {}),
+                        listen: (await opened.config()).global.playback.listen,
+                        pads: { beforeSec: moment.padSec, afterSec: moment.padAfterSec ?? moment.padSec },
+                        ...(moment.tone ? { toneSound: moment.tone.sound } : {}),
+                    }),
+                    file
+                ),
+                question: onFileClock(item, file),
+                audioPath,
             }),
-            question: item,
-            audioPath,
-        });
+            file
+        );
         moment = {
             ...moment,
             fromSec: refined.fromSec,
@@ -1194,7 +1196,7 @@ export async function clipMoment(
         await (options.cut ?? cutClip)({
             audioPath,
             outPath: partial,
-            ...clipPlan(moment),
+            ...clipPlan(onFileClock(moment, file)),
             tracks,
             ...(options.control?.signal ? { signal: options.control.signal } : {}),
             ...(options.control?.onProgress ? { onProgress: options.control.onProgress } : {}),
@@ -1210,72 +1212,6 @@ export async function clipMoment(
 }
 
 /** Best-effort removal of a failed cut's partial file; never masks the failure that caused it. */
-/** The joined-clock second a target names: its item's start, its time, or the start of its range or selection. */
-function targetSec(record: MeetingRecord, target: MomentTarget): { fromSec: number; toSec: number } {
-    switch (target.kind) {
-        case "item": {
-            const id = questionIdOf(record, target.id);
-            const item = record.items.find((one) => one.id === id);
-            const from = item ? ("fromSec" in item ? item.fromSec : item.atSec) : undefined;
-
-            if (from === undefined || !item) {
-                throw new MomentError("unknown-item", `No item ${target.id} with a time in ${record.id}.`);
-            }
-
-            return { fromSec: from, toSec: "toSec" in item ? item.toSec : from };
-        }
-        case "time":
-        case "stretch":
-            return { fromSec: target.atSec, toSec: target.atSec };
-        case "range":
-            return { fromSec: target.fromSec, toSec: target.toSec };
-        case "selection":
-            return { fromSec: target.from.atSec, toSec: target.to.atSec };
-    }
-}
-
-/**
- * A Moment of a joined record: planned and cut on the recording that holds its target, on that recording's own clock
- * (so the clip is the one that recording gave before the join), then told on the joined clock with the joined
- * record's screen frames.
- */
-async function joinedClipMoment(
-    options: Parameters<typeof clipMoment>[0] & { opened: OpenedMeeting }
-): Promise<Moment & { path: string }> {
-    const { fromSec, toSec } = targetSec(options.record, options.target);
-    const reading = await options.opened.partReading(fromSec, toSec);
-
-    if (!reading) {
-        throw new Error(`${options.record.id} is not joined.`);
-    }
-
-    const clipped = await clipMoment({
-        ...options,
-        store: reading.opened.store,
-        record: reading.opened.record,
-        opened: reading.opened,
-        target: movedValue(options.target, clockMove(-reading.offsetMs)),
-        screen: false,
-    });
-    const moment = {
-        ...movedValue(clipped, clockMove(reading.offsetMs)),
-        meeting: options.record.id,
-        path: clipped.path,
-    };
-
-    if (options.screen === false) {
-        return moment;
-    }
-
-    const screen = await momentFrames(
-        options.store,
-        options.record,
-        moment.spotSec,
-        hitWords(options.record, options.target)
-    );
-    return screen.length > 0 ? { ...moment, screen } : moment;
-}
-
 function removePartialClip(partial: string): void {
     if (!existsSync(partial)) {
         return;
