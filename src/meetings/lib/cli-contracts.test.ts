@@ -45,7 +45,7 @@ import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import * as soundModule from "./sound";
 import { appendAudioRow, meetingSound } from "./sound";
-import { playbackSlice, playSoundSlice, slicePlaybackPlan } from "./sound-playback";
+import { cutSlice, playbackRange, playSoundSlice, slicePlaybackPlan } from "./sound-playback";
 import { preserveSourceAudio } from "./source-audio";
 import { linkedSource } from "./sources";
 import * as labelsModule from "./speaker-labels";
@@ -690,6 +690,101 @@ test("open-ended play opens the recording itself at its second in the seeking pl
     }
 });
 
+test("a range with --track over a piece boundary is cut from both pieces, joined in order", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Boundary", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    // Two 2 s mono pieces whose samples count their frames (the second one below zero), so the joined cut shows where
+    // each piece starts and ends.
+    const piece = (name: string, sign: 1 | -1) => {
+        const frames = 48000 * 2;
+        const wav = Buffer.alloc(44 + frames * 2);
+        wav.write("RIFF");
+        wav.writeUInt32LE(wav.length - 8, 4);
+        wav.write("WAVEfmt ", 8);
+        wav.writeUInt32LE(16, 16);
+        wav.writeUInt16LE(1, 20);
+        wav.writeUInt16LE(1, 22);
+        wav.writeUInt32LE(48000, 24);
+        wav.writeUInt32LE(96000, 28);
+        wav.writeUInt16LE(2, 32);
+        wav.writeUInt16LE(16, 34);
+        wav.write("data", 36);
+        wav.writeUInt32LE(frames * 2, 40);
+        for (let frame = 0; frame < frames; frame++) {
+            wav.writeInt16LE(sign * Math.floor(frame / 8), 44 + frame * 2);
+        }
+        writeFileSync(join(folder, name), wav);
+        return join(folder, name);
+    };
+    const first = piece("first.wav", 1);
+    const second = piece("second.wav", -1);
+    const sound = meetingSound({
+        folder,
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [
+            { file: "first.wav", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 2000, mutedSpans: [] },
+            { file: "second.wav", source: "mic", at: "1970-01-01T00:00:12Z", durationMs: 2000, mutedSpans: [] },
+        ],
+    });
+    const opened = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound);
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const spawn = spyOn(Bun, "spawn");
+    const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(
+            ["play", record.id, "--at", "11.5", "--to", "12.5", "--track", "mic-raw", "--no-start", "--json"],
+            { from: "user" }
+        );
+        const plan = z
+            .object({
+                audioPath: z.string(),
+                parts: z.array(z.object({ path: z.string(), fileFromSec: z.number(), fileToSec: z.number() })),
+            })
+            .passthrough()
+            .parse(SafeJSON.parse(String(printed.mock.calls.at(-1)?.[0]), { strict: true }));
+        expect(plan).toMatchObject({
+            cut: true,
+            cutParts: 2,
+            startSec: 0,
+            parts: [
+                { path: first, fileFromSec: 1.5, fileToSec: 2 },
+                { path: second, fileFromSec: 0, fileToSec: 0.5 },
+            ],
+        });
+        // --no-start cuts nothing and starts nothing.
+        expect(existsSync(plan.audioPath)).toBe(false);
+        expect(spawn).not.toHaveBeenCalled();
+        spawn.mockRestore();
+
+        // The cut the play starts with: the last half second of the first piece, then the first of the second.
+        const [head, ...rest] = plan.parts;
+        if (!head) {
+            throw new Error("the plan has no part");
+        }
+        await cutSlice({ slice: head, next: rest, path: plan.audioPath });
+        const received = readFileSync(plan.audioPath);
+        const data = received.indexOf(Buffer.from("data")) + 8;
+        expect(received.length - data).toBe(48000 * 2);
+        expect(received.readInt16LE(data)).toBe(Math.floor(72_000 / 8));
+        expect(received.readInt16LE(data + 23_999 * 2)).toBe(Math.floor(95_999 / 8));
+        expect(received.readInt16LE(data + 24_000 * 2)).toBe(0);
+        expect(received.readInt16LE(received.length - 2)).toBe(-Math.floor(23_999 / 8));
+    } finally {
+        opened.mockRestore();
+        printed.mockRestore();
+        spawn.mockRestore();
+        vlc.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("default play chooses the line seat's best track and source setting is respected", async () => {
     const store = new MeetingStore();
     const record = await store.create(
@@ -728,19 +823,14 @@ test("default play chooses the line seat's best track and source setting is resp
     const measured = mock((_fromSec: number, _toSec: number): number | undefined => undefined);
     const energy = spyOn(opened, "energy").mockResolvedValue({ share: measured });
     try {
-        expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
-            track: "mic-raw",
-            fileFromSec: 5,
-            fileToSec: 10,
-        });
+        expect(await playbackRange({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject([
+            { track: "mic-raw", fileFromSec: 5, fileToSec: 10 },
+        ]);
         expect(measured.mock.calls).toEqual([[15, 40]]);
         sound.mockResolvedValue(meetingSound({ ...base, tracks: "source" }));
-        expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
-            track: "source-mic",
-            fileFromSec: 15,
-            fileToSec: 20,
-            channel: 0,
-        });
+        expect(await playbackRange({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject([
+            { track: "source-mic", fileFromSec: 15, fileToSec: 20, channel: 0 },
+        ]);
     } finally {
         sound.mockRestore();
         meeting.mockRestore();

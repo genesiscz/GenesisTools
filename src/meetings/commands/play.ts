@@ -21,7 +21,7 @@ import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { TRACK_KINDS, type TrackKind } from "../lib/sound";
-import { playbackRun, playbackSlice, slicePlaybackPlan, startPlaybackPlan } from "../lib/sound-playback";
+import { playbackRange, playbackRun, slicePlaybackPlan, startPlaybackPlan } from "../lib/sound-playback";
 import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
@@ -391,18 +391,10 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
         const fromSec = Math.max(0, atSec - (beforeSec ?? (track && "target" in what ? 0 : playback.beforeSec)));
         const opened = OpenedMeeting.of(store, record);
-        // A range is one slice; a play from a time runs on through the track's later pieces.
+        // A range is the slice, or the pieces it covers; a play from a time runs on through the track's later pieces.
         const [slice, ...next] =
             "target" in what && what.target.kind === "range"
-                ? [
-                      await playbackSlice({
-                          opened,
-                          atSec,
-                          fromSec,
-                          toSec: what.target.toSec,
-                          ...(track ? { track } : {}),
-                      }),
-                  ]
+                ? await playbackRange({ opened, atSec, fromSec, toSec: what.target.toSec, ...(track ? { track } : {}) })
                 : await playbackRun({ opened, atSec, fromSec, ...(track ? { track } : {}) });
         // Open-ended from a time: the recording itself at its second; a range or one channel of a stereo source: a cut.
         const plan = slicePlaybackPlan({
