@@ -32,6 +32,7 @@ import {
     JOIN_PART_FILE,
     JOINED_RECORD_VERSION,
     joinAliases,
+    joinedAway,
     MEETING_UNCHANGED,
     MeetingStore,
     meetingAddress,
@@ -1777,6 +1778,24 @@ describe("a later recording's old id after a join", () => {
         expect(missingMeetingText(store, never, "plain text")).toBe("plain text");
         expect(missingMeetingText(store, kept.id, "plain text")).toBe("plain text");
         expect(missingMeetingText(store, later.slice(0, 16), "plain text")).toBe("plain text");
+    });
+
+    test("a corrupt or unreadable marker is no marker: the join block still names the joined record", async () => {
+        const { store, kept } = await joinedPair();
+        const sentence = `"${later}" was joined into ${kept.id} (its times now start at 10:54); use ${kept.id}.`;
+        writeFileSync(join(store.folder(later), JOIN_PART_FILE), "{ not json");
+        expect(joinedAway(store, later)).toMatchObject({ record: { id: kept.id }, part: { offsetMs: 654273 } });
+        expect(missingMeetingText(store, later)).toBe(sentence);
+
+        // A marker that cannot be read at all (here a folder in its place) is handled the same way.
+        const unreadable = "2026-11-01_11-45-unreadable-fixture";
+        await store.update(kept.id, { command: "test", change: "a third part" }, (current) => {
+            current.join?.parts.push(part(unreadable, 3_723_000));
+        });
+        mkdirSync(join(store.folder(unreadable), JOIN_PART_FILE), { recursive: true });
+        expect(missingMeetingText(store, unreadable)).toBe(
+            `"${unreadable}" was joined into ${kept.id} (its times now start at 1:02:03); use ${kept.id}.`
+        );
     });
 
     test("names the joined record and the offset its seconds move by, from the part folder's marker", async () => {
