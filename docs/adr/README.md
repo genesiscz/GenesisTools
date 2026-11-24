@@ -92,3 +92,11 @@ Rule `.claude/rules/node-repl-parity.md`.
 | Number | Decision | Status | Date | Source |
 | --- | --- | --- | --- | --- |
 | 0048 | [Ship the node REPL door with its command, method or op](0048-same-change-repl-door.md) | Accepted | 2026-11-18 | REPL parity rule |
+
+## Agent instructions
+
+Util `src/utils/ai/agent-instructions.ts`.
+
+| Number | Decision | Status | Date | Source |
+| --- | --- | --- | --- | --- |
+| 0049 | [Give every instruction for an agent one shape](0049-agent-instructions.md) | Accepted | 2026-11-24 | D443 |
