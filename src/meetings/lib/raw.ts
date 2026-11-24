@@ -17,10 +17,10 @@ import { lineEvidence, presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
-import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { rosterPresence, stayLeaveSource } from "./person-stays";
+import { type RawTerms, type ScreenRecordFacts, screenRecordLine } from "./screen-leads";
 import { assessIndicator } from "./speaker-indicator";
 
 export interface RawMeeting {
@@ -76,8 +76,13 @@ export interface RawMeeting {
         localSpeechOutput?: true;
         present: string[];
     }>;
-    /** The term part: the word check, the vocabulary, every run heard near a term, and the words no layer knows. */
-    terms?: RawTermEvidence;
+    /**
+     * The term part: the word check, the vocabulary, every run heard near a term, and the words no layer knows; each
+     * lead with the screen lines near it when the meeting kept a screen record.
+     */
+    terms?: RawTerms;
+    /** The screen record the term leads were checked against, or that the meeting kept none. */
+    screen?: ScreenRecordFacts;
     context: Array<{ kind: string; ref: string }>;
     summary?: { text: string; points: SummaryPoint[] };
 }
@@ -104,7 +109,8 @@ export function rawMeeting(options: {
     callSilent?: Array<{ fromSec: number; toSec: number }>;
     points: SummaryPoint[];
     people?: PairedPerson[];
-    terms?: RawTermEvidence;
+    terms?: RawTerms;
+    screen?: ScreenRecordFacts;
     /** Only the lines that start in this window, measured and listed (`evidence --table --from/--to`). */
     window?: { fromSec: number; toSec: number };
 }): RawMeeting {
@@ -235,6 +241,7 @@ export function rawMeeting(options: {
             };
         }),
         ...(options.terms === undefined ? {} : { terms: options.terms }),
+        ...(options.screen === undefined ? {} : { screen: options.screen }),
         context: record.context.map((entry) => ({ kind: entry.kind, ref: entry.ref })),
         ...(meeting.summary ? { summary: { text: meeting.summary, points: options.points } } : {}),
     };
@@ -249,5 +256,5 @@ export function compactEvidence(raw: RawMeeting): string {
         (line) =>
             `${line.index}|${formatClock(line.fromSec)}|${short.get(line.label)}|mic${line.channel.micShare === null ? "?" : `${Math.round(line.channel.micShare * 100)}%`}|e${line.energyMicShare ?? "?"}|s[${line.speaking.map((name) => short.get(name)).join(",")}]|m[${line.muted.map((name) => short.get(name)).join(",")}]|${[...line.text.replace(/\r?\n/g, " ")].slice(0, 48).join("")}`
     );
-    return [`Legend: ${legend}`, ...rows].join("\n");
+    return [`Legend: ${legend}`, ...(raw.screen ? [screenRecordLine(raw.screen)] : []), ...rows].join("\n");
 }

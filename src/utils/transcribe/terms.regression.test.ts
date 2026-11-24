@@ -6,6 +6,7 @@ import {
     findSuspectTerms,
     findUnknownWords,
     meetingTermsOf,
+    SoundMatcher,
     scopedVocabulary,
 } from "./terms";
 
@@ -21,6 +22,19 @@ const check: WordCheck = {
 };
 
 describe("meeting term regressions", () => {
+    test("SoundMatcher scores written words against a heard run as the vocabulary match does", () => {
+        const matcher = new SoundMatcher();
+
+        expect(matcher.score("ContentRows", "ContentRows")).toBe(100);
+        // A Czech ending, a k for a c and an ou for a w still sound like the written term, one word or two.
+        expect(matcher.score("gitlabu", "GitLab")).toBeGreaterThanOrEqual(90);
+        expect(matcher.score("kontentrouz", "ContentRows")).toBeGreaterThanOrEqual(70);
+        expect(matcher.score("content rose", "ContentRows")).toBeGreaterThanOrEqual(80);
+        // Another first sound, or more heard words than the written term has parts, is no match at all.
+        expect(matcher.score("payments", "ContentRows")).toBeUndefined();
+        expect(matcher.score("content rows here", "ContentRows")).toBeUndefined();
+    });
+
     test("a zero phonetic threshold still needs a vocabulary candidate", () => {
         expect(findSuspectTerms({ entries: [entry("zelnworp")], vocab: [], minConfidence: 0 })).toEqual([]);
     });

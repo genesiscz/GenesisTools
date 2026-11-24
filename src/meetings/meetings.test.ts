@@ -104,7 +104,14 @@ import {
     recorderFiles,
 } from "./lib/recorder-shared";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary, screenCaptureCoverage } from "./lib/screen";
-import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
+import {
+    framesMatching,
+    ocrRowSchema,
+    readOcrRows,
+    renderScreenBoxes,
+    type ScreenRecordRead,
+} from "./lib/screen-boxes";
+import { type RawTerms, screenRecordFacts, withScreenLines } from "./lib/screen-leads";
 import { InProcessMeetingsClient } from "./lib/service/client";
 import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
@@ -3955,6 +3962,119 @@ describe("evidence --raw", () => {
             ["Carol Example", "Já ti ho pošlu novej."],
             ["Bob Example", "Dobře."],
         ]);
+    });
+
+    // I7: the term pass guessed at words the screen showed, because no lead carried the screen text near it.
+    describe("screen lines near the term leads", () => {
+        const zeroMs = Date.parse("2026-11-01T10:00:00.000Z");
+        const frameAt = (sec: number) => new Date(zeroMs + sec * 1000).toISOString();
+        const rows = [
+            {
+                file: "frames/a.jpg",
+                at: frameAt(20),
+                displayId: 1,
+                text: "Alice Example\nContentRows component",
+                blocks: [],
+            },
+            {
+                file: "frames/b.jpg",
+                at: frameAt(70),
+                displayId: 1,
+                text: "ContentRows component\nPayments",
+                blocks: [],
+            },
+            // Five minutes later: outside the window of every lead.
+            { file: "frames/c.jpg", at: frameAt(400), displayId: 1, text: "ContentRoast", blocks: [] },
+        ];
+        const read: ScreenRecordRead = {
+            folder: "/fixture",
+            zeroMs,
+            rows,
+            lines: rows.map(({ blocks: _blocks, ...frame }) => frame),
+            pending: 0,
+            spans: [{ fromMs: zeroMs, toMs: zeroMs + 600_000 }],
+        };
+        const example = (atSec: number, sentence: string) => ({ atSec, speaker: "Alice Example", sentence });
+        const terms: RawTerms = {
+            wordCheck: { available: true, provider: "fixture", language: "cs" },
+            vocabulary: [{ term: "ContentRows", source: "context" }],
+            runs: [
+                {
+                    heard: "content rouz",
+                    occurrences: 1,
+                    kind: "exact",
+                    candidates: [{ term: "ContentRows", confidence: 72, source: "context" }],
+                    examples: [example(65, "otevři ==content rouz==")],
+                    words: [{ word: "content" }, { word: "rouz" }],
+                },
+            ],
+            unknown: [
+                {
+                    heard: "kontentrouz",
+                    occurrences: 1,
+                    examples: [example(60, "to je ==kontentrouz==")],
+                    verdict: { class: "unknown", count: 0 },
+                    candidates: [],
+                },
+            ],
+            documents: {
+                readAloud: [],
+                identifiers: [{ atSec: 30, heard: "payments", identifier: "Payments", matched: 1 }],
+            },
+        };
+
+        test("each lead gets the OCR lines within 60 s that sound like it, one per screen form, the nearest frame", () => {
+            const led = withScreenLines(terms, { read, linesPerLead: 3 });
+            const [word] = led.unknown;
+
+            expect(word?.screen?.frames).toBe(2);
+            expect(word?.screen?.lines.map((line) => [line.form, line.atSec, line.frame])).toContainEqual([
+                "ContentRows",
+                70,
+                "frames/b.jpg",
+            ]);
+            expect(word?.screen?.lines.some((line) => line.form === "ContentRoast")).toBe(false);
+            expect(word?.screen?.lines.filter((line) => line.form === "ContentRows")).toHaveLength(1);
+            // The run's candidate is on the screen as it is written: that is what matched, not the heard words.
+            expect(led.runs[0]?.screen?.lines[0]).toMatchObject({
+                form: "ContentRows",
+                score: 100,
+                via: "ContentRows",
+            });
+            expect(led.documents?.identifiers[0]?.screen?.lines[0]).toMatchObject({ form: "Payments", score: 100 });
+            expect(led.documents?.identifiers[0]?.screen?.lines[0]?.via).toBeUndefined();
+        });
+
+        test("the lines per lead are capped; a frame still on the screen counts, a moment not recorded has none", () => {
+            const at = (atSec: number): RawTerms => ({
+                ...terms,
+                unknown: [{ ...terms.unknown[0]!, examples: [example(atSec, "pak")] }],
+            });
+
+            expect(withScreenLines(terms, { read, linesPerLead: 1 }).unknown[0]?.screen?.lines).toHaveLength(1);
+            // A frame is kept only when the screen changes: at 550 s the one from 400 s is still shown.
+            expect(withScreenLines(at(550), { read, linesPerLead: 3 }).unknown[0]?.screen?.lines).toMatchObject([
+                { form: "ContentRoast", atSec: 400 },
+            ]);
+            expect(withScreenLines(at(700), { read, linesPerLead: 3 }).unknown[0]?.screen).toEqual({
+                frames: 0,
+                lines: [],
+            });
+        });
+
+        test("the summary names the screen record, or says the meeting kept none", () => {
+            expect(screenRecordFacts({ id: "m", read: undefined })).toMatchObject({ recorded: false });
+            expect(screenRecordFacts({ id: "m", read, linesPerLead: 3 })).toMatchObject({
+                recorded: true,
+                ocr: "/fixture/ocr.jsonl",
+                frames: 3,
+                pending: 0,
+                fromSec: 20,
+                toSec: 400,
+                leads: { windowSec: 60, linesPerLead: 3 },
+            });
+            expect(screenRecordFacts({ id: "m", read })).not.toHaveProperty("leads");
+        });
     });
 });
 
