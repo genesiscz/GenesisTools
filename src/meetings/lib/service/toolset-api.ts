@@ -492,6 +492,37 @@ export const projectsPreview = defineMethod({
     effect: "read",
     doc: 'Which project each recent meeting matches by the saved rules, and with draft rules: { draft: { work: { titleWords: ["sync"], calendars: [], folders: { wisprflow: [] } } } }.',
 });
+const polishResult =
+    "{ file, outPath, mode, outcome?, check: { verdict, message, diff? } | null, carried, warnings, parts: { record, lines, terms, questions }[] }";
+
+export const polishBuild = defineMethod({
+    name: "polish.build",
+    params: z.object({ file: z.string().min(1), force: z.boolean().optional() }).strict(),
+    positional: ["file", "force"],
+    result: z.unknown(),
+    resultName: polishResult,
+    effect: "reversible",
+    doc: `Write a meeting's polished markdown from its .polished.ts (export default defineMeetingsPolished({ … })) and the live records: each part's transcript with suggestions applied, speaker and term diffs, lines per person, open questions. Refuses (outcome "refused") when the markdown was edited by hand since the last build; force overwrites. Never writes the .ts or a record. Same as ${toolCommand("meetings polish build")} <file> [--force].`,
+});
+export const polishCheck = defineMethod({
+    name: "polish.check",
+    params: z.object({ file: z.string().min(1) }).strict(),
+    positional: ["file"],
+    result: z.unknown(),
+    resultName: polishResult,
+    effect: "read",
+    doc: `Compare a polished markdown with what its .polished.ts and the records produce now, without writing: check.verdict is clean, stale, hand-edited or unstamped, with the diff. Same as ${toolCommand("meetings polish build")} <file> --check.`,
+});
+export const polishInit = defineMethod({
+    name: "polish.init",
+    params: z.object({ from: z.string().min(1), out: z.string().min(1).optional() }).strict(),
+    positional: ["from", "out"],
+    result: z.unknown(),
+    resultName: "{ path, report: { mapped, kept, notes }, unlinkedDir }",
+    effect: "reversible",
+    doc: `Write a NEW .polished.ts from a draft polished JSON, once: every draft field becomes a config field or is kept under extras and reported. Refuses an existing file. Same as ${toolCommand("meetings polish init")} --from <json> [--out <file>].`,
+});
+
 export const dictionaryTest = defineMethod({
     name: "dictionary.test",
     params: z
@@ -899,6 +930,9 @@ export const meetingsToolsetApi = defineApi({
         projectsPeople,
         projectsPreview,
         dictionaryTest,
+        polishBuild,
+        polishCheck,
+        polishInit,
         configGet,
         audioPlan,
         audioApply,
