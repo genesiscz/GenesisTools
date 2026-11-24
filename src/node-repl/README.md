@@ -208,6 +208,7 @@ were also written to.
 | `browser` | Open, read, navigate, screenshot and close browser tabs through Chrome DevTools. |
 | `hub` | Read pull requests across repository hosts. |
 | `github` | Read GitHub pull request reviews. |
+| `work` | Work items; a write takes `requestId`, `dryRun`, `ownerSaid` and `override` beside its params, as the MCP tools do. |
 | `presets` | Save a script that worked as a named preset with parameters, and run it again. |
 
 Inside a turn, `help("<id>")` lists a toolset's methods and `describe("<id>.<method>")` prints one in full. From a
