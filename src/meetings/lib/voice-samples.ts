@@ -19,6 +19,7 @@ import {
 } from "@genesiscz/utils/meetings/voice-library";
 import type { VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
 import { recordPeople } from "./listen-answers";
@@ -52,6 +53,22 @@ interface ConfirmedVoice {
     /** The end of the stretch: its own end, or the end of its last line (`evidence.endSec`) when later. */
     endSec: number;
     seat?: Seat;
+    /** The source labels the decision is about: a stretch of one second names the line of one of them there. */
+    labels?: string[];
+    /** The line address the decision carries, when it carries one. */
+    line?: number;
+}
+
+/** Whether a print lies in a decided stretch; a stretch of one second holds the print of the line that starts there. */
+function holdsPrint(voice: ConfirmedVoice, print: { fromSec: number; toSec: number }): boolean {
+    return voice.endSec === voice.fromSec
+        ? Math.abs(print.fromSec - voice.fromSec) <= LINE_AT_TOLERANCE_SEC
+        : print.fromSec >= voice.fromSec && print.toSec <= voice.endSec;
+}
+
+function lineAddress(evidence: Record<string, unknown> | undefined): { line?: number } {
+    const line = evidence?.transcriptLine;
+    return typeof line === "number" && Number.isInteger(line) && line >= 0 ? { line } : {};
 }
 
 function stretchEnd(item: { toSec: number; evidence?: Record<string, unknown> }): number {
@@ -83,9 +100,21 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
         }
 
         const person = question.answer.trim();
+        const labels = question.evidence?.labels;
         // A split or a comment is not a single person's confirmed name. A missing attendance row is not a veto.
         return [...question.choices, ...people].some((name) => sameName(name, person))
-            ? [{ item: question.id, person, fromSec: question.fromSec, endSec: stretchEnd(question) }]
+            ? [
+                  {
+                      item: question.id,
+                      person,
+                      fromSec: question.fromSec,
+                      endSec: stretchEnd(question),
+                      ...(Array.isArray(labels)
+                          ? { labels: labels.filter((label): label is string => typeof label === "string") }
+                          : {}),
+                      ...lineAddress(question.evidence),
+                  },
+              ]
             : [];
     }
 
@@ -124,6 +153,8 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
                 fromSec: after.fromSec,
                 endSec: stretchEnd(after),
                 ...(seat === "mic" || seat === "call" ? { seat } : {}),
+                labels: [after.label],
+                ...lineAddress(after.evidence),
             },
         ];
     });
@@ -198,11 +229,32 @@ export async function prepareVoicePrints<T extends VoiceTarget>(
         energy.share
     );
     const { library } = readVoiceLibrary();
+    const transcript = new TranscriptLines(meeting.transcript);
     const skipped = targets.map(() => new Map<string, number>());
     const eligible = targets.map(({ voice, saved }, i) => {
         const owner = meetingVoiceOwner(opened.record, voice.person);
+        // A stretch whose start and end are one second names the line that starts there, as `look` and the transcript
+        // read a one-second range: that whole line is the confirmed stretch, never an empty interval.
+        const named =
+            voice.endSec === voice.fromSec
+                ? transcript.resolve(
+                      { atSec: voice.fromSec, ...(voice.line === undefined ? {} : { line: voice.line }) },
+                      (entry) => !voice.labels?.length || voice.labels.includes(entry.speaker)
+                  )
+                : undefined;
+        if (named && named.kind !== "found") {
+            const why =
+                named.kind === "none"
+                    ? "no line starts at the decision's second"
+                    : "two lines start at the decision's second";
+            skipped[i]!.set(why, 1);
+        }
+
         return lines.flatMap((line): LabelContext["lines"] => {
-            if (line.startSec < voice.fromSec || line.endSec > voice.endSec || line.endSec <= line.startSec) {
+            const inside = named
+                ? named.kind === "found" && line.index === named.index
+                : line.startSec >= voice.fromSec && line.endSec <= voice.endSec;
+            if (!inside || line.endSec <= line.startSec) {
                 return [];
             }
             const share = line.micShare ?? line.energyMic;
@@ -426,8 +478,7 @@ export function journalVoices(entry: JournalEntry | undefined, item?: string, pr
                 (!decidingItem || t.voice.item === decidingItem) &&
                 sameName(t.voice.person, change.person) &&
                 (!t.voice.seat || t.voice.seat === change.after.seat) &&
-                change.after.fromSec >= t.voice.fromSec &&
-                change.after.toSec <= t.voice.endSec
+                holdsPrint(t.voice, change.after)
         );
         const target = matching.length === 1 ? matching[0] : undefined;
         if (
