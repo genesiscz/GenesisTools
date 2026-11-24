@@ -177,7 +177,17 @@ A missing meeting names only the store that was searched. To find which store ho
    once. Confirm the findings settled by evidence or the user's answers with `tools meetings confirm <meeting>
    <settled-item-ids>` before writing the polished file; keep unresolved findings open and visibly marked.
 6. **Write the one polished file** in the layout of [polishing.md](references/polishing.md#the-polished-file), then
-   correct the source's summary against the polished transcript.
+   correct the source's summary against the polished transcript. Do not assemble it by hand: write the authored part
+   (parts with their records and time tokens, intro, participants, glossary, references, summary and its diff, extra
+   sections, unresolved readings, transcript marks, overrides) into `<name>.polished.ts` as
+   `export default defineMeetingsPolished({ … })`, then run `tools meetings polish build <name>.polished.ts`
+   (REPL: `meetings.polish.build(file)`). It writes `<name>.polished.md` from that file and the live records: each
+   part's transcript with `--with-suggested --apply-above 70`, the speaker and term diffs with confidence and evidence,
+   lines per person by band and the open questions with their `Q<n>` numbers. `[[t:MM:SS]]` in any text is a play
+   link into the part whose `token` is `t`. Change the file, never the markdown: the build stamps it and refuses to
+   overwrite a hand edit; `--check` (REPL: `meetings.polish.check(file)`) says clean, stale or hand-edited. A draft
+   `<name>.polished.json` becomes the `.ts` once with `tools meetings polish init --from <json>` (REPL:
+   `meetings.polish.init(from)`). A vault folder needs `tools link install` once so the import resolves.
 7. **Report**: the file link, the count of changes per kind, the `[nejasné: ...]` count, and every decision that
    contradicts the documents.
 
