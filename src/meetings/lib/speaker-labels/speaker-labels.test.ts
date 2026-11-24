@@ -1214,6 +1214,39 @@ describe("speaker-label integration", () => {
         expect(await proposeSpeakerLabels(opened, config.global.speakerLabels)).toEqual([]);
     });
 
+    test("a stay a person stated bounds a room seat: no line before the join or after the leave is theirs", async () => {
+        const stay = (source: "hand" | "platform-roster") => ({ fromSec: 10, toSec: 20, source, confidence: 1 });
+        const { opened, meeting, config } = await runnerFixture({
+            seats: { room: ["Alice Example"], remote: [] },
+            participants: [{ name: "Alice Example", from: ["user"], stays: [stay("hand")] }],
+        });
+        meeting.transcript = [0, 10, 20].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec: 30, channel: "mic" }],
+                speaking: [],
+                files: [],
+            })
+        );
+        const named = async () =>
+            (await proposeSpeakerLabels(opened, config.global.speakerLabels)).map((label) => [
+                label.index,
+                label.person,
+            ]);
+        expect(await named()).toEqual([
+            [0, undefined],
+            [1, "Alice Example"],
+            [2, undefined],
+        ]);
+        // A platform roster's stay is the call's; a person in the room does not follow it.
+        opened.record.participants[0]!.stays = [stay("platform-roster")];
+        expect(await named()).toEqual([
+            [0, "Alice Example"],
+            [1, "Alice Example"],
+            [2, "Alice Example"],
+        ]);
+    });
+
     test("an attended person with no seat entry shares the call seat, so the listed remote person is not named", async () => {
         const { opened, meeting, config } = await runnerFixture({
             seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }] },

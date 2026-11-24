@@ -98,18 +98,36 @@ async function labelContext(
     const presence = storedPresence ?? (await prof.measureAsync("speakers.presence", () => opened.presence()));
     const attended: LabelContext["attended"][number][] = [];
     const ownMic = record.seats?.microphones?.find((group) => group.id === "self");
+    // A room seat says where a person sat; a stay a person or an agent stated (`attendance --add`, source "hand") says
+    // when they were there at all, so no line outside it is theirs. A platform roster's stay is the call's, which a
+    // person in the room does not follow: it bounds no room seat.
+    const statedStays = (name: string) =>
+        record.participants
+            .filter((person) => sameName(person.name, name))
+            .flatMap((person) => (person.stays ?? []).filter((stay) => stay.source === "hand"));
     for (const row of record.seats?.room ?? []) {
-        const { name, fromSec = 0, toSec = Infinity } = seatSpan(row);
-        if (
-            record.seats?.microphones?.some(
-                (group) =>
-                    group.id !== "self" && group.deviceId && group.people.some((person) => sameName(person, name))
-            )
-        ) {
-            attended.push({ person: name, seat: "call", fromSec, toSec });
-        }
-        if (!ownMic || ownMic.people.some((person) => sameName(person, name))) {
-            attended.push({ person: name, seat: "mic", fromSec, toSec });
+        const seat = seatSpan(row);
+        const name = seat.name;
+        const stays = statedStays(name);
+        const spans = stays.length
+            ? stays.flatMap((stay) => {
+                  const fromSec = Math.max(seat.fromSec ?? 0, stay.fromSec);
+                  const toSec = Math.min(seat.toSec ?? Infinity, stay.toSec ?? Infinity);
+                  return fromSec < toSec ? [{ fromSec, toSec }] : [];
+              })
+            : [{ fromSec: seat.fromSec ?? 0, toSec: seat.toSec ?? Infinity }];
+        const viaDevice = record.seats?.microphones?.some(
+            (group) => group.id !== "self" && group.deviceId && group.people.some((person) => sameName(person, name))
+        );
+        const atOwnMic = !ownMic || ownMic.people.some((person) => sameName(person, name));
+        for (const { fromSec, toSec } of spans) {
+            if (viaDevice) {
+                attended.push({ person: name, seat: "call", fromSec, toSec });
+            }
+
+            if (atOwnMic) {
+                attended.push({ person: name, seat: "mic", fromSec, toSec });
+            }
         }
     }
     for (const row of record.seats?.remote ?? []) {
