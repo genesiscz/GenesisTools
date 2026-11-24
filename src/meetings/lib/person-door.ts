@@ -2,6 +2,7 @@ import type { AgentInstructionSeverity, AgentInstructions } from "@genesiscz/uti
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
+import type { NoticeInput } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
 import type { DecisionActor, MeetingRecord } from "@genesiscz/utils/meetings/record";
@@ -100,18 +101,42 @@ export function voiceSamplePlayCommand(ask: Pick<VoiceSampleAsk, "record" | "fro
     return `${TOOL} play ${shellWord(ask.record.id)} --at ${formatClock(ask.fromSec)} --to ${formatClock(Math.ceil(ask.toSec))}`;
 }
 
-/** What the confirmation window shows: who asks, the meeting, the interval, the person and how to hear it. */
-function voiceSampleRequestReason(ask: VoiceSampleAsk, actor: Extract<DecisionActor, { kind: "agent" }>): string {
+/** The words on the window's answering buttons. */
+const CONFIRM_SAMPLE = "Confirm sample";
+const NOT_NOW = "Not now";
+
+/**
+ * What the confirmation window shows (D443): who asks and what a confirmation means as the text, the meeting, the time
+ * and the person as rows, a Play button for exactly the confirmed range, and Confirm sample / Not now as the answers.
+ */
+function voiceSampleRequest(
+    ask: VoiceSampleAsk,
+    actor: Extract<DecisionActor, { kind: "agent" }>,
+    id: string
+): NoticeInput {
     const session = actor.session ? `, session ${actor.session}` : "";
-    return [
-        `An agent (${actor.harness}${session}) asks you to confirm a voice sample.`,
-        `Meeting: ${ask.record.title || ask.record.id} (${ask.record.id})`,
-        `Time: ${formatClock(ask.fromSec)} to ${formatClock(Math.ceil(ask.toSec))}`,
-        `Person: ${ask.person}`,
-        ...(ask.channel === undefined ? [] : [`Channel: ${ask.channel}`]),
-        `Listen first: ${voiceSamplePlayCommand(ask)}`,
-        `Acknowledge confirms that only ${ask.person} speaks in this interval, and the agent then saves it as a voice sample. Not now saves nothing.`,
-    ].join("\n");
+    return {
+        kind: "notice",
+        id,
+        title: `Confirm a voice sample of ${ask.person}`.slice(0, 200),
+        reason: `An agent (${actor.harness}${session}) asks whether only ${ask.person} speaks in this part of the meeting. ${CONFIRM_SAMPLE} lets the agent save it as a voice sample; ${NOT_NOW} saves nothing.`,
+        fields: [
+            { label: "Meeting", value: ask.record.title || ask.record.id, help: ask.record.id },
+            { label: "Time", value: `${formatClock(ask.fromSec)} to ${formatClock(Math.ceil(ask.toSec))}` },
+            { label: "Person", value: ask.person },
+            ...(ask.channel === undefined ? [] : [{ label: "Channel", value: String(ask.channel) }]),
+        ],
+        actions: [
+            {
+                kind: "play-meeting",
+                label: "Play clip",
+                meeting: ask.record.id,
+                fromSec: ask.fromSec,
+                toSec: ask.toSec,
+            },
+        ],
+        buttons: { confirm: CONFIRM_SAMPLE, decline: NOT_NOW },
+    };
 }
 
 function stopped(severity: AgentInstructionSeverity, lines: string[]): VoiceSampleConfirmation {
@@ -174,12 +199,7 @@ export async function confirmVoiceSample(options: {
 
     try {
         const gt = options.gt ?? (await import("@genesiscz/utils/genesis-tools")).gt;
-        outcome = await gt.person.confirm({
-            kind: "notice",
-            id: request,
-            title: `Confirm a voice sample of ${ask.person}`.slice(0, 200),
-            reason: voiceSampleRequestReason(ask, actor),
-        });
+        outcome = await gt.person.confirm(voiceSampleRequest(ask, actor, request));
     } catch (error) {
         logger.warn({ error, request }, "voice sample: the confirmation request could not be posted");
         return stopped("error", [
@@ -218,7 +238,7 @@ export async function confirmVoiceSample(options: {
 
     if (answer.status === "declined") {
         return stopped("error", [
-            `The user answered Not now in the confirmation window (request ${request}). Nothing was saved.`,
+            `The user answered ${NOT_NOW} in the confirmation window (request ${request}). Nothing was saved.`,
             "Do not ask again for this interval unless the user tells you to.",
             outside,
         ]);
