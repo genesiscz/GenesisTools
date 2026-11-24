@@ -24,6 +24,8 @@ struct WidgetHostView: View {
     @State private var topDragOrigin: Double?
     @State private var topDragPoint: CGFloat?
     @State private var measuredHeaderHeight: CGFloat = 0
+    /// The width the top bar's title adds when it shows (`WidgetTopBarLayout.titleWidth`), measured from a hidden copy.
+    @State private var topTitleWidth: CGFloat = 0
     @State private var dragOrigin: Double?
     @State private var dragClusterHeight: CGFloat?
     /// Set while the pointer is on this panel (`motion.pointerInside`): the expanded Agents pane is built then, hidden,
@@ -136,8 +138,14 @@ struct WidgetHostView: View {
             .offset(x: frame?.minX ?? 0, y: frame?.minY ?? 0)
     }
 
+    private var topTitle: String { selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets" }
+    private static let topTitleFont: Font = .system(size: 12, weight: .semibold)
+    /// The primary button's HStack spacing, which the title brings with it.
+    private static let topTitleSpacing: CGFloat = 7
+
     private var topStrip: some View {
-        WidgetTopBarLayout(cutout: topPlacement()?.cutout ?? cutout, notch: cutout, placementsMeasured: { plain, split in
+        WidgetTopBarLayout(cutout: topPlacement()?.cutout ?? cutout, notch: cutout, titleWidth: topTitleWidth,
+            placementsMeasured: { plain, split in
             let measured = CGSize(width: ceil(plain.width + 36), height: max(headerMinimumHeight, ceil(plain.height + 24)))
             let splitMeasured = CGSize(width: ceil(split.width + 36), height: measured.height)
             DispatchQueue.main.async {
@@ -149,7 +157,7 @@ struct WidgetHostView: View {
                 if selected?.id == "agents" { model.toggleInboxOverview(on: surface) }
                 else { expand() }
             } label: {
-                HStack(spacing: 7) {
+                HStack(spacing: Self.topTitleSpacing) {
                     if selected?.id == "agents" {
                         Image(systemName: "tray.fill")
                             .font(.system(size: 14, weight: .semibold)).frame(width: 20, height: 20)
@@ -158,8 +166,8 @@ struct WidgetHostView: View {
                             .foregroundStyle(selected?.tint ?? .blue)
                     }
                     if (topPlacement()?.cutout ?? cutout) == 0 {
-                        Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
-                            .font(.system(size: 12, weight: .semibold))
+                        Text(topTitle)
+                            .font(Self.topTitleFont)
                     }
                     if selected?.id == "agents", model.waitingCount > 0 {
                         WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
@@ -206,6 +214,13 @@ struct WidgetHostView: View {
                         .accessibilityLabel("Choose widgets")
                 }
             }.fixedSize()
+        }
+        .background {
+            // The title's width whether or not the bar shows it, so both placements are measured the same way.
+            Text(topTitle).font(Self.topTitleFont).fixedSize().hidden().accessibilityHidden(true)
+                .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.width) }) {
+                    topTitleWidth = $0 + Self.topTitleSpacing
+                }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
         .frame(minHeight: headerMinimumHeight).fixedSize(horizontal: false, vertical: true)
