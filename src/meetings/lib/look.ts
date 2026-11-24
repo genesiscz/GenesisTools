@@ -6,6 +6,7 @@ import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcr
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
 import { itemWhat } from "./item-text";
+import { gapSentence, joinGaps } from "./join-clock";
 import { screenTextChanges } from "./look-screen";
 import { itemMomentSpot } from "./moment";
 import { meetingTimeRangeSchema } from "./moment-schema";
@@ -189,6 +190,12 @@ export async function lookMeeting(store: MeetingStore, input: z.input<typeof mee
                 fromSec: Math.max(fromSec, stay.fromSec),
                 toSec: Math.min(toSec, stay.toSec),
             })) ?? null;
+    // A joined meeting's gap holds no line, no sound and no frame: the window says so instead of showing the screen
+    // the recording before it left behind.
+    const gaps = joinGaps(record)
+        .filter((gap) => gap.fromSec < toSec && gap.toSec > fromSec)
+        .map((gap) => ({ fromSec: gap.fromSec, toSec: gap.toSec, note: gapSentence(gap) }));
+    const inGap = gaps.some((gap) => gap.fromSec <= fromSec && toSec <= gap.toSec);
     return {
         meeting: record.id,
         ...window,
@@ -196,6 +203,7 @@ export async function lookMeeting(store: MeetingStore, input: z.input<typeof mee
         attendance,
         items,
         questions: items.filter((item) => item.kind === "question" && item.status === "suggested"),
-        screen: await screenTextChanges({ folder: store.folder(record.id), timeline, ...window }),
+        ...(gaps.length > 0 ? { gaps } : {}),
+        screen: inGap ? [] : await screenTextChanges({ folder: store.folder(record.id), timeline, ...window }),
     };
 }

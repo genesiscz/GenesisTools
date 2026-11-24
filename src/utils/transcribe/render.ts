@@ -25,12 +25,34 @@ export interface Turn {
     nameScore?: number;
     startSec?: number;
     paragraphs: Paragraph[];
+    /** The turn opens a later recording of a joined meeting: nothing was recorded from `fromSec` to `toSec`. */
+    gapBefore?: { fromSec: number; toSec: number };
+}
+
+/** Marks the first turn after each gap (a joined meeting's `joinGaps`) with it, for a transcript whose lines lost their recording. */
+export function turnsWithGaps(turns: Turn[], gaps: ReadonlyArray<{ fromSec: number; toSec: number }>): Turn[] {
+    return turns.map((turn, index) => {
+        const before = turns[index - 1]?.startSec;
+        const gap = gaps.find(
+            (one) =>
+                turn.startSec !== undefined &&
+                turn.startSec >= one.toSec &&
+                (before === undefined || before < one.toSec)
+        );
+        return gap && !turn.gapBefore ? { ...turn, gapBefore: { fromSec: gap.fromSec, toSec: gap.toSec } } : turn;
+    });
+}
+
+/** The line a transcript prints for the gap between two recordings of one joined meeting. */
+export function gapLine(gap: { fromSec: number; toSec: number }): string {
+    return `[${formatClock(gap.fromSec)} to ${formatClock(gap.toSec)}: gap between the recordings, nothing was recorded (${formatClock(gap.toSec - gap.fromSec)})]`;
 }
 
 /** Consecutive lines of one speaker become one turn; long turns split into paragraphs at pauses. */
 export function groupTurns(entries: TranscriptEntry[], useFirstNames = false): Turn[] {
     const turns: Turn[] = [];
     let previousStart: number | undefined;
+    let previous: TranscriptEntry | undefined;
 
     for (const entry of entries) {
         const speaker = useFirstNames ? firstName(entry.speaker) : entry.speaker;
@@ -41,6 +63,28 @@ export function groupTurns(entries: TranscriptEntry[], useFirstNames = false): T
         }
 
         const turn = turns.at(-1);
+        // A joined meeting's lines name their recording: the first line of the next one opens a turn after the gap.
+        const gapBefore =
+            previous?.sourceMeetingId !== undefined &&
+            entry.sourceMeetingId !== undefined &&
+            previous.sourceMeetingId !== entry.sourceMeetingId &&
+            previous.endSec !== undefined &&
+            entry.startSec !== undefined
+                ? { fromSec: previous.endSec, toSec: entry.startSec }
+                : undefined;
+        previous = entry;
+
+        if (gapBefore) {
+            turns.push({
+                speaker,
+                ...(entry.nameSource ? { nameSource: entry.nameSource, nameScore: entry.nameScore } : {}),
+                startSec: entry.startSec,
+                paragraphs: [{ startSec: entry.startSec, text }],
+                gapBefore,
+            });
+            previousStart = entry.startSec;
+            continue;
+        }
 
         if (
             !turn ||
@@ -154,8 +198,9 @@ export function transcriptBlocks(
         playLink?: (startSec: number) => string | null;
     } = {}
 ): Block[] {
-    return turns.flatMap((turn) =>
-        turn.paragraphs.map((paragraph, index): Block => {
+    return turns.flatMap((turn) => [
+        ...(turn.gapBefore ? [{ p: `*${gapLine(turn.gapBefore)}*` } satisfies Block] : []),
+        ...turn.paragraphs.map((paragraph, index): Block => {
             const at = timestamps ? paragraph.startSec : undefined;
 
             return {
@@ -167,8 +212,8 @@ export function transcriptBlocks(
                     text: paragraph.text,
                 }),
             };
-        })
-    );
+        }),
+    ]);
 }
 
 function transcriptParagraph(block: { speaker?: string; time?: string; play?: string; text: string }): string {
@@ -195,6 +240,10 @@ export function transcriptTextLines(turns: Turn[], timestamps: boolean): string[
     const lines: string[] = [];
 
     for (const turn of turns) {
+        if (turn.gapBefore) {
+            lines.push(gapLine(turn.gapBefore), "");
+        }
+
         const stamp = timestamps && turn.startSec !== undefined ? ` [${formatClock(turn.startSec)}]` : "";
         lines.push(`${[turn.speaker, voiceNameText(turn)].filter(Boolean).join(" · ")}${stamp}:`);
 

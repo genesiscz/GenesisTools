@@ -6,6 +6,7 @@ import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    heldSourceMeetings,
     MEETING_UNCHANGED,
     type MeetingRecord,
     type MeetingStore,
@@ -27,7 +28,9 @@ function fingerprint(value: Awaited<ReturnType<typeof stat>>): string {
 }
 
 function sourceStillLinked(record: MeetingRecord, ref: SourceRef): boolean {
-    return record.sources[ref.sourceId]?.meetingId === ref.sourceMeetingId;
+    return heldSourceMeetings(record).some(
+        (held) => held.sourceId === ref.sourceId && held.sourceMeetingId === ref.sourceMeetingId
+    );
 }
 
 /** Pure lookup: no source read, migration, archive or hash on the playback path. */
@@ -38,7 +41,14 @@ export function preservedSourceAudio(
     if (!ref) {
         return undefined;
     }
-    const audio = record.audio?.sources[ref.sourceId];
+    const own = record.audio?.sources[ref.sourceId];
+    // A joined record keeps each later recording's preserved sound in its part.
+    const audio =
+        own?.sourceMeetingId === ref.sourceMeetingId
+            ? own
+            : record.join?.parts.find(
+                  (part) => part.sourceId === ref.sourceId && part.sourceMeetingId === ref.sourceMeetingId
+              )?.audio;
     if (!audio || audio.sourceMeetingId !== ref.sourceMeetingId) {
         return undefined;
     }

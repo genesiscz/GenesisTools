@@ -78,7 +78,10 @@ export class TranscriptLines {
         this.ends = TranscriptLines.endsOf(entries);
     }
 
-    /** One rule for every line: the next timed line's start, at least `MIN_LINE_SEC` on; the last line `LAST_LINE_SEC`. */
+    /**
+     * One rule for every line: the next timed line's start, at least `MIN_LINE_SEC` on; the last line `LAST_LINE_SEC`.
+     * A line that says where it ends (`endSec`, the last line of one recording of a joined meeting) ends there.
+     */
     private static endsOf(entries: readonly TranscriptEntry[]): Array<number | undefined> {
         const ends: Array<number | undefined> = entries.map(() => undefined);
         let next: number | undefined;
@@ -90,7 +93,8 @@ export class TranscriptLines {
                 continue;
             }
 
-            ends[index] = Math.max(next ?? entry.startSec + LAST_LINE_SEC, entry.startSec + MIN_LINE_SEC);
+            ends[index] =
+                entry.endSec ?? Math.max(next ?? entry.startSec + LAST_LINE_SEC, entry.startSec + MIN_LINE_SEC);
             next = entry.startSec;
         }
 

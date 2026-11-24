@@ -11,6 +11,7 @@ import { AUDIO_SOURCES, type AudioSource } from "@genesiscz/utils/screen-recorde
 import { z } from "zod";
 import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
+import { toJoinedSec, toPartSec } from "./join-clock";
 import type { OpenedMeeting } from "./opened-meeting";
 import { ALIGN_MATCH_SEC, ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
 import { preservedSourceAudio } from "./source-audio";
@@ -161,6 +162,11 @@ export interface MeetingSound {
     readonly tracks: readonly SoundTrack[];
     /** The best track of the seat for the purpose that covers the span; undefined when none covers it. */
     slice(request: SliceRequest): SoundSlice | undefined;
+    /**
+     * A play from `span.fromSec` on through the track of this kind; `soundRunOf` reads it, with `soundRun` over
+     * `tracks` for a sound that has none (a joined meeting's has one: its tracks' pieces sit on the joined clock).
+     */
+    run?(kind: TrackKind, span: { fromSec: number; toSec?: number }): SoundSlice[];
 }
 
 /** Which track kind a recorder source makes. */
@@ -285,6 +291,10 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
 
     return {
         tracks,
+        run(kind, span) {
+            const track = tracks.find((one) => one.kind === kind);
+            return track ? soundRun(track, span) : [];
+        },
         slice(request) {
             if (request.toSec <= request.fromSec) {
                 return undefined;
@@ -369,6 +379,88 @@ export function soundRun(track: SoundTrack, span: { fromSec: number; toSec?: num
     }
 
     return parts;
+}
+
+/** One recording's sound in a joined meeting: its place on the joined clock and its window (to the next one's start). */
+export interface JoinedSoundPart {
+    offsetMs: number;
+    fromSec: number;
+    untilSec: number;
+    sound: MeetingSound;
+}
+
+/**
+ * The sound of a meeting joined from several recordings. A slice or a play goes to the recording whose window holds
+ * it, on that recording's own seconds, so it is the slice that recording gave before the join; a span over the gap
+ * between two recordings has no slice, and a play stops where its recording's window ends. `tracks` lists each kind
+ * once, its pieces from every recording on the joined clock (a mixed clock reads as the weaker one, `stamp`).
+ */
+export function joinedSound(parts: readonly JoinedSoundPart[]): MeetingSound {
+    const at = (fromSec: number, toSec: number) =>
+        parts.find((part) => fromSec >= part.fromSec && fromSec < part.untilSec && toSec <= part.untilSec);
+    const tracks = TRACK_KINDS.flatMap((kind): SoundTrack[] => {
+        const own = parts.flatMap((part) => {
+            const track = part.sound.tracks.find((one) => one.kind === kind);
+            return track ? [{ part, track }] : [];
+        });
+        const first = own[0]?.track;
+
+        if (!first) {
+            return [];
+        }
+
+        const clocks = new Set(own.map(({ track }) => track.clock));
+        return [
+            {
+                ...first,
+                pieces: own
+                    .flatMap(({ part, track }) =>
+                        track.pieces.map((piece) => ({ ...piece, zeroSec: toJoinedSec(piece.zeroSec, part.offsetMs) }))
+                    )
+                    .sort((a, b) => a.zeroSec - b.zeroSec),
+                clock: clocks.size === 1 ? first.clock : clocks.has("stamp") ? "stamp" : first.clock,
+            },
+        ];
+    });
+
+    return {
+        tracks,
+        slice(request) {
+            const part = at(request.fromSec, request.toSec);
+            return part?.sound.slice({
+                ...request,
+                fromSec: toPartSec(request.fromSec, part.offsetMs),
+                toSec: toPartSec(request.toSec, part.offsetMs),
+            });
+        },
+        run(kind, span) {
+            const part = at(span.fromSec, span.fromSec);
+
+            if (!part) {
+                return [];
+            }
+
+            const toSec = Math.min(span.toSec ?? part.untilSec, part.untilSec);
+            return soundRunOf(part.sound, kind, {
+                fromSec: toPartSec(span.fromSec, part.offsetMs),
+                ...(Number.isFinite(toSec) ? { toSec: toPartSec(toSec, part.offsetMs) } : {}),
+            });
+        },
+    };
+}
+
+/** A play from `span.fromSec` on through the sound's track of `kind`: its own `run`, else `soundRun` over the track. */
+export function soundRunOf(
+    sound: MeetingSound,
+    kind: TrackKind,
+    span: { fromSec: number; toSec?: number }
+): SoundSlice[] {
+    if (sound.run) {
+        return sound.run(kind, span);
+    }
+
+    const track = sound.tracks.find((one) => one.kind === kind);
+    return track ? soundRun(track, span) : [];
 }
 
 export function readSoundClock(folder: string): SoundClock | undefined {

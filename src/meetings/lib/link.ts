@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import {
+    heldSourceMeetings,
     type MeetingCreator,
     type MeetingParticipant,
     type MeetingRecord,
@@ -54,7 +55,9 @@ export function sourceHolders(options: {
         .filter(
             (record) =>
                 record.id !== options.exceptId &&
-                record.sources[options.sourceId]?.meetingId === options.sourceMeetingId
+                heldSourceMeetings(record).some(
+                    (held) => held.sourceId === options.sourceId && held.sourceMeetingId === options.sourceMeetingId
+                )
         );
 }
 

@@ -38,7 +38,7 @@ const { log } = logger.scoped("meetings-merge");
 const rowTime = z.looseObject({ at: z.string().optional() });
 
 /** The title `record start` gives a meeting without a calendar entry (`commands/record.ts`). */
-const GENERATED_TITLE = /^Meeting \d{1,2}:\d{2}$/;
+export const GENERATED_TITLE = /^Meeting \d{1,2}:\d{2}$/;
 
 /** Files a merge moves from one meeting folder into the other, each with its rows. */
 const ROW_FILES = ["frames.jsonl", "ocr.jsonl", "audio.jsonl"] as const;
@@ -48,7 +48,7 @@ const MOVED_FOLDERS = ["frames", "audio"] as const;
  * so the merged record would show a part of its recording; they go into the backup, and opening the editor or the next
  * recorder start makes them again.
  */
-const DERIVED_FILES = ["recording.json", "recorder-last.json", "proxy.mp4", "proxy.transcript.json"] as const;
+export const DERIVED_FILES = ["recording.json", "recorder-last.json", "proxy.mp4", "proxy.transcript.json"] as const;
 
 export interface MergeRequest {
     store: MeetingStore;
@@ -95,7 +95,7 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
         intoRef &&
         (fromRef.sourceId !== intoRef.sourceId || fromRef.sourceMeetingId !== intoRef.sourceMeetingId)
     ) {
-        return `${from.id} and ${into.id} hold different source meetings (${fromRef.sourceId}:${fromRef.sourceMeetingId}, ${intoRef.sourceId}:${intoRef.sourceMeetingId}); only records of one call merge.`;
+        return `${from.id} and ${into.id} hold different source meetings (${fromRef.sourceId}:${fromRef.sourceMeetingId}, ${intoRef.sourceId}:${intoRef.sourceMeetingId}); only records of one call merge. Two recordings of one meeting join: ${toolCommand("meetings", "join", from.id, into.id)}`;
     }
 
     if (from.items.length > 0) {
@@ -130,7 +130,7 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
 }
 
 /** A lock or pid claim a process holds (`meeting.json.lock`, its queue and arbitration, `*.pid`), never meeting data. */
-function isClaimFile(name: string): boolean {
+export function isClaimFile(name: string): boolean {
     return /(?:\.pid|\.lock)(?:$|\.)/.test(name);
 }
 
@@ -277,7 +277,7 @@ export function attendanceShift(from: MeetingRecord, into: MeetingRecord): numbe
 }
 
 /** One line of a row file with the wall time it carries (`at`; NaN when it has none). */
-interface Row {
+export interface Row {
     line: string;
     at: number;
 }
@@ -287,7 +287,7 @@ interface Row {
  * JSON throws with the file and its line number: the merge reads both files before it moves anything, and a refusal
  * then leaves both records as they were.
  */
-function readRows(path: string): Row[] {
+export function readRows(path: string): Row[] {
     if (!existsSync(path)) {
         return [];
     }
@@ -317,7 +317,7 @@ function readRows(path: string): Row[] {
 }
 
 /** The rows of both files in time order (`at`), so `screen` and the timeline read one recording. */
-function mergeRows(intoFile: string, rows: { into: Row[]; from: Row[] }): void {
+export function mergeRows(intoFile: string, rows: { into: Row[]; from: Row[] }): void {
     if (rows.from.length === 0) {
         return;
     }

@@ -9,6 +9,7 @@ import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { segmentsEndSec } from "./audio";
+import { gapSentence, joinGapAt } from "./join-clock";
 import { momentCacheDir, trimMomentCache } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import {
@@ -21,7 +22,7 @@ import {
     pickPlayer,
     type SeekingPlayer,
 } from "./players";
-import { type MeetingSound, type Seat, type SoundSlice, soundRun, type TrackKind } from "./sound";
+import { type MeetingSound, type Seat, type SoundSlice, soundRunOf, type TrackKind } from "./sound";
 import { sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-playback");
@@ -323,9 +324,18 @@ async function lastSpeechSec(opened: OpenedMeeting): Promise<number | undefined>
 async function listenAt(options: {
     opened: OpenedMeeting;
     atSec: number;
+    /** The end of a range, so a range that runs into a gap of a joined meeting is refused. */
+    toSec?: number;
     track?: TrackKind;
 }): Promise<{ sound: MeetingSound; seat: Seat; at?: SoundSlice }> {
     const { opened, atSec, track } = options;
+    // On a joined meeting, a time in the gap between two recordings has no sound, and a range over it plays none.
+    const gap = joinGapAt(opened.record, atSec, Math.max(atSec, options.toSec ?? atSec));
+
+    if (gap) {
+        throw new Error(gapSentence(gap));
+    }
+
     const late = pastTheEnd(atSec, await lastSpeechSec(opened));
 
     if (late) {
@@ -394,8 +404,7 @@ export async function playbackRange(options: {
         return [slice];
     }
 
-    const track = sound.tracks.find((one) => one.kind === at?.track);
-    const [first, ...next] = track ? soundRun(track, { fromSec: options.fromSec, toSec: options.toSec }) : [];
+    const [first, ...next] = at ? soundRunOf(sound, at.track, { fromSec: options.fromSec, toSec: options.toSec }) : [];
 
     if (!first || next.length === 0) {
         throw new Error("No audible track covers this interval; choose a shorter interval or another --track.");
@@ -415,8 +424,7 @@ export async function playbackRun(options: {
     track?: TrackKind;
 }): Promise<[SoundSlice, ...SoundSlice[]]> {
     const { sound, at } = await listenAt(options);
-    const track = sound.tracks.find((one) => one.kind === at?.track);
-    const [first, ...next] = track ? soundRun(track, { fromSec: options.fromSec }) : [];
+    const [first, ...next] = at ? soundRunOf(sound, at.track, { fromSec: options.fromSec }) : [];
     if (!first) {
         throw new Error("No audible track covers this time; choose another --track with a track listed by show.");
     }

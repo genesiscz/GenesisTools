@@ -14,6 +14,8 @@ import {
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { clockMove, movedValue } from "../lib/join-clock";
+import { joinedInto } from "../lib/join-recordings";
 import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
 import { PLAYERS, pickPlayer } from "../lib/players";
 import { withMeetingsClient } from "../lib/service/client";
@@ -307,7 +309,7 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
         fail("--title and --quote describe a saved clip; add --save.");
         return;
     }
-    const what = wanted(opts);
+    let what = wanted(opts);
 
     if ("error" in what) {
         fail(what.error);
@@ -367,7 +369,20 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
     try {
         const store = new MeetingStore();
-        const record = store.resolve(ref);
+        let record = store.resolve(ref);
+
+        // A link or a note saved before a join names the later recording's old id and its own seconds.
+        if (!record) {
+            const joined = joinedInto(store, ref);
+
+            if (joined) {
+                ui.dim(
+                    `${ref} is part of ${joined.record.id} now; its times start at ${formatClock(joined.part.offsetMs / 1000)} there.`
+                );
+                record = joined.record;
+                what = movedValue(what, clockMove(joined.part.offsetMs));
+            }
+        }
 
         if (!record) {
             fail(`No meeting "${ref}". List them: ${TOOL} list`);

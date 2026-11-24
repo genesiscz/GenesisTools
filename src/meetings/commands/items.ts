@@ -28,6 +28,7 @@ import {
     localTime,
     TRANSCRIPT_FORMATS,
     transcriptTextLines,
+    turnsWithGaps,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
@@ -38,6 +39,7 @@ import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/
 import { decisionActionSchema } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
+import { joinGaps } from "../lib/join-clock";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { attendanceDetail, attendanceIdRefusal, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -902,7 +904,7 @@ async function transcript(
         }
 
         out.print(
-            `${[record.title, localTime(record.start), "", ...transcriptTextLines(groupTurns(applied.entries), opts.timestamps === true)].join("\n").trimEnd()}\n`
+            `${[record.title, localTime(record.start), "", ...transcriptTextLines(turnsWithGaps(groupTurns(applied.entries), joinGaps(record)), opts.timestamps === true)].join("\n").trimEnd()}\n`
         );
     } catch (err) {
         fail(err);
