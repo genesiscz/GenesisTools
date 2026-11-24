@@ -1,3 +1,4 @@
+import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes, formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -869,9 +870,11 @@ async function decideOne(
                 unknown > 0
                     ? ` (${formatCount(unknown, "size")} not measured yet ${unknown === 1 ? "counts" : "count"} as 0)`
                     : "";
-            out.println(
-                `Request ${id} is ${formatBytes(bytes)}${counted}, under the ${gate} MB set for agents: ${handOver(id)}`
-            );
+            outputAgentInstructions({
+                text: `Request ${id} is ${formatBytes(bytes)}${counted}, under the ${gate} MB set for agents: ${handOver(id)}`,
+                severity: "warning",
+                stop: false,
+            });
             process.exitCode = 1;
             return;
         }
