@@ -559,7 +559,10 @@ test("play's positional time and track reach the original track's file seconds w
         folder: "/fixture",
         timelineZeroMs: 0,
         tracks: "best",
-        rows: [{ file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] }],
+        rows: [
+            { file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] },
+            { file: "mic2.m4a", source: "mic", at: "1970-01-01T00:00:40Z", durationMs: 30000, mutedSpans: [] },
+        ],
     });
     const opened = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound);
     const printed = spyOn(out, "result").mockImplementation(() => {});
@@ -587,9 +590,42 @@ test("play's positional time and track reach the original track's file seconds w
             audioPath: "/fixture/mic.m4a",
             startSec: 5,
             cut: false,
+            // The play goes on past its 60 s piece: VLC gets the later pieces as a playlist.
+            parts: [
+                { path: "/fixture/mic.m4a", fileFromSec: 5, fileToSec: 30 },
+                { path: "/fixture/mic2.m4a", fileFromSec: 0, fileToSec: 30 },
+            ],
             player: "vlc",
-            argv: PLAYERS.vlc.fromArgv("/fixture/mic.m4a", 5),
+            argv: [expect.stringMatching(/VLC$/), "/fixture/mic.m4a", ":start-time=5", "/fixture/mic2.m4a"],
         });
+
+        // A lead-in that reaches back into the piece before starts there; ffplay reads the pieces as a concat list.
+        const ffplay = spyOn(PLAYERS.ffplay, "available").mockReturnValue(true);
+        try {
+            await program.parseAsync(
+                ["play", record.id, "42", "--track", "mic-raw", "--player", "ffplay", "--no-start", "--json"],
+                {
+                    from: "user",
+                }
+            );
+        } finally {
+            ffplay.mockRestore();
+        }
+        const listPath = join(momentCacheDir(record.id), "run-mic-raw.ffconcat");
+        expect(SafeJSON.parse(String(printed.mock.calls.at(-1)?.[0]), { strict: true })).toMatchObject({
+            parts: [
+                { path: "/fixture/mic.m4a", fileFromSec: 27, fileToSec: 30 },
+                { path: "/fixture/mic2.m4a", fileFromSec: 0, fileToSec: 30 },
+            ],
+            player: "ffplay",
+            argv: ["ffplay", "-nodisp", "-autoexit", "-f", "concat", "-safe", "0", listPath],
+            list: {
+                path: listPath,
+                text: "ffconcat version 1.0\nfile '/fixture/mic.m4a'\ninpoint 27\nfile '/fixture/mic2.m4a'\n",
+            },
+        });
+        // --no-start writes no list.
+        expect(existsSync(listPath)).toBe(false);
         expect(spawn).not.toHaveBeenCalled();
         expect(model).not.toHaveBeenCalled();
         expect(embed).not.toHaveBeenCalled();
@@ -619,8 +655,9 @@ test("open-ended play opens the recording itself at its second in the seeking pl
     const opened = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound);
     const printed = spyOn(out, "result").mockImplementation(() => {});
     const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
-    // Both ways a player could start are a process that exits at once, so no audio device opens on any code.
+    // Every way a player could start is a process that exits at once, so no audio device opens on any code.
     const seek = spyOn(PLAYERS.vlc, "fromArgv").mockReturnValue(["true"]);
+    const run = spyOn(PLAYERS.vlc, "runOpening").mockReturnValue({ argv: ["true"] });
     const clip = spyOn(PLAYERS.vlc, "clipArgv").mockReturnValue(["true"]);
     try {
         const program = new Command().exitOverride();
@@ -629,7 +666,10 @@ test("open-ended play opens the recording itself at its second in the seeking pl
             from: "user",
         });
         // The VLC app took /dev/stdin for an empty item named "stdin" and stayed silent; the real file plays.
-        expect(seek.mock.calls).toEqual([["/fixture/mic.m4a", 5]]);
+        expect(run.mock.calls).toEqual([
+            [{ items: [{ path: "/fixture/mic.m4a", fromSec: 5 }], listPath: expect.any(String) }],
+        ]);
+        expect(seek).not.toHaveBeenCalled();
         expect(clip).not.toHaveBeenCalled();
         expect(SafeJSON.parse(String(printed.mock.calls.at(-1)?.[0]), { strict: true })).toMatchObject({
             audioPath: "/fixture/mic.m4a",
@@ -644,6 +684,7 @@ test("open-ended play opens the recording itself at its second in the seeking pl
         printed.mockRestore();
         vlc.mockRestore();
         seek.mockRestore();
+        run.mockRestore();
         clip.mockRestore();
         process.exitCode = 0;
     }
@@ -1823,8 +1864,9 @@ describe("play: the player and the plan", () => {
             audioPath: path,
             startSec: 27.5,
             cut: false,
+            parts: [{ path, fileFromSec: 27.5, fileToSec: 60 }],
             player: "vlc",
-            argv: PLAYERS.vlc.fromArgv(path, 27.5),
+            argv: [expect.stringMatching(/VLC$/), path, ":start-time=27.5"],
         });
         const stereo = slicePlaybackPlan({
             slice: { ...slice, track: "source-mic", channel: 0, clock: "source" },
@@ -1840,6 +1882,52 @@ describe("play: the player and the plan", () => {
             startSec: 0,
             cut: true,
         });
+    });
+
+    test("a play from a time runs on through the later pieces: VLC per-item start times, ffplay a concat list", () => {
+        const piece = (number: number, fileFromSec: number) => ({
+            track: "mic-raw" as const,
+            path: `/rec/it's/piece-${number}.m4a`,
+            fileFromSec,
+            fileToSec: 60,
+            clock: "measured" as const,
+        });
+        const slice = { ...piece(43, 27.366000000000014), meeting: "2026-11-01_10-00-run", fromSec: 2590 };
+        // Clock arithmetic leaves a second like 2.8e-14, which ffmpeg cannot parse: it is written as 0.
+        const next = [piece(44, 2.842170943040401e-14), piece(45, 0.002)];
+        const vlc = slicePlaybackPlan({ slice, next, openEnded: true, player: PLAYERS.vlc });
+
+        expect(vlc).toMatchObject({ audioPath: slice.path, startSec: slice.fileFromSec, cut: false, player: "vlc" });
+        expect(vlc.parts.map((part) => part.path)).toEqual([
+            "/rec/it's/piece-43.m4a",
+            "/rec/it's/piece-44.m4a",
+            "/rec/it's/piece-45.m4a",
+        ]);
+        expect(vlc.argv.slice(1)).toEqual([
+            "/rec/it's/piece-43.m4a",
+            ":start-time=27.366",
+            "/rec/it's/piece-44.m4a",
+            "/rec/it's/piece-45.m4a",
+            ":start-time=0.002",
+        ]);
+        expect(vlc.list).toBeUndefined();
+
+        const ffplay = slicePlaybackPlan({ slice, next, openEnded: true, player: PLAYERS.ffplay });
+        const listPath = join(momentCacheDir(slice.meeting), "run-mic-raw.ffconcat");
+        expect(ffplay.argv).toEqual(["ffplay", "-nodisp", "-autoexit", "-f", "concat", "-safe", "0", listPath]);
+        expect(ffplay.list).toEqual({
+            path: listPath,
+            text: [
+                "ffconcat version 1.0",
+                "file '/rec/it'\\''s/piece-43.m4a'",
+                "inpoint 27.366",
+                "file '/rec/it'\\''s/piece-44.m4a'",
+                "file '/rec/it'\\''s/piece-45.m4a'",
+                "inpoint 0.002",
+                "",
+            ].join("\n"),
+        });
+        expect(existsSync(listPath)).toBe(false);
     });
 });
 

@@ -9,61 +9,100 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { momentCacheDir, trimMomentCache } from "./moment";
 import type { OpenedMeeting } from "./opened-meeting";
-import { PLAYERS, type PlaybackPlan, pickPlayer, type SeekingPlayer } from "./players";
-import type { SoundSlice, TrackKind } from "./sound";
+import { PLAYERS, type PlaybackPlan, type PlayerList, pickPlayer, type SeekingPlayer } from "./players";
+import { type MeetingSound, type Seat, type SoundSlice, soundRun, type TrackKind } from "./sound";
 
 const { log } = logger.scoped("meetings-playback");
 
 /** A slice with the meeting it is from and the meeting second it starts at, which name its cut in the clip cache. */
 export type MeetingSlice = SoundSlice & { meeting: string; fromSec: number };
 
-/** What a player opens for a slice: the file and the second it starts at. */
+/** One file a play goes through: the file seconds it plays, and the one channel heard (both when absent). */
+export type PlayPart = Pick<SoundSlice, "path" | "channel" | "fileFromSec" | "fileToSec">;
+
+/** What a player opens for a slice: the first file and the second it starts at, and every part it plays. */
 export interface SliceOpening {
     audioPath: string;
     startSec: number;
-    /** `audioPath` is a WAV cut from the slice into the clip cache; it exists once `cutSlice` ran. */
+    /** `audioPath` is a WAV cut from the first part into the clip cache; it exists once `cutSlice` ran. */
     cut: boolean;
+    /** What plays, in order: a range is one part; a play from a time goes on through the track's later pieces. */
+    parts: PlayPart[];
+    /** The list the player reads the parts from (ffplay's concat list), written into the clip cache at the start. */
+    list?: PlayerList;
 }
 
 /** A `tools meetings play` plan for a slice: what it opens, in which seeking player, with which command line. */
 export type SlicePlaybackPlan = PlaybackPlan & SliceOpening;
 
 /**
- * What a player opens for a slice. An open-ended play of a file with one channel opens the recording itself at the
- * slice's second, so the player shows the real file and can seek in it. One channel of a stereo source, or a bounded
- * interval, is a WAV cut into the clip cache. No player reads a pipe: the VLC app took `/dev/stdin` for an empty item
- * named "stdin" and played nothing.
+ * The plan `tools meetings play` starts. A play from a time opens the recording itself at the slice's second, so the
+ * player shows the real file and can seek in it, and goes on through the track's later pieces (`next`) in the
+ * player's own list: VLC takes them as a playlist, ffplay as a concat list in the clip cache. One channel of a stereo
+ * source, or a range, is a WAV cut into the clip cache. No player reads a pipe: the VLC app took `/dev/stdin` for an
+ * empty item named "stdin" and played nothing.
  */
-export function sliceOpening(options: { slice: MeetingSlice; openEnded: boolean }): SliceOpening {
-    const { slice } = options;
-
-    if (options.openEnded && slice.channel === undefined) {
-        return { audioPath: slice.path, startSec: slice.fileFromSec, cut: false };
-    }
-
-    return { audioPath: sliceCachePath(slice), startSec: 0, cut: true };
-}
-
-/** The plan `tools meetings play` starts: `sliceOpening` in a player that opens a file at a second. */
 export function slicePlaybackPlan(options: {
     slice: MeetingSlice;
+    next?: readonly SoundSlice[];
     openEnded: boolean;
     player: SeekingPlayer;
 }): SlicePlaybackPlan {
-    const opening = sliceOpening(options);
+    const { slice, player } = options;
+
+    if (!options.openEnded || slice.channel !== undefined) {
+        const audioPath = sliceCachePath(slice);
+        return {
+            audioPath,
+            startSec: 0,
+            cut: true,
+            parts: [playPart(slice)],
+            player: player.id,
+            argv: player.fromArgv(audioPath, 0),
+        };
+    }
+
+    const parts = [slice, ...(options.next ?? [])].map(playPart);
+    const opening = player.runOpening({
+        items: parts.map((part) => ({ path: part.path, fromSec: part.fileFromSec })),
+        listPath: join(momentCacheDir(slice.meeting), `run-${slice.track}.ffconcat`),
+    });
     return {
-        ...opening,
-        player: options.player.id,
-        argv: options.player.fromArgv(opening.audioPath, opening.startSec),
+        audioPath: slice.path,
+        startSec: slice.fileFromSec,
+        cut: false,
+        parts,
+        ...(opening.list ? { list: opening.list } : {}),
+        player: player.id,
+        argv: opening.argv,
     };
 }
 
-/** Starts a plan: its WAV is cut first when it is a cut, then the player runs detached, so it plays on after `play`. */
-export async function startPlaybackPlan(options: { plan: SlicePlaybackPlan; slice: SoundSlice }): Promise<number> {
-    const { plan } = options;
+function playPart(slice: PlayPart): PlayPart {
+    return {
+        path: slice.path,
+        ...(slice.channel !== undefined ? { channel: slice.channel } : {}),
+        fileFromSec: slice.fileFromSec,
+        fileToSec: slice.fileToSec,
+    };
+}
 
-    if (plan.cut) {
-        await cutSlice({ slice: options.slice, path: plan.audioPath });
+/**
+ * Starts a plan: its WAV is cut and its list written first, then the player runs detached, so it plays on after
+ * `play`. A list is renamed into place, so a player never reads it half written.
+ */
+export async function startPlaybackPlan(plan: SlicePlaybackPlan): Promise<number> {
+    const [first] = plan.parts;
+
+    if (plan.cut && first) {
+        await cutSlice({ slice: first, path: plan.audioPath });
+    }
+
+    if (plan.list) {
+        mkdirSync(dirname(plan.list.path), { recursive: true });
+        const partial = join(dirname(plan.list.path), `.${basename(plan.list.path)}-${randomUUID()}`);
+        await Bun.write(partial, plan.list.text);
+        renameSync(partial, plan.list.path);
     }
 
     const child = Bun.spawn(plan.argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
@@ -98,7 +137,7 @@ function sliceCachePath(slice: MeetingSlice): string {
  * is used again (its time is touched, so the cache keeps it longest); a new one is written beside it and renamed over
  * it, so a player never opens it half written.
  */
-export async function cutSlice(options: { slice: SoundSlice; path: string }): Promise<void> {
+export async function cutSlice(options: { slice: PlayPart; path: string }): Promise<void> {
     const { slice, path } = options;
 
     if (existsSync(path)) {
@@ -174,16 +213,15 @@ export async function playSoundSlice(options: {
     return { pid: child.pid, player: player.id };
 }
 
-export async function playbackSlice(options: {
+/** The seat heard at `atSec`, and the slice of the track that plays it there: `track`, else the seat's best one. */
+async function listenAt(options: {
     opened: OpenedMeeting;
     atSec: number;
-    fromSec: number;
-    toSec?: number;
     track?: TrackKind;
-}): Promise<SoundSlice> {
-    const { opened, atSec, fromSec, track } = options;
+}): Promise<{ sound: MeetingSound; seat: Seat; at?: SoundSlice }> {
+    const { opened, atSec, track } = options;
     const sound = await opened.sound();
-    let seat: "mic" | "call" | undefined = track ? sound.tracks.find((one) => one.kind === track)?.seat : undefined;
+    let seat: Seat | undefined = track ? sound.tracks.find((one) => one.kind === track)?.seat : undefined;
     if (!seat && !track) {
         // Find the one line spoken at atSec first (its end comes from the next line), then measure only that line.
         const entries = (await opened.meeting()).transcript;
@@ -209,39 +247,53 @@ export async function playbackSlice(options: {
     if (!seat) {
         throw new Error("No known seat at this time; choose --track with a track listed by show.");
     }
-    const preferred = sound.slice({
+    const at = sound.slice({
         seat,
         fromSec: atSec,
         toSec: atSec + 0.001,
         purpose: "listen",
         ...(track ? { track } : {}),
     });
-    const end =
-        options.toSec ??
-        sound.tracks
-            .find((one) => one.kind === preferred?.track)
-            ?.pieces.find(
-                (piece) =>
-                    piece.path === preferred?.path &&
-                    piece.zeroSec <= atSec &&
-                    atSec < piece.zeroSec + piece.durationSec
-            )?.durationSec;
-    const zero =
-        sound.tracks
-            .find((one) => one.kind === preferred?.track)
-            ?.pieces.find((piece) => piece.path === preferred?.path)?.zeroSec ?? 0;
-    const slice =
-        end !== undefined && Number.isFinite(end)
-            ? sound.slice({
-                  seat,
-                  fromSec,
-                  toSec: options.toSec ?? end + zero,
-                  purpose: "listen",
-                  ...(track ? { track } : {}),
-              })
-            : undefined;
+    return { sound, seat, ...(at ? { at } : {}) };
+}
+
+/** A range in one file: the best track of the seat heard at `atSec` (or `track`) from `fromSec` to `toSec`. */
+export async function playbackSlice(options: {
+    opened: OpenedMeeting;
+    atSec: number;
+    fromSec: number;
+    toSec: number;
+    track?: TrackKind;
+}): Promise<SoundSlice> {
+    const { sound, seat } = await listenAt(options);
+    const slice = sound.slice({
+        seat,
+        fromSec: options.fromSec,
+        toSec: options.toSec,
+        purpose: "listen",
+        ...(options.track ? { track: options.track } : {}),
+    });
     if (!slice) {
         throw new Error("No audible track covers this interval; choose a shorter interval or another --track.");
     }
     return slice;
+}
+
+/**
+ * A play from `atSec` on: the track heard there (`track`, else the best one of the line's seat), from `fromSec`
+ * through its later pieces to its end (`soundRun`), so a native recording plays on past its 60 s piece.
+ */
+export async function playbackRun(options: {
+    opened: OpenedMeeting;
+    atSec: number;
+    fromSec: number;
+    track?: TrackKind;
+}): Promise<[SoundSlice, ...SoundSlice[]]> {
+    const { sound, at } = await listenAt(options);
+    const track = sound.tracks.find((one) => one.kind === at?.track);
+    const [first, ...next] = track ? soundRun(track, options.fromSec) : [];
+    if (!first) {
+        throw new Error("No audible track covers this time; choose another --track with a track listed by show.");
+    }
+    return [first, ...next];
 }
