@@ -12,6 +12,7 @@ import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { PLAYERS } from "@app/meetings/lib/players";
+import * as rawEvidenceModule from "@app/meetings/lib/raw-evidence";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { measureRoomCall } from "@app/meetings/lib/room-call-metrics";
 import type { MeetingsResult } from "@app/meetings/lib/service/api";
@@ -3032,24 +3033,31 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(meeting.items.list({ kind: "term" })).toEqual([]);
     });
 
-    // The REPL measured the whole meeting and cut the table after it; the CLI measures only the window.
-    test("meetings: evidence({ raw, from, to }) measures only the window, as the CLI's evidence --table does", async () => {
+    // The REPL measured the whole meeting and cut the table after it; the CLI measures only the window. Without a window,
+    // raw is the CLI's evidence --raw (I7): its terms with the screen lines near each lead, through the same function.
+    test("meetings: evidence({ raw, from, to }) measures only the window; evidence({ raw }) is evidence --raw", async () => {
         const record = await new MeetingStore().create(
             { title: "Evidence window", start: "2026-11-02T12:45:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
         const raw = { lines: [] } as unknown as Awaited<ReturnType<typeof channelOperation.channelEvidence>>;
         const measured = spyOn(channelOperation, "channelEvidence").mockResolvedValue(raw);
+        const full = { lines: [] } as unknown as Awaited<ReturnType<typeof rawEvidenceModule.rawEvidence>>;
+        const facts = spyOn(rawEvidenceModule, "rawEvidence").mockResolvedValue(full);
 
         try {
             const meeting = (await loadMeetings()).open(record.id) as unknown as {
                 evidence(input: unknown): Promise<unknown>;
             };
             await meeting.evidence({ raw: true, from: 10, to: 20 });
-            await meeting.evidence({ raw: true });
+            await meeting.evidence({ table: true });
+            expect(await meeting.evidence({ raw: true, wordCheck: "off", screenLines: 1 })).toBe(full);
             expect(measured.mock.calls.map((call) => call[1])).toEqual([{ fromSec: 10, toSec: 20 }, undefined]);
+            expect(facts.mock.calls.map((call) => call[1])).toEqual([{ wordCheck: "off", screenLines: 1 }]);
+            await expect(meeting.evidence({ raw: true, screenLines: -1 })).rejects.toThrow();
         } finally {
             measured.mockRestore();
+            facts.mockRestore();
         }
     });
 

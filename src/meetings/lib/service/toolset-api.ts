@@ -2,6 +2,7 @@ import { meetingCommentSchema } from "@app/meetings/lib/comment-schema";
 import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { matchDraftSchema } from "@app/meetings/lib/match-preview";
 import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
+import { WORD_CHECKS } from "@app/meetings/lib/word-check";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
@@ -193,6 +194,10 @@ export const evidence = defineMethod({
             raw: z.boolean().optional(),
             from: z.number().nonnegative().optional(),
             to: z.number().nonnegative().optional(),
+            /** raw without from/to: the word check of the term part, as `--word-check`. */
+            wordCheck: z.enum(WORD_CHECKS).optional(),
+            /** raw without from/to: screen lines per term lead, as `--screen-lines` (0 = none). */
+            screenLines: z.number().int().nonnegative().optional(),
         })
         .strict()
         .refine((options) => options.to === undefined || options.to >= (options.from ?? 0), {
@@ -200,7 +205,7 @@ export const evidence = defineMethod({
         }),
     result: z.unknown(),
     effect: "read",
-    doc: "Read screen --at before attributing an idea shown on screen. Channel evidence; table returns compact per-line evidence, raw includes seats and project roles.",
+    doc: `Read screen --at before attributing an idea shown on screen. Channel evidence; table (or raw with from/to) returns the per-line evidence of that window. raw without from/to is ${toolCommand("meetings", "evidence")} <meeting> --raw: seats, project roles, the terms (each unknown word, vocabulary run and spoken identifier with the screen OCR lines near it that sound like it: atSec, frame, form, text, score) and screen, the screen record they come from (or recorded false). wordCheck and screenLines are its --word-check and --screen-lines.`,
 });
 export const transcript = defineMethod({
     name: "transcript",
