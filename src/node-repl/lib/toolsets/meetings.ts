@@ -16,6 +16,7 @@ import { rawEvidence } from "@app/meetings/lib/raw-evidence";
 import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
+import { confirmRelayed as askRelayed } from "@app/meetings/lib/relayed";
 import { reviewRow } from "@app/meetings/lib/review-rows";
 import { applySuggestedSeats } from "@app/meetings/lib/seat-suggest";
 import type { MeetingsMethod, MeetingsParams } from "@app/meetings/lib/service/api";
@@ -38,6 +39,7 @@ import {
     configGet,
     configSet,
     confirm,
+    confirmRelayed,
     dictionaryTest,
     editorProject,
     editPerson,
@@ -214,6 +216,22 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 lineEligibility: async ({ meeting, line }: z.input<typeof lineEligibility.params>) =>
                     lineEligibilityFor(OpenedMeeting.of(store, recordOf(store, meeting)), line),
+                // The CLI's own core: tools meetings listen --confirm-relayed, the same window and the same check.
+                confirmRelayed: async (input: z.input<typeof confirmRelayed.params>) => {
+                    const { meeting, items, also } = confirmRelayed.params.parse(input);
+                    const result = await withMeetingsClient((client) =>
+                        askRelayed({
+                            groups: [{ meeting, items }, ...(also ?? [])],
+                            store,
+                            client,
+                            rerun: `meetings.confirmRelayed(${SafeJSON.stringify(input)})`,
+                        })
+                    );
+                    if (result.instructions?.stop) {
+                        throw new AgentInstructionsError(result.instructions);
+                    }
+                    return result;
+                },
                 voices: Object.assign(
                     async (input: z.input<typeof voices.params>) => {
                         const scope =

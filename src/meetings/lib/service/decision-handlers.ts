@@ -75,7 +75,9 @@ export async function applyDecision(
             log.debug({ error, meeting: record.id }, "decision rows without transcript words");
             return undefined;
         });
-    const actor = actorOfCall(context);
+    const actor = params.confirmedBy
+        ? await confirmedActor(params.confirmedBy.request, record, params.action, store, deps)
+        : actorOfCall(context);
     const reason = params.reason ? { reason: params.reason } : {};
     const { action } = params;
     // A `set` also teaches the project its new labels, as `tools meetings set` does.
@@ -209,6 +211,48 @@ export function actorOfCall(context: Pick<MeetingsCallContext, "caller" | "local
     return hello.role === "agent"
         ? { kind: "agent", harness: "unknown", session: hello.session ?? null }
         : { kind: "cli" };
+}
+
+/**
+ * The user as the decider of a relayed answer: only when the person request names this row as confirmed (the person
+ * area's request journal, read here, never the caller's word) and the action decides the agent's entry again.
+ */
+async function confirmedActor(
+    requestId: string,
+    record: MeetingRecord,
+    action: DecisionAction,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<DecisionActor> {
+    const { relayedActor } = await import("../relayed");
+    const requests =
+        deps.requests?.() ??
+        (await import("@genesiscz/utils/genesis-tools/areas/person/journal")).createRequestJournal();
+    const view = requests.get(requestId);
+    const journal = await journalOf(store, deps);
+    const replaces = "replaces" in action ? action.replaces : undefined;
+    const earlier = replaces ? journal.read(record.id).find((entry) => entry.token === replaces) : undefined;
+    const items =
+        action.kind === "answer"
+            ? [itemIdOf(record, action.question)]
+            : "items" in action
+              ? action.items.map((ref) => itemIdOf(record, ref))
+              : [];
+    return relayedActor({
+        request: view
+            ? {
+                  id: view.id,
+                  rows: view.request.rows,
+                  status: view.outcome.status,
+                  picked: view.outcome.picked,
+                  via: view.outcome.via ?? null,
+              }
+            : null,
+        meeting: record.id,
+        items,
+        earlier,
+        action,
+    });
 }
 
 /** The journal a call decides through: the store's, with the config's look-alike bar and the inputs a split needs. */

@@ -127,7 +127,8 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
         if (
             after?.kind !== "speaker-range" ||
             after.status !== "confirmed" ||
-            change.before?.status === "confirmed" ||
+            // A replacement (a person adopting an agent's confirm) is a new confirmation of an item already confirmed.
+            (change.before?.status === "confirmed" && !action.replaces) ||
             (!entry.decided.includes(after.id) && !action.items.includes(after.id)) ||
             after.segments?.length ||
             after.decision?.token !== entry.token ||

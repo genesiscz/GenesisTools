@@ -49,6 +49,12 @@ export const DECISION_ACTION_OPTIONS = [
         /** A term's right spelling, when the proposal is wrong. */
         proposed: z.string().optional(),
         reach: spellingReachSchema.optional(),
+        /**
+         * The token of an earlier confirm of these items that this one makes again as its new decider (the user
+         * confirming what an agent relayed): the earlier entry is undone for these items and decided again in one
+         * entry, so its Undo brings the earlier decision back.
+         */
+        replaces: z.string().min(1).optional(),
     }),
     z.object({
         kind: z.literal("reject"),
@@ -59,6 +65,8 @@ export const DECISION_ACTION_OPTIONS = [
          * item confirmed or changed between the pick and the save is skipped, not overwritten.
          */
         filter: rejectFilterSchema.optional(),
+        /** The token of an earlier reject of these items that this one makes again (`confirm`'s `replaces`). */
+        replaces: z.string().min(1).optional(),
     }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
     z.object({ kind: z.literal("respell"), item: itemRef, text: z.string(), reach: spellingReachSchema.optional() }),

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
+import { agentInstructionsResult } from "@genesiscz/utils/ai/agent-instructions";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
@@ -603,6 +604,7 @@ async function decide(
         json?: boolean;
         kind?: RejectFilter["kind"];
         where?: string;
+        relayed?: boolean;
     }
 ): Promise<void> {
     const store = new MeetingStore();
@@ -658,11 +660,31 @@ async function decide(
                 })
             ));
         const result = decideResult(decided);
+        // An agent relays what the user said (--relayed): a window asks the user whether the decision is theirs.
+        const relayed =
+            opts.relayed && decided.entry && result.decided.length > 0 && callerActor().kind === "agent"
+                ? await runConfirmRelayed({ store, meeting: record.id, items: result.decided })
+                : undefined;
+        const lead = `The decision is saved as the agent's (undo: ${TOOL} reopen ${record.id} --token ${result.token}).`;
 
         if (opts.json) {
             // `entry`: the decision journal entry, with who decided and the items before and after.
-            out.result(SafeJSON.stringify({ ...result, ...(decided.entry ? { entry: decided.entry } : {}) }, null, 2));
-            process.exitCode = result.decided.length === 0 && failed(result.skipped) ? 1 : 0;
+            const { instructions, ...relay } = relayed ?? {};
+            out.result(
+                SafeJSON.stringify(
+                    {
+                        ...result,
+                        ...(decided.entry ? { entry: decided.entry } : {}),
+                        ...(relayed ? { relayed: relay } : {}),
+                        ...(instructions
+                            ? agentInstructionsResult({ ...instructions, text: `${lead}\n${instructions.text}` })
+                            : {}),
+                    },
+                    null,
+                    2
+                )
+            );
+            process.exitCode = (result.decided.length === 0 && failed(result.skipped)) || instructions?.stop ? 1 : 0;
             return;
         }
 
@@ -680,6 +702,10 @@ async function decide(
         ui.ok(
             `${status} ${result.decided.join(" ")} in ${record.id} (undo: ${TOOL} reopen ${record.id} ${result.decided.join(" ")} --token ${result.token})`
         );
+
+        if (relayed) {
+            printRelayed(relayed, { lead });
+        }
     } catch (err) {
         fail(new Error(errorText(err).replace(/^minConfidence/, "--min-confidence"), { cause: err }));
     }
@@ -816,6 +842,7 @@ function reportOutcomes(outcomes: CorrectionOutcome[]): void {
 }
 
 import { qualityLines, thresholdProbe } from "../lib/listen-quality";
+import { printRelayed, runConfirmRelayed } from "./relayed";
 
 async function transcript(
     ref: string,
@@ -1113,7 +1140,11 @@ export function registerItemCommands(program: Command): void {
                     : "Reject items: they are never suggested again"
             )
             .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
-            .option("--reason <text>", `why: kept in the decision journal (${toolCommand("meetings", "journal")})`);
+            .option("--reason <text>", `why: kept in the decision journal (${toolCommand("meetings", "journal")})`)
+            .option(
+                "--relayed",
+                "for an agent: the reason quotes what the user said; a window asks the user whether the decision is theirs"
+            );
 
         if (status === "rejected") {
             command
