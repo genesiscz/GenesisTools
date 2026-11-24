@@ -8,7 +8,7 @@ import pc from "picocolors";
 import { actorText, itemIdOf, type JournalReadEntry } from "../lib/decision-journal";
 import { questionLabel } from "../lib/questions";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, TOOL, unknownMeetingText } from "../lib/shared";
 import { assignmentText } from "../lib/speaker-assign";
 
 /** At most this many items are named on an entry's line; the rest are counted. */
@@ -95,7 +95,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
     }
 
     if (!record) {
-        fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        fail(unknownMeetingText(store, ref));
         return;
     }
 

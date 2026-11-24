@@ -8,14 +8,14 @@ import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { writeScreenNote } from "../lib/screen-note";
-import { fail, TOOL } from "../lib/shared";
+import { fail, TOOL, unknownMeetingText } from "../lib/shared";
 
 async function screenNote(ref: string, opts: { out?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
     const record = store.resolve(ref);
 
     if (!record) {
-        fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        fail(unknownMeetingText(store, ref));
         return;
     }
 

@@ -71,7 +71,7 @@ import {
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
-import { fail, resolveEnum, TOOL } from "../lib/shared";
+import { fail, resolveEnum, TOOL, unknownMeetingText } from "../lib/shared";
 import { printRelayed, runConfirmRelayed } from "./relayed";
 
 const PAD_CHOICES = [5, 10] as const;
@@ -933,7 +933,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     if (!meeting) {
-        fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        fail(unknownMeetingText(store, ref));
         return;
     }
 

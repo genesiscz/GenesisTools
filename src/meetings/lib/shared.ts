@@ -7,7 +7,12 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { MEETING_FILE, type MeetingRecord } from "@genesiscz/utils/meetings/record";
+import {
+    MEETING_FILE,
+    type MeetingRecord,
+    type MeetingStore,
+    missingMeetingText,
+} from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { sharedTempRoot } from "@genesiscz/utils/rm/paths";
 import { scratchRootNames } from "@genesiscz/utils/rm/scratch-dirs";
@@ -89,6 +94,15 @@ export function missingMeetingMessage(options: { ref: string; root: string }): s
     const { ref, root } = options;
     const locate = isExactId(ref) ? ` Look in the other stores: ${TOOL} locate ${ref}` : "";
     return `No meeting "${ref}" in ${root}. List them: ${TOOL} list.${locate}`;
+}
+
+/**
+ * What a command prints for a ref no record fits. A later recording's old id that a join absorbed names the joined
+ * record; any other ref reads `No meeting "<ref>". List them: tools meetings list`, which `errorText` turns into
+ * `missingMeetingMessage`.
+ */
+export function unknownMeetingText(store: MeetingStore, ref: string): string {
+    return missingMeetingText(store, ref, `No meeting "${ref}". List them: ${TOOL} list`);
 }
 
 /**

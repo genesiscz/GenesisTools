@@ -16,7 +16,12 @@ import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
-import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import {
+    JOIN_PART_FILE,
+    JOINED_RECORD_VERSION,
+    MeetingStore,
+    meetingRecordSchema,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voiceBackend from "@genesiscz/utils/meetings/voice";
 import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
@@ -123,6 +128,58 @@ test("missing meeting names only the searched store; locate is the explicit sear
         human.mockRestore();
         process.exitCode = 0;
     }
+});
+
+test("a later recording's old id after a join points a command and the service at the joined record", async () => {
+    const store = new MeetingStore();
+    const later = "2026-11-01_10-11-later-fixture";
+    const offsetMs = 654273;
+    const part = (record: string, offset: number) => ({
+        record,
+        title: "Fixture",
+        sourceId: "wisprflow",
+        sourceMeetingId: `m-${record}`,
+        zeroAt: new Date(Date.UTC(2026, 10, 1, 9) + offset).toISOString(),
+        offsetMs: offset,
+        endSec: 100,
+    });
+    const kept = await store.create(
+        { title: "Joined fixture", start: "2026-11-01T09:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    await store.update(kept.id, { command: "test", change: "join fixture" }, (current) => {
+        current.version = JOINED_RECORD_VERSION;
+        current.join = {
+            version: 1,
+            at: "2026-11-01T12:00:00Z",
+            backup: "/backup",
+            parts: [part(kept.id, 0), part(later, offsetMs)],
+        };
+    });
+    mkdirSync(store.folder(later), { recursive: true });
+    writeFileSync(join(store.folder(later), JOIN_PART_FILE), SafeJSON.stringify({ joinedInto: kept.id }));
+    const sentence = `"${later}" was joined into ${kept.id} (its times now start at 10:54); use ${kept.id}.`;
+
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", later], { from: "user" });
+        expect(process.exitCode).toBe(1);
+        // The sentence is not the plain missing-meeting text, so `errorText` leaves it as it is.
+        expect(human.mock.calls.at(-1)?.[0]).toBe(sentence);
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        process.exitCode = 0;
+    }
+
+    const client = new InProcessMeetingsClient({ deps: { store: () => store } });
+    await expect(client.call("meeting.show", { ref: later })).rejects.toMatchObject({
+        code: "meeting-not-found",
+        message: sentence,
+    });
 });
 
 test("brief meeting help exposes the screen attribution instruction", () => {

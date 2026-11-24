@@ -103,7 +103,12 @@ import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingItem,
+    type MeetingRecord,
+    MeetingStore,
+    missingMeetingText,
+} from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -474,7 +479,7 @@ export class MeetingsToolset extends ReplToolset {
         const found = store.resolve(refText);
 
         if (!found) {
-            throw new Error(`No meeting "${refText}". meetings.list() names them.`);
+            throw new Error(missingMeetingText(store, refText, `No meeting "${refText}". meetings.list() names them.`));
         }
 
         const id = found.id;

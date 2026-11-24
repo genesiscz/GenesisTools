@@ -1,5 +1,10 @@
 import { strongestRange } from "@genesiscz/utils/meetings/range-strength";
-import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingItem,
+    type MeetingRecord,
+    type MeetingStore,
+    missingMeetingText,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -142,7 +147,7 @@ export async function lookMeeting(store: MeetingStore, input: z.input<typeof mee
     const { meeting, from: fromSec, to: toSec } = meetingTimeRangeSchema.parse(input);
     const record = store.resolve(meeting);
     if (!record) {
-        throw new Error(`No meeting "${meeting}"`);
+        throw new Error(missingMeetingText(store, meeting, `No meeting "${meeting}"`));
     }
 
     const { entries, evidence, energy, presence, timeline } = await rangeSources(OpenedMeeting.of(store, record));

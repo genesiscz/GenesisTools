@@ -6,6 +6,7 @@ import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { formatClock } from "@genesiscz/utils/transcribe/clock";
 import { dictionaryLevelSchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
@@ -789,6 +790,22 @@ export function meetingAddress(
     return away ? { record: away.record, offsetMs: away.part.offsetMs, joinedFrom: ref } : undefined;
 }
 
+/**
+ * What to say when no record fits `ref`. A later recording's old id that a join absorbed names the joined record and the
+ * clock its times now start at, and says to use that id. It never resolves the old id by itself: an item id of the
+ * absorbed recording can differ in the joined record, so the caller has to name the joined id on purpose. Any other ref
+ * gets `plain`, the text the caller printed before.
+ */
+export function missingMeetingText(store: MeetingStore, ref: string, plain = `No meeting "${ref}".`): string {
+    const away = joinedAway(store, ref);
+
+    if (!away) {
+        return plain;
+    }
+
+    return `"${ref}" was joined into ${away.record.id} (its times now start at ${formatClock(away.part.offsetMs / 1000)}); use ${away.record.id}.`;
+}
+
 export function parseSourceRef(ref: string): { source: string; id: string } | undefined {
     const match = /^([a-z][a-z0-9-]*):(.+)$/.exec(ref);
     return match ? { source: match[1]!, id: match[2]! } : undefined;
@@ -1022,7 +1039,7 @@ export class MeetingStore {
         const hint = this.layoutHint();
 
         if (hint) {
-            throw new Error(`No meeting "${ref}" in ${this.root}. ${hint}`);
+            throw new Error(missingMeetingText(this, ref, `No meeting "${ref}" in ${this.root}. ${hint}`));
         }
 
         return undefined;

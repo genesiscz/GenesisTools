@@ -41,7 +41,7 @@ import { framesOnDisk, meetingLiveId, readRecorderState, requestRecorderStop } f
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { errorText, fail, TOOL, unknownMeetingText } from "../lib/shared";
 import { captureCostRead, windowJson } from "../lib/window-reads";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -595,7 +595,7 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     const record = store.resolve(ref);
 
     if (!record) {
-        fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        fail(unknownMeetingText(store, ref));
         return;
     }
 

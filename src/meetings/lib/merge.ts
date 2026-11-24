@@ -19,6 +19,7 @@ import {
     type MeetingContext,
     type MeetingRecord,
     type MeetingStore,
+    missingMeetingText,
     nextId,
     type RecordingBlock,
 } from "@genesiscz/utils/meetings/record";
@@ -364,7 +365,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     const into = store.resolve(request.intoId);
 
     if (!from || !into) {
-        throw new Error(`No meeting "${!from ? request.fromId : request.intoId}".`);
+        throw new Error(missingMeetingText(store, !from ? request.fromId : request.intoId));
     }
 
     if (request.dryRun) {

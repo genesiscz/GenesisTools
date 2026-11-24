@@ -2,7 +2,7 @@ import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { calendarAround } from "@genesiscz/utils/meetings/calendar";
 import { DISPLAY_POLICIES, type DisplayPolicy, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
 import { AUDIO_SOURCES, type AudioSource } from "@genesiscz/utils/screen-recorder/control";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { ensureScreenRecording } from "./grants";
@@ -61,7 +61,7 @@ async function meetingToRecord(
         const record = store.resolve(opts.meeting);
 
         if (!record) {
-            throw new Error(`No meeting "${opts.meeting}" (${TOOL} list)`);
+            throw new Error(missingMeetingText(store, opts.meeting, `No meeting "${opts.meeting}" (${TOOL} list)`));
         }
 
         return record;

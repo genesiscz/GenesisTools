@@ -14,6 +14,7 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingRecordSchema,
+    missingMeetingText,
     nextId,
 } from "@genesiscz/utils/meetings/record";
 import { type MeetingSeats, seatSpan, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
@@ -362,7 +363,7 @@ export async function joinMeetings(request: JoinRequest): Promise<JoinResult> {
         const record = store.resolve(ref);
 
         if (!record) {
-            throw new Error(`No meeting "${ref}".`);
+            throw new Error(missingMeetingText(store, ref));
         }
 
         return record;

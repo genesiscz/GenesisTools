@@ -1,8 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { projectNameSchema } from "@genesiscz/utils/meetings/config";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, missingMeetingText, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { meetingVoiceOwner, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { DecisionJournal } from "./decision-journal";
@@ -333,7 +332,7 @@ export function backfillRecords(options: VoicesAccess & { meetings?: string[]; p
             : (options.meetings ?? []).map((ref) => {
                   const record = options.store.resolve(ref);
                   if (!record) {
-                      throw new Error(`No meeting "${ref}".`);
+                      throw new Error(missingMeetingText(options.store, ref));
                   }
                   return record;
               });
