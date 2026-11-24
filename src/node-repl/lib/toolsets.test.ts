@@ -405,6 +405,7 @@ describe("toolset method names", () => {
             remove: { project: "harbor", person, sample: 1, preview: true },
             undo: { token: "correction-fixture" },
             rename: { from: { name: person }, to: { name: "Wren Example" }, preview: true },
+            apply: { meeting: "fixture" },
         } as const;
         const cases = [
             ["list", "voices.list", () => voices.list(inputs.list)],
@@ -416,6 +417,7 @@ describe("toolset method names", () => {
             ["remove", "voices.remove", () => voices.remove(inputs.remove)],
             ["undo", "voices.undo", () => voices.undo(inputs.undo)],
             ["rename", "voices.rename", () => voices.rename(inputs.rename)],
+            ["apply", "voices.apply", () => voices.apply(inputs.apply)],
         ] as const;
         const call = spyOn(InProcessMeetingsClient.prototype, "call").mockRejectedValue(new Error("service refusal"));
         try {

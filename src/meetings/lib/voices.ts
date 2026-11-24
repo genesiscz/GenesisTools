@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { IntervalIndex } from "@genesiscz/utils/array";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -43,6 +44,7 @@ import {
     voicesIn,
 } from "@genesiscz/utils/meetings/voice-library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { OpenedMeeting } from "./opened-meeting";
@@ -486,6 +488,18 @@ async function previewRecording(
         });
 }
 
+/** The naming pass's lock in the meeting's folder: one pass per meeting at a time, in every process. */
+const NAMING_PASS_LOCK = "naming-pass.lock";
+/** How long a pass waits for the one already running on its meeting. A cold pass embeds every line of the meeting. */
+const NAMING_PASS_WAIT_MS = 10 * 60_000;
+
+/**
+ * The meeting's naming pass (the speaker suggestion pass), the one place every caller runs it: the service after new
+ * voice samples, `voices apply` in the CLI, the window and the REPL. It runs once per meeting at a time across
+ * processes: a second call waits for the running pass, then runs on the record and samples that pass left. Inside,
+ * `runSuggest` plans from one snapshot, writes only while the record is still that snapshot and plans again when it
+ * is not, and a pass that changes nothing leaves the file as it was.
+ */
 export async function applyVoices(
     options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress; signal?: AbortSignal }
 ): Promise<{ meeting: string; added: number; warnings: string[] }> {
@@ -495,14 +509,20 @@ export async function applyVoices(
         throw new Error("Choose a project before naming voices.");
     }
 
-    const result = await runSuggest({
-        store: options.store,
-        record,
-        rules: ["speakers"],
-        ...(options.onProgress ? { onProgress: options.onProgress } : {}),
-        ...(options.signal ? { signal: options.signal } : {}),
-    });
-    return { meeting: record.id, added: result.fresh.length, warnings: result.warnings };
+    return withFileLock(
+        join(options.store.folder(record.id), NAMING_PASS_LOCK),
+        async () => {
+            const result = await runSuggest({
+                store: options.store,
+                record,
+                rules: ["speakers"],
+                ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+                ...(options.signal ? { signal: options.signal } : {}),
+            });
+            return { meeting: record.id, added: result.fresh.length, warnings: result.warnings };
+        },
+        { timeoutMs: NAMING_PASS_WAIT_MS, ...(options.signal ? { signal: options.signal } : {}) }
+    );
 }
 
 interface Selection extends Browse {

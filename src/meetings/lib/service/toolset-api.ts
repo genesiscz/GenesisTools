@@ -26,6 +26,7 @@ import {
     momentSave,
     voiceBackfill,
     voiceEnrol,
+    voicesApply,
     voicesDedupe,
     voicesJobs,
     voicesJobsCancel,
@@ -980,6 +981,10 @@ export const voiceLibraryMethods = {
     remove: defineMethod({
         ...voicesRemove,
         doc: `Return the IDs and suggestions affected by ${toolCommand("meetings voices remove")}. Set preview to true for a planToken to pass when confirming.`,
+    }),
+    apply: defineMethod({
+        ...voicesApply,
+        doc: `Run the meeting's naming pass (its speaker suggestions from voices and seats) and return { meeting, added, warnings }. Names stay suggested; nothing is confirmed. One pass per meeting runs at a time in every process: this waits for one already running, then runs on what it left. A pass that a newer write overtook plans again from the record as it is now; a pass that changes nothing leaves the record as it was. CLI twin: ${toolCommand("meetings voices apply")} <meeting> --json.`,
     }),
     undo: defineMethod({
         ...voicesUndo,

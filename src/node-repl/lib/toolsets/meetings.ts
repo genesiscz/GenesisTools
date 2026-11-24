@@ -298,6 +298,7 @@ export class MeetingsToolset extends ReplToolset {
                             }
                             return slice;
                         },
+                        apply: serviceCall("voices.apply"),
                         move: serviceCall("voices.move"),
                         quality: serviceCall("voices.quality"),
                         reject: serviceCall("voices.reject"),
