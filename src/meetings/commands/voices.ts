@@ -1,3 +1,4 @@
+import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -5,14 +6,16 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { idSchema, ownerKey, readVoiceLibrary, voicesIn } from "@genesiscz/utils/meetings/voice-library";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import { callerActor } from "../lib/decision-journal";
+import { confirmVoiceSample } from "../lib/person-door";
 import { type MeetingsParams, type MeetingsResult, voicesReject } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, resolveEnum } from "../lib/shared";
+import { fail, resolveEnum, TOOL } from "../lib/shared";
 import { playSoundSlice } from "../lib/sound-playback";
 import { addVoiceSample, applyVoices, previewVoices } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
@@ -586,29 +589,57 @@ export function registerVoicesCommand(program: Command): void {
 
     voices
         .command("add <meeting>")
-        .description("Add complete lines as samples after confirming this speaker by ear")
+        .description(
+            "Add complete lines as samples after confirming this speaker by ear; an agent's run asks the user in a confirmation window"
+        )
         .requiredOption("--from <time>", "first transcript second or clock")
         .requiredOption("--to <time>", "last transcript second or clock")
         .requiredOption("--person <name>", "speaker confirmed by ear")
-        .requiredOption("--confirmed", "assert this interval is the named speaker alone")
-        .option("--json", "print the number of samples saved")
+        .option(
+            "--confirmed",
+            "assert this interval is the named speaker alone; for an agent, the user confirms it in a window"
+        )
+        .option("--json", "print the number of samples saved, or the instructions for an agent")
         .action(
-            (meeting: string, opts: VoiceOptions & { from: string; to: string; person: string; confirmed: boolean }) =>
+            (meeting: string, opts: VoiceOptions & { from: string; to: string; person: string; confirmed?: boolean }) =>
                 guarded(async () => {
-                    if (callerActor().kind === "agent") {
-                        throw new Error("Only a person who listened can confirm a new voice sample.");
+                    const json = opts.json || voices.opts<VoiceOptions>().json;
+                    const store = new MeetingStore();
+                    const fromSec = parseClock(opts.from) ?? NaN;
+                    const toSec = parseClock(opts.to) ?? NaN;
+                    const confirmation = await confirmVoiceSample({
+                        actor: callerActor(),
+                        confirmed: opts.confirmed === true,
+                        ask: () => {
+                            const record = store.resolve(meeting);
+                            if (!record) {
+                                throw new Error(`No meeting "${meeting}".`);
+                            }
+                            const rerun = [
+                                `${TOOL} voices add ${shellWord(record.id)}`,
+                                `--from ${shellWord(opts.from)} --to ${shellWord(opts.to)}`,
+                                `--person ${shellWord(opts.person)} --confirmed`,
+                            ].join(" ");
+                            return { record, fromSec, toSec, person: opts.person, rerun };
+                        },
+                    });
+                    if (!confirmation.confirmed) {
+                        outputAgentInstructions(confirmation.instructions, { json });
+                        process.exitCode = 1;
+                        return;
                     }
                     const result = await addVoiceSample({
-                        store: new MeetingStore(),
-                        meeting,
-                        fromSec: parseClock(opts.from) ?? NaN,
-                        toSec: parseClock(opts.to) ?? NaN,
+                        store,
+                        meeting: confirmation.record?.id ?? meeting,
+                        fromSec,
+                        toSec,
                         person: opts.person,
-                        confirmed: opts.confirmed,
+                        confirmed: true,
                     });
-                    opts.json || voices.opts<VoiceOptions>().json
-                        ? out.result(SafeJSON.stringify(result))
-                        : ui.ok(`Saved ${result.samples} confirmed voice samples.`);
+                    const byUser = confirmation.by.kind === "request" ? ", confirmed by the user in the window" : "";
+                    json
+                        ? out.result(SafeJSON.stringify({ ...result, confirmedBy: confirmation.by }))
+                        : ui.ok(`Saved ${result.samples} confirmed voice samples${byUser}.`);
                 })
         );
     registerLegacyVoiceCommands(voices);

@@ -154,7 +154,7 @@ export const voiceEnroll = defineMethod({
     result: z.unknown(),
     resultName: "VoiceMatch",
     effect: "reversible",
-    doc: "Enrol a confirmed single-speaker interval, retaining model and channel provenance.",
+    doc: `Enrol a confirmed single-speaker interval, retaining model and channel provenance. An agent's call asks the user in a confirmation window first and throws the FOR AGENTS block until the user confirmed there; the same call again then saves. CLI twin: ${toolCommand("meetings voices enroll")} <meeting> --from <s> --to <s> --channel <0|1> --person <name> --confirmed.`,
 });
 export const acousticInspect = defineMethod({
     name: "acousticInspect",
@@ -903,6 +903,22 @@ export const join = defineMethod({
 });
 
 export const voiceLibraryMethods = {
+    add: defineMethod({
+        name: "voices.add",
+        params: z
+            .object({
+                meeting: z.string().min(1),
+                fromSec: z.number().nonnegative(),
+                toSec: z.number().positive(),
+                person: z.string().min(1),
+                confirmed: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ samples, skipped?, confirmedBy }",
+        effect: "reversible",
+        doc: `Save the complete lines of the interval as the person's voice samples. Only the user confirms a sample: an agent's call with confirmed: true asks the user in a confirmation window and throws the FOR AGENTS block until the user confirmed there; the same call again then saves. Without confirmed it throws the block that says to ask the user first. CLI twin: ${toolCommand("meetings voices add")} <meeting> --from <time> --to <time> --person <name> --confirmed --json.`,
+    }),
     list: defineMethod({
         ...voicesList,
         doc: `Return people, confirmed samples, learnt voices and conflicts in the requested scope, as in ${toolCommand("meetings voices")} [--project <p> | --meeting <id> | --all] --json.`,

@@ -279,6 +279,7 @@ interface MeetingHandle {
     settings(): Promise<SettingsAnswer>;
     setSettings(patch: unknown): Promise<SettingsAnswer>;
     mark(label: string): Promise<RecordingMarker>;
+    voiceEnroll(input: unknown): Promise<unknown>;
 }
 
 type VoiceMethods = typeof voiceLibraryMethods;
@@ -511,6 +512,52 @@ describe("toolset method names", () => {
         await expect(meetings.join({ meetings: ["no-such-a", "no-such-b"], dryRun: true })).rejects.toThrow(
             'No meeting "no-such-a".'
         );
+    });
+
+    test("meetings.voices.add and Meeting.voiceEnroll name their CLI twins and save only after the user's confirmation (D443)", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.voices.add")).toContain("meetings voices add");
+        expect(describeMethod([api], "meetings.Meeting.voiceEnroll")).toContain("meetings voices enroll");
+        const record = await new MeetingStore().create(
+            { title: "Voice door", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const journal = await import("@app/meetings/lib/decision-journal");
+        const voicesModule = await import("@app/meetings/lib/voices");
+        const actor = spyOn(journal, "callerActor").mockReturnValue({
+            kind: "agent",
+            harness: "fixture",
+            session: null,
+        });
+        const add = spyOn(voicesModule, "addVoiceSample").mockResolvedValue({ samples: 1 });
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockRejectedValue(
+            new Error("enroll reached the service")
+        );
+        const sample = { meeting: record.id, fromSec: 10, toSec: 20, person: "Alice Example" };
+        const enrol = { fromSec: 10, toSec: 20, channel: 0, person: "Alice Example", confirmed: true } as const;
+        try {
+            const meetings = await loadMeetings();
+            // An agent: without confirmed it is told to ask the user; with it, the test's sandbox home opens no window.
+            await expect(meetings.voices.add(sample)).rejects.toThrow("==== FOR AGENTS: STOP (info) ====");
+            await expect(meetings.voices.add({ ...sample, confirmed: true })).rejects.toThrow("sandbox home");
+            await expect(meetings.open(record.id).voiceEnroll(enrol)).rejects.toThrow("sandbox home");
+            expect(add).not.toHaveBeenCalled();
+            expect(call).not.toHaveBeenCalled();
+
+            // A person: confirmed is the confirmation, and the CLI's own core saves.
+            actor.mockReturnValue({ kind: "cli" });
+            expect(await meetings.voices.add({ ...sample, confirmed: true })).toEqual({
+                samples: 1,
+                confirmedBy: { kind: "caller", actor: "cli" },
+            });
+            expect(add.mock.calls[0]?.[0]).toMatchObject({ ...sample, confirmed: true });
+            await expect(meetings.open(record.id).voiceEnroll(enrol)).rejects.toThrow("enroll reached the service");
+            expect(call.mock.calls).toEqual([["voice.enroll", { meeting: record.id, ...enrol }]]);
+        } finally {
+            call.mockRestore();
+            add.mockRestore();
+            actor.mockRestore();
+        }
     });
 
     test("meetings.play plans a play from a time through the CLI's own core, names its CLI twin and starts no player", async () => {

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
+import { agentInstructionsResult, formatAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -477,6 +478,95 @@ test("each voices command gets the --person written after its own name, and -v s
         actor.mockRestore();
         connect.mockRestore();
         calls.mockRestore();
+        client.close();
+    }
+});
+
+test("an agent's voices add and voices enroll go through the user's confirmation and save only after it (D443)", async () => {
+    const journal = await import("./decision-journal");
+    const clients = await import("./service/client");
+    const voicesModule = await import("./voices");
+    const door = await import("./person-door");
+    const meeting = await new MeetingStore().create(
+        { title: "Voice confirmation", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const store = new MeetingStore(new Storage("voices-agent-cli"));
+    const client = new InProcessMeetingsClient({ deps: { store: () => store } });
+    const calls = spyOn(client, "call").mockRejectedValue(new Error("enroll reached the service"));
+    const connect = spyOn(clients, "withMeetingsClient").mockImplementation(async (use) => use(client));
+    const agentActor = { kind: "agent", harness: "fixture", session: null } as const;
+    const actor = spyOn(journal, "callerActor").mockReturnValue(agentActor);
+    const add = spyOn(voicesModule, "addVoiceSample").mockResolvedValue({ samples: 2 });
+    const stop = { text: "A confirmation window asks the user now.", severity: "info", stop: true } as const;
+    const gate = spyOn(door, "confirmVoiceSample").mockResolvedValue({ confirmed: false, instructions: stop });
+    const printed: string[] = [];
+    const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+        printed.push(String(raw));
+    });
+    const result = spyOn(out, "result").mockImplementation(() => undefined);
+    const exitCode = process.exitCode;
+    const parse = async (...args: string[]) => {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: args[0] });
+        addGlobalVerboseOption(program);
+        await program.parseAsync(args, { from: "user" });
+    };
+    const person = ["--person", "Alice Example", "--confirmed"];
+    const addArgs = ["voices", "add", meeting.id, "--from", "43:15", "--to", "43:25", ...person];
+    const enrollArgs = ["voices", "enroll", meeting.id, "--from", "1", "--to", "2", "--channel", "0", ...person];
+    try {
+        process.exitCode = 0;
+        await parse(...addArgs);
+        await parse(...enrollArgs);
+        // Not confirmed yet (still open, Not now, no window): the block reaches stdout, the run exits 1, nothing saves.
+        expect(printed).toEqual([formatAgentInstructions(stop), formatAgentInstructions(stop)]);
+        expect(process.exitCode).toBe(1);
+        expect(add).not.toHaveBeenCalled();
+        expect(calls).not.toHaveBeenCalled();
+        await parse(...addArgs, "--json");
+        expect(result.mock.calls.at(-1)?.[0]).toBe(SafeJSON.stringify(agentInstructionsResult(stop)));
+        expect(gate.mock.calls.map(([options]) => [options.actor, options.confirmed])).toEqual(
+            Array.from({ length: 3 }, () => [agentActor, true])
+        );
+        // What the window asks about, and the run the agent repeats after the user confirmed.
+        const [added, enrolled] = gate.mock.calls.map(([options]) => options.ask());
+        expect(added).toMatchObject({
+            record: { id: meeting.id },
+            fromSec: 2595,
+            toSec: 2605,
+            person: "Alice Example",
+        });
+        expect(added?.rerun).toBe(
+            `tools meetings voices add ${meeting.id} --from 43:15 --to 43:25 --person 'Alice Example' --confirmed`
+        );
+        expect(enrolled).toMatchObject({ record: { id: meeting.id }, fromSec: 1, toSec: 2, channel: 0 });
+        expect(enrolled?.rerun).toBe(
+            `tools meetings voices enroll ${meeting.id} --from 1 --to 2 --channel 0 --person 'Alice Example' --confirmed`
+        );
+
+        // Confirmed by the user in the window: add saves that meeting and names the request; enroll reaches the service.
+        const by = { kind: "request", request: "voice-sample:fixture", via: "app-window", method: "click" } as const;
+        gate.mockResolvedValue({ confirmed: true, by, record: meeting });
+        await parse(...addArgs, "--json");
+        expect(add.mock.calls.at(-1)?.[0]).toMatchObject({
+            meeting: meeting.id,
+            fromSec: 2595,
+            toSec: 2605,
+            person: "Alice Example",
+            confirmed: true,
+        });
+        expect(result.mock.calls.at(-1)?.[0]).toBe(SafeJSON.stringify({ samples: 2, confirmedBy: by }));
+        await expect(parse(...enrollArgs)).rejects.toThrow("enroll reached the service");
+        expect(calls.mock.calls.at(-1)).toEqual([
+            "voice.enroll",
+            { meeting: meeting.id, fromSec: 1, toSec: 2, channel: 0, person: "Alice Example", confirmed: true },
+        ]);
+    } finally {
+        process.exitCode = exitCode;
+        for (const spy of [println, result, gate, add, actor, connect, calls]) {
+            spy.mockRestore();
+        }
         client.close();
     }
 });
