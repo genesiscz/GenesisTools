@@ -1847,7 +1847,7 @@ describe("play: the player and the plan", () => {
         expect(playbackPlan({ audioPath: "/a/x.ogg", atSec: 2, beforeSec: 5, player: PLAYERS.vlc }).startSec).toBe(0);
     });
 
-    test("open-ended play opens the recording at its second; a stereo channel or a range opens a cut WAV at 0", () => {
+    test("open-ended play opens the recording at its second; ffplay pans one channel in place, VLC cuts at most 60 s of it; a range opens a cut WAV at 0", () => {
         const path = join(mkdtempSync(join(tmpdir(), "play-plan-")), "piece.m4a");
         writeFileSync(path, "fixture");
         const slice = {
@@ -1868,16 +1868,41 @@ describe("play: the player and the plan", () => {
             player: "vlc",
             argv: [expect.stringMatching(/VLC$/), path, ":start-time=27.5"],
         });
-        const stereo = slicePlaybackPlan({
-            slice: { ...slice, track: "source-mic", channel: 0, clock: "source" },
-            openEnded: true,
-            player: PLAYERS.ffplay,
+        // One channel of a 50 min stereo source: ffplay keeps it with -af pan while it plays, so nothing is cut.
+        const source = {
+            ...slice,
+            track: "source-mic" as const,
+            channel: 0 as const,
+            clock: "source" as const,
+            fileToSec: 3000,
+        };
+        expect(slicePlaybackPlan({ slice: source, openEnded: true, player: PLAYERS.ffplay })).toEqual({
+            audioPath: path,
+            startSec: 27.5,
+            cut: false,
+            parts: [{ path, channel: 0, fileFromSec: 27.5, fileToSec: 3000 }],
+            player: "ffplay",
+            argv: ["ffplay", "-ss", "27.5", "-nodisp", "-autoexit", "-af", "pan=mono|c0=c0", path],
         });
-        expect(stereo).toMatchObject({ startSec: 0, cut: true, player: "ffplay" });
-        expect(stereo.argv).toEqual(PLAYERS.ffplay.fromArgv(stereo.audioPath, 0));
+        // VLC hears both channels: 60 s of the channel is a cut, then the recording itself plays on from there.
+        const stereo = slicePlaybackPlan({ slice: source, openEnded: true, player: PLAYERS.vlc });
+        expect(stereo).toMatchObject({
+            startSec: 0,
+            cut: true,
+            player: "vlc",
+            parts: [
+                { path, channel: 0, fileFromSec: 27.5, fileToSec: 87.5 },
+                { path, fileFromSec: 87.5, fileToSec: 3000 },
+            ],
+        });
+        expect(stereo.argv.slice(1)).toEqual([stereo.audioPath, path, ":start-time=87.5"]);
         expect(stereo.audioPath).toStartWith(join(momentCacheDir(slice.meeting), "43-10-source-mic-"));
         // A plan cuts nothing: the WAV is written when the play starts.
         expect(existsSync(stereo.audioPath)).toBe(false);
+        // Near the end of the source the cut is the rest, and nothing follows it.
+        expect(
+            slicePlaybackPlan({ slice: { ...source, fileToSec: 60 }, openEnded: true, player: PLAYERS.vlc }).parts
+        ).toEqual([{ path, channel: 0, fileFromSec: 27.5, fileToSec: 60 }]);
         expect(slicePlaybackPlan({ slice, openEnded: false, player: PLAYERS.vlc })).toMatchObject({
             startSec: 0,
             cut: true,

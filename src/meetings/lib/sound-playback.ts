@@ -9,7 +9,7 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { momentCacheDir, trimMomentCache } from "./moment";
 import type { OpenedMeeting } from "./opened-meeting";
-import { PLAYERS, type PlaybackPlan, type PlayerList, pickPlayer, type SeekingPlayer } from "./players";
+import { channelFilter, PLAYERS, type PlaybackPlan, type PlayerList, pickPlayer, type SeekingPlayer } from "./players";
 import { type MeetingSound, type Seat, type SoundSlice, soundRun, type TrackKind } from "./sound";
 
 const { log } = logger.scoped("meetings-playback");
@@ -36,11 +36,18 @@ export interface SliceOpening {
 export type SlicePlaybackPlan = PlaybackPlan & SliceOpening;
 
 /**
+ * A player that hears both channels (VLC) plays this much of one channel as a WAV cut, then the recording itself, both
+ * channels, on from there. The whole rest of a 60 min stereo source took 2.4 s and 288 MB to cut before it played.
+ */
+export const CHANNEL_CUT_SEC = 60;
+
+/**
  * The plan `tools meetings play` starts. A play from a time opens the recording itself at the slice's second, so the
  * player shows the real file and can seek in it, and goes on through the track's later pieces (`next`) in the
  * player's own list: VLC takes them as a playlist, ffplay as a concat list in the clip cache. One channel of a stereo
- * source, or a range, is a WAV cut into the clip cache. No player reads a pipe: the VLC app took `/dev/stdin` for an
- * empty item named "stdin" and played nothing.
+ * source plays in place in ffplay (`-af pan`); VLC plays `CHANNEL_CUT_SEC` of it as a WAV cut into the clip cache,
+ * then the recording on. A range is a WAV cut. No player reads a pipe: the VLC app took `/dev/stdin` for an empty
+ * item named "stdin" and played nothing.
  */
 export function slicePlaybackPlan(options: {
     slice: MeetingSlice;
@@ -50,7 +57,7 @@ export function slicePlaybackPlan(options: {
 }): SlicePlaybackPlan {
     const { slice, player } = options;
 
-    if (!options.openEnded || slice.channel !== undefined) {
+    if (!options.openEnded) {
         const audioPath = sliceCachePath(slice);
         return {
             audioPath,
@@ -62,15 +69,47 @@ export function slicePlaybackPlan(options: {
         };
     }
 
-    const parts = [slice, ...(options.next ?? [])].map(playPart);
+    const run = [slice, ...(options.next ?? [])].map(playPart);
+    const listPath = join(momentCacheDir(slice.meeting), `run-${slice.track}.ffconcat`);
+
+    if (slice.channel === undefined || player.pans) {
+        const opening = player.runOpening({
+            items: run.map((part) => ({ path: part.path, fromSec: part.fileFromSec })),
+            ...(slice.channel === undefined ? {} : { channel: slice.channel }),
+            listPath,
+        });
+        return {
+            audioPath: slice.path,
+            startSec: slice.fileFromSec,
+            cut: false,
+            parts: run,
+            ...(opening.list ? { list: opening.list } : {}),
+            player: player.id,
+            argv: opening.argv,
+        };
+    }
+
+    // The player hears both channels: a bounded cut of the asked one first, then the recording itself from its end.
+    const cutToSec = Math.min(slice.fileToSec, slice.fileFromSec + CHANNEL_CUT_SEC);
+    const audioPath = sliceCachePath({ ...slice, fileToSec: cutToSec });
+    const [, ...later] = run;
+    const parts: PlayPart[] = [
+        { ...playPart(slice), fileToSec: cutToSec },
+        ...(cutToSec < slice.fileToSec
+            ? [{ path: slice.path, fileFromSec: cutToSec, fileToSec: slice.fileToSec }]
+            : []),
+        ...later.map(({ channel: _channel, ...part }) => part),
+    ];
     const opening = player.runOpening({
-        items: parts.map((part) => ({ path: part.path, fromSec: part.fileFromSec })),
-        listPath: join(momentCacheDir(slice.meeting), `run-${slice.track}.ffconcat`),
+        items: parts.map((part, index) =>
+            index === 0 ? { path: audioPath, fromSec: 0 } : { path: part.path, fromSec: part.fileFromSec }
+        ),
+        listPath,
     });
     return {
-        audioPath: slice.path,
-        startSec: slice.fileFromSec,
-        cut: false,
+        audioPath,
+        startSec: 0,
+        cut: true,
         parts,
         ...(opening.list ? { list: opening.list } : {}),
         player: player.id,
@@ -165,7 +204,7 @@ export async function cutSlice(options: { slice: PlayPart; path: string }): Prom
         slice.path,
         "-t",
         String(slice.fileToSec - slice.fileFromSec),
-        ...(slice.channel === undefined ? [] : ["-af", `pan=mono|c0=c${slice.channel}`]),
+        ...(slice.channel === undefined ? [] : ["-af", channelFilter(slice.channel)]),
         "-c:a",
         "pcm_s16le",
         partial,

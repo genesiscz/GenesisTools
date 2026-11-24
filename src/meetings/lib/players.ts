@@ -36,10 +36,21 @@ export interface RunOpening {
 export abstract class SeekingPlayer extends AudioPlayer {
     abstract override readonly id: (typeof MEETING_PLAYERS)[number];
 
+    /** It plays one channel of a stereo file by itself (`runOpening`'s `channel`); one that does not never gets one. */
+    abstract readonly pans: boolean;
+
     abstract fromArgv(path: string, startSec: number): string[];
 
-    /** Plays the items one after another, each from its second. A player that reads a list gets it at `listPath`. */
-    abstract runOpening(options: { items: readonly RunItem[]; listPath: string }): RunOpening;
+    /**
+     * Plays the items one after another, each from its second; `channel` is the one channel heard in each. A player
+     * that reads a list gets it at `listPath`.
+     */
+    abstract runOpening(options: { items: readonly RunItem[]; channel?: 0 | 1; listPath: string }): RunOpening;
+}
+
+/** The ffmpeg filter that keeps one channel of a stereo file, as mono. */
+export function channelFilter(channel: 0 | 1): string {
+    return `pan=mono|c0=c${channel}`;
 }
 
 /** A second as a player's argument: to the millisecond, never in exponent form ("1e-7"), which ffmpeg cannot parse. */
@@ -68,6 +79,8 @@ class AfplayPlayer extends AudioPlayer {
 
 class VlcPlayer extends SeekingPlayer {
     readonly id = "vlc" as const;
+    // Its --stereo-mode is not proven to pick a channel without listening, so one channel is cut for it.
+    readonly pans = false;
 
     available(): boolean {
         return existsSync(VLC);
@@ -97,6 +110,7 @@ class VlcPlayer extends SeekingPlayer {
 
 class FfplayPlayer extends SeekingPlayer {
     readonly id = "ffplay" as const;
+    readonly pans = true;
 
     available(): boolean {
         return Bun.which("ffplay") !== null;
@@ -110,12 +124,16 @@ class FfplayPlayer extends SeekingPlayer {
         return ["ffplay", "-ss", secondsArg(startSec), "-nodisp", "-autoexit", path];
     }
 
-    /** One file from its second; several are one concat list, each file from its `inpoint` (`-safe 0`: absolute paths). */
-    runOpening(options: { items: readonly RunItem[]; listPath: string }): RunOpening {
+    /**
+     * One file from its second; several are one concat list, each file from its `inpoint` (`-safe 0`: absolute
+     * paths). A channel is kept with `-af pan` while it plays, so nothing is cut first.
+     */
+    runOpening(options: { items: readonly RunItem[]; channel?: 0 | 1; listPath: string }): RunOpening {
+        const pan = options.channel === undefined ? [] : ["-af", channelFilter(options.channel)];
         const [only, ...more] = options.items;
 
         if (only && more.length === 0) {
-            return { argv: this.fromArgv(only.path, only.fromSec) };
+            return { argv: ["ffplay", "-ss", secondsArg(only.fromSec), "-nodisp", "-autoexit", ...pan, only.path] };
         }
 
         const lines = options.items.flatMap((item) => {
@@ -123,7 +141,7 @@ class FfplayPlayer extends SeekingPlayer {
             return [`file ${concatQuoted(item.path)}`, ...(at === "0" ? [] : [`inpoint ${at}`])];
         });
         return {
-            argv: ["ffplay", "-nodisp", "-autoexit", "-f", "concat", "-safe", "0", options.listPath],
+            argv: ["ffplay", "-nodisp", "-autoexit", ...pan, "-f", "concat", "-safe", "0", options.listPath],
             list: { path: options.listPath, text: ["ffconcat version 1.0", ...lines, ""].join("\n") },
         };
     }
