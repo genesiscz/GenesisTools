@@ -288,7 +288,7 @@ struct VoicePreviewLine: Decodable, Equatable, Hashable, Identifiable {
     let person: String?
     /// The cosine of the best match, never a probability.
     let score: Double?
-    /// The runner-up, or the person whose missing sample holds the line back (`unsampled-present`).
+    /// The runner-up, or the person whose missing samples hold the line back (`unsampled-present`, `few-samples`).
     let next: Next?
     let reason: String
 
@@ -297,8 +297,8 @@ struct VoicePreviewLine: Decodable, Equatable, Hashable, Identifiable {
     /// What the model does with the line, in words.
     var outcome: String { VoiceReason.words(reason, person: person, next: next?.person) }
 
-    /// The person whose missing sample holds this line back.
-    var waitsFor: String? { reason == "unsampled-present" ? next?.person : nil }
+    /// The person whose missing samples hold this line back: none yet, or too few to share a seat with others.
+    var waitsFor: String? { reason == "unsampled-present" || reason == "few-samples" ? next?.person : nil }
 }
 
 /// The reasons of the speaker labelers (`LineLabel.reason` in src/meetings/lib/speaker-labels/types.ts) in words.
@@ -309,6 +309,8 @@ enum VoiceReason {
         case "below-gate": return "Too close to call"
         case "no-rival-sample": return "Only one person here has samples, and the match is not close enough"
         case "unsampled-present": return next.map { "Waits for a sample of \($0)" } ?? "Waits for a sample"
+        case "few-samples":
+            return "Too few voice samples of \(next ?? "one person here"). Answer one more of their lines to add a sample."
         case "not-the-seat-person": return next.map { "Does not sound like \($0)" } ?? "Does not sound like the seat's person"
         case "no-voice": return "Too short or no clear voice"
         case "seat-of-one": return "The only person at the seat"
