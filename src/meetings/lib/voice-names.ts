@@ -1,5 +1,6 @@
 import { IntervalIndex } from "@genesiscz/utils/array";
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import { toJoinedSec } from "@genesiscz/utils/meetings/record";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
 import type { SampleSource } from "@genesiscz/utils/meetings/voice-library";
 import type { VoicePrint, VoiceStore } from "@genesiscz/utils/meetings/voice-store";
@@ -27,6 +28,8 @@ interface NamingInputs {
     minSeconds: number;
     exclusion?: VoiceSettings["exclusion"];
     meeting?: string;
+    /** The old ids of recordings a join absorbed into `meeting`, each with its offset: their samples are its own. */
+    aliases?: ReadonlyMap<string, number>;
     lineKeys?: readonly string[];
     sources?: ReadonlyMap<VoicePrint, SampleSource>;
     certain?: LabelContext["certain"];
@@ -174,10 +177,13 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
                 track: sample.track,
                 model: options.store.model,
                 vector,
-                window:
-                    (source?.rootMeeting ?? sample.meeting) === options.meeting
-                        ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
-                        : undefined,
+                window: ownWindow({
+                    meeting: source?.rootMeeting ?? sample.meeting,
+                    lineKey: source?.lineKey,
+                    sample,
+                    vector,
+                    options,
+                }),
             });
         }
     }
@@ -269,6 +275,31 @@ function closestPrint(profile: Profile, target: Target): number {
 }
 
 /** Pure seat- and time-scoped proposals. Every excluded name needs a human answer. */
+/**
+ * Where a sample of this meeting sits, so it is never compared with its own line: a sample saved under the meeting's
+ * id, or under the old id of a recording a join absorbed into it (its seconds moved onto the joined clock).
+ */
+function ownWindow(input: {
+    meeting: string;
+    lineKey: string | undefined;
+    sample: { fromSec: number; toSec: number };
+    vector: number[];
+    options: Pick<NamingInputs, "meeting" | "aliases">;
+}) {
+    const offsetMs = input.meeting === input.options.meeting ? 0 : input.options.aliases?.get(input.meeting);
+
+    if (offsetMs === undefined) {
+        return undefined;
+    }
+
+    return {
+        lineKey: input.lineKey,
+        fromSec: toJoinedSec(input.sample.fromSec, offsetMs),
+        toSec: toJoinedSec(input.sample.toSec, offsetMs),
+        vector: input.vector,
+    };
+}
+
 export function nameByVoice(options: NamingInputs): LineLabel[] {
     const { gate, exclusion, applyAbove = DEFAULT_APPLY_ABOVE } = options;
     const people: string[] = [];

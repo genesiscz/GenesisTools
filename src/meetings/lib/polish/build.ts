@@ -18,7 +18,7 @@ import {
     isDefinedMeetingsPolished,
     type MeetingsPolishedConfig,
 } from "@genesiscz/utils/meetings/polished";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore, meetingAddress } from "@genesiscz/utils/meetings/record";
 import { packageImporterDirs, packageResolvesFrom } from "@genesiscz/utils/package-link";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { playLinksFor } from "../link";
@@ -103,15 +103,24 @@ async function loadPart(input: {
     index: number;
     linked?: (record: MeetingRecord) => LinkedSource;
 }): Promise<{ part: LoadedPart; source: unknown }> {
-    const { store, config, index } = input;
+    const { config, index } = input;
     const part = config.parts[index]!;
-    const record = store.resolve(part.record);
+    const address = meetingAddress(input.store, part.record);
 
-    if (!record) {
+    if (!address) {
         throw new Error(`Part ${index + 1}: no meeting "${part.record}" (${toolCommand("meetings", "list")})`);
     }
 
-    const opened = OpenedMeeting.of(store, record, input.linked?.(record));
+    // A file written before a join names each recording: such a part reads its own recording, on its own clock.
+    const named = new Set(config.parts.map((one) => one.record));
+    const ownRecording =
+        address.record.join &&
+        address.record.join.parts.some((one) => one.record !== part.record && named.has(one.record))
+            ? OpenedMeeting.of(input.store, address.record).recordingReading(part.record)
+            : undefined;
+    const store = ownRecording?.opened.store ?? input.store;
+    const record = ownRecording?.opened.record ?? address.record;
+    const opened = ownRecording?.opened ?? OpenedMeeting.of(store, record, input.linked?.(record));
     const [read, meeting, linked] = await Promise.all([
         correctedTranscriptRead({
             store,

@@ -9,7 +9,7 @@ import {
     type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import { joinAliases, type MeetingRecord, toJoinedSec, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import {
@@ -204,6 +204,8 @@ function comparedSamples(options: {
     person: string;
     line: VoiceLine;
     meeting: string;
+    /** The old ids of recordings a join absorbed into `meeting`, with their offsets. */
+    aliases?: ReadonlyMap<string, number>;
     sources: ReadonlyMap<VoicePrint, SampleSource>;
 }): number {
     const voice = options.line.channels.find((channel) => channel.quality === "ready");
@@ -219,11 +221,15 @@ function comparedSamples(options: {
             sample.seat === options.line.seat &&
             sample.track === options.line.track &&
             sample.embedding.length === voice.embedding.length &&
-            !(
-                (options.sources.get(sample)?.rootMeeting ?? sample.meeting) === options.meeting &&
-                sample.fromSec < toSec &&
-                sample.toSec > fromSec
-            )
+            !(() => {
+                const own = options.sources.get(sample)?.rootMeeting ?? sample.meeting;
+                const offsetMs = own === options.meeting ? 0 : options.aliases?.get(own);
+                return (
+                    offsetMs !== undefined &&
+                    toJoinedSec(sample.fromSec, offsetMs) < toSec &&
+                    toJoinedSec(sample.toSec, offsetMs) > fromSec
+                );
+            })()
     ).length;
 }
 
@@ -414,6 +420,7 @@ export function voiceLabeler(options: {
                 ...options.settings,
                 store,
                 meeting: root,
+                aliases: joinAliases(options.opened.record),
                 lineKeys,
                 sources,
                 applyAbove: context.applyAbove,
@@ -462,7 +469,14 @@ export function voiceLabeler(options: {
                             person: label.person,
                             score: label.score,
                             ...(label.next ? { next: label.next } : {}),
-                            samples: comparedSamples({ store, person: label.person, line, meeting: root, sources }),
+                            samples: comparedSamples({
+                                person: label.person,
+                                store,
+                                line,
+                                meeting: root,
+                                aliases: joinAliases(options.opened.record),
+                                sources,
+                            }),
                         });
                     }
                 }
