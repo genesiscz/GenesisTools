@@ -498,6 +498,44 @@ function statedNames(items: readonly MeetingItem[]) {
         );
 }
 
+/** The rules of the voice alone: a range that carries only these says what the voice said, and nothing more. */
+const VOICE_RULES: ReadonlySet<string> = new Set([MeetingRule.VoiceEmbedding, MeetingRule.Voice]);
+
+/**
+ * A one-line range that the voice pass named by itself in an earlier run: no person, agent or other rule took part,
+ * and nobody decided it. With `retired`, also such a range that a run set aside for a newer voice name.
+ */
+function ownVoiceName(item: MeetingItem | NewItem, options: { retired?: boolean } = {}): boolean {
+    if (item.kind !== "speaker-range" || !item.speaker || item.fromSec !== item.toSec || item.decision) {
+        return false;
+    }
+
+    const open =
+        item.status === "suggested" ||
+        (options.retired === true &&
+            item.status === "rejected" &&
+            item.evidence?.retired === "independent-voice" &&
+            !item.decidedAt);
+    return (
+        open &&
+        item.evidence?.reason === "named" &&
+        item.rules.length > 0 &&
+        item.rules.every((rule) => VOICE_RULES.has(rule))
+    );
+}
+
+/** A name the voice labeler gives a line at or above the apply threshold: sure enough to stand alone. */
+function confidentVoiceName(item: NewItem, applyAbove: number): boolean {
+    return (
+        item.kind === "speaker-range" &&
+        !!item.speaker &&
+        item.evidence?.labeler === "voice" &&
+        item.evidence.reason === "named" &&
+        item.evidence.reviewOnly !== true &&
+        (item.confidence ?? 0) >= applyAbove
+    );
+}
+
 /** Reconcile line proposals here, where the old rules already meet; labelers never create or save items. */
 function labeledItems(options: {
     labels: LineLabel[];
@@ -694,6 +732,19 @@ function labeledItems(options: {
             }
         }
         const rivals: string[] = [];
+        // A confident voice name replaces the voice pass's own earlier name on this line (in place, keeping its id):
+        // an "A or B" question adds nothing when only the voice ever said A. It stays a question when the new name
+        // is below the apply threshold, or when a seat, the attendance or another rule backs the other name.
+        const person = label.person;
+        const renames =
+            confidentVoiceName(item, options.applyAbove ?? DEFAULT_APPLY_ABOVE) &&
+            older.every(
+                (old) =>
+                    old.kind !== "speaker-range" ||
+                    !old.speaker ||
+                    sameName(old.speaker, person) ||
+                    (stored.includes(old) && ownVoiceName(old))
+            );
 
         for (const old of older) {
             if (old.kind !== "speaker-range") {
@@ -702,9 +753,10 @@ function labeledItems(options: {
 
             if (old.speaker && !sameName(old.speaker, label.person)) {
                 if (
-                    label.reason !== "named" ||
-                    old.rules.includes(MeetingRule.Voice) ||
-                    old.evidence?.reason === "named"
+                    !renames &&
+                    (label.reason !== "named" ||
+                        old.rules.includes(MeetingRule.Voice) ||
+                        old.evidence?.reason === "named")
                 ) {
                     rivals.push(old.speaker);
                 }
@@ -1260,6 +1312,28 @@ function buildSuggestions(options: SuggestInputs): void {
     // Old recordings can contain an automatic above-threshold attribution for the same elimination.
     // Keep its ID so open questions and the decision journal still address the same target.
     const priorByKey = new Map(record.items.map((item) => [itemKey(item), item]));
+    // The voice pass's own earlier names by line (label and time, no name), the latest last: a confident new voice name
+    // takes one over in place, so the line keeps one range and its id however often the voice changes its mind.
+    const ownVoiceByLine = new Map<string, MeetingItem>();
+    for (const item of record.items) {
+        if (item.kind === "speaker-range" && ownVoiceName(item, { retired: true })) {
+            ownVoiceByLine.set(itemKey({ ...item, speaker: undefined }), item);
+        }
+    }
+    const applyAbove = options.applyAbove ?? DEFAULT_APPLY_ABOVE;
+    /** The voice pass's own range on the item's line that a confident voice name takes over, or none. */
+    const ownVoiceTarget = (item: NewItem, exact: MeetingItem | undefined): MeetingItem | undefined => {
+        if (item.kind !== "speaker-range" || !confidentVoiceName(item, applyAbove)) {
+            return undefined;
+        }
+
+        // The same name already open on the line stays as it is; one that anyone else made or decided keeps its say.
+        if (exact) {
+            return exact.status !== "suggested" && ownVoiceName(exact, { retired: true }) ? exact : undefined;
+        }
+
+        return ownVoiceByLine.get(itemKey({ ...item, speaker: undefined }));
+    };
     const statedAt = statedNames(record.items);
     const known = decidedKeys;
     const fresh: MeetingItem[] = [];
@@ -1268,18 +1342,19 @@ function buildSuggestions(options: SuggestInputs): void {
     for (const item of merged.values()) {
         const namedKey = itemKey(item);
         if (item.kind === "speaker-range" && item.evidence?.reviewOnly === true) {
-            const apply = options.applyAbove ?? DEFAULT_APPLY_ABOVE;
-            item.confidence = Math.min(item.confidence ?? 1, Math.max(0, Math.round(apply * 100) - 1) / 100);
+            item.confidence = Math.min(item.confidence ?? 1, Math.max(0, Math.round(applyAbove * 100) - 1) / 100);
             if (item.speaker) {
                 item.candidates ??= [item.speaker];
                 item.evidence.candidateScores = anchorScores(speakerScoresOf(item), item.speaker, item.confidence);
-                if (apply === 0) {
+                if (applyAbove === 0) {
                     delete item.speaker;
                 }
             }
         }
         const key = itemKey(item);
+        const renamed = ownVoiceTarget(item, priorByKey.get(key));
         const prior =
+            renamed ??
             priorByKey.get(key) ??
             priorByKey.get(namedKey) ??
             (item.kind === "speaker-range" && item.evidence?.reviewOnly && item.speaker
@@ -1290,12 +1365,15 @@ function buildSuggestions(options: SuggestInputs): void {
         if (
             prior?.kind === "speaker-range" &&
             item.kind === "speaker-range" &&
-            (prior.status === "suggested" || retiredByEligibility) &&
-            prior.rules.length &&
-            !prior.decision &&
-            !prior.rules.includes(MeetingRule.Agent) &&
-            !prior.rules.includes(MeetingRule.User) &&
-            (retiredByEligibility || item.evidence?.reviewOnly === true || prior.evidence?.reviewOnly === true)
+            (renamed !== undefined ||
+                ((prior.status === "suggested" || retiredByEligibility) &&
+                    prior.rules.length &&
+                    !prior.decision &&
+                    !prior.rules.includes(MeetingRule.Agent) &&
+                    !prior.rules.includes(MeetingRule.User) &&
+                    (retiredByEligibility ||
+                        item.evidence?.reviewOnly === true ||
+                        prior.evidence?.reviewOnly === true)))
         ) {
             prior.status = "suggested";
             if (item.speaker) {

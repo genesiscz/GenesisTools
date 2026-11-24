@@ -1471,6 +1471,124 @@ describe("speaker-label integration", () => {
     });
 });
 
+describe("a voice that changes its mind between passes", () => {
+    const alice = "Alice Example";
+    const bob = "Bob Example";
+
+    async function voiceFixture(items: MeetingRecord["items"] = []) {
+        const fixture = await runnerFixture({ seats: { room: [alice, bob], remote: [] }, items });
+        fixture.meeting.transcript = [0, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        const stays = [alice, bob].map((name) => ({ name, fromSec: 0, toSec: 15 }));
+        const labels = spyOn(labelers, "proposeSpeakerLabels");
+        spies.push(
+            spyOn(fixture.opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec: 15, channel: "mic" }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(fixture.opened, "presence").mockResolvedValue(stays),
+            labels
+        );
+        const { store, record } = fixture;
+        const pass = async (label: LineLabel) => {
+            labels.mockResolvedValue([label]);
+            return runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        };
+        const firstLine = () =>
+            store
+                .read(record.id)!
+                .items.flatMap((item) =>
+                    item.kind === "speaker-range" && item.fromSec === 0
+                        ? [{ id: item.id, status: item.status, speaker: item.speaker, candidates: item.candidates }]
+                        : []
+                );
+        return { store, record, pass, firstLine };
+    }
+
+    const voice = (person: string, score: number): LineLabel => ({
+        labeler: "voice",
+        index: 0,
+        seat: "mic",
+        reason: "named",
+        person,
+        score,
+        margin: 0.3,
+    });
+
+    test("replace: a confident new name takes over the pass's own earlier one in place; A, B, A ends on A with one range", async () => {
+        const { store, record, pass, firstLine } = await voiceFixture();
+        await pass(voice(alice, 0.9));
+        expect(firstLine()).toEqual([{ id: "i1", status: "suggested", speaker: alice, candidates: undefined }]);
+        await pass(voice(bob, 0.9));
+        expect(firstLine()).toEqual([{ id: "i1", status: "suggested", speaker: bob, candidates: undefined }]);
+        await pass(voice(alice, 0.9));
+        expect(firstLine()).toEqual([{ id: "i1", status: "suggested", speaker: alice, candidates: undefined }]);
+        const saved = readFileSync(store.path(record.id));
+        const again = await pass(voice(alice, 0.9));
+        expect(again.fresh).toEqual([]);
+        expect(readFileSync(store.path(record.id))).toEqual(saved);
+        expect(store.read(record.id)!.items.filter((item) => item.kind === "question")).toEqual([]);
+    });
+
+    test("question: a new name below the apply threshold stands beside the earlier one as A or B", async () => {
+        const { pass, firstLine } = await voiceFixture();
+        await pass(voice(alice, 0.9));
+        await pass(voice(bob, 0.5));
+        const line = firstLine();
+        expect(line[0]).toEqual({ id: "i1", status: "suggested", speaker: alice, candidates: undefined });
+        expect(line.slice(1)).toEqual([
+            { id: expect.any(String), status: "suggested", speaker: undefined, candidates: [bob, alice] },
+        ]);
+    });
+
+    test("question: a seat that disagrees with the earlier voice name asks instead of replacing it", async () => {
+        const { pass, firstLine } = await voiceFixture();
+        await pass(voice(alice, 0.9));
+        await pass({ labeler: "seat", index: 0, seat: "mic", person: bob, reason: "seat-of-one" });
+        const line = firstLine();
+        expect(line[0]).toMatchObject({ id: "i1", speaker: alice });
+        expect(line.at(-1)).toMatchObject({ speaker: undefined, candidates: [bob, alice] });
+    });
+
+    test("question: an earlier name that the attendance also backed is not the voice's alone, so a new voice name asks", async () => {
+        const backed = meetingItemSchema.parse({
+            id: "i1",
+            kind: "speaker-range",
+            status: "suggested",
+            rules: [MeetingRule.VoiceEmbedding, MeetingRule.Attendance],
+            suggestedAt: START,
+            label: "Speaker 1",
+            fromSec: 0,
+            toSec: 0,
+            speaker: alice,
+            confidence: 0.9,
+            evidence: { labeler: "voice", reason: "named", seat: "mic", transcriptLine: 0, endSec: 10 },
+        });
+        const { pass, firstLine } = await voiceFixture([backed]);
+        await pass(voice(bob, 0.9));
+        const line = firstLine();
+        expect(line[0]).toMatchObject({ id: "i1", status: "suggested", speaker: alice });
+        expect(line.at(-1)).toMatchObject({ speaker: undefined, candidates: [bob, alice] });
+    });
+
+    test("a range a person stated keeps the line whatever the voice says", async () => {
+        const stated = meetingItemSchema.parse({
+            id: "i1",
+            kind: "speaker-range",
+            status: "suggested",
+            rules: [MeetingRule.User],
+            suggestedAt: START,
+            label: "Speaker 1",
+            fromSec: 0,
+            toSec: 0,
+            speaker: alice,
+        });
+        const { pass, firstLine } = await voiceFixture([stated]);
+        await pass(voice(bob, 0.95));
+        expect(firstLine()).toEqual([{ id: "i1", status: "suggested", speaker: alice, candidates: undefined }]);
+    });
+});
+
 describe("voice support on seat lines", () => {
     const owner = "Alice Example";
     const project = "voice-support-fixture";
