@@ -5,13 +5,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
-import {
-    dedupeVoiceLines,
-    idSchema,
-    ownerKey,
-    readVoiceLibrary,
-    voicesIn,
-} from "@genesiscz/utils/meetings/voice-library";
+import { idSchema, ownerKey, readVoiceLibrary, voicesIn } from "@genesiscz/utils/meetings/voice-library";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
@@ -418,7 +412,11 @@ export function registerVoicesCommand(program: Command): void {
         .action((opts: { dryRun?: boolean; json?: boolean }) =>
             guarded(async () => {
                 const flags = { ...voices.opts<VoiceOptions>(), ...opts };
-                const result = dedupeVoiceLines(flags.dryRun ? { dryRun: true } : {});
+                // The service writes it, so an open Voices pane refreshes; with no service running, the client
+                // answers in-process.
+                const result = await withMeetingsClient((c) =>
+                    c.call("voices.dedupe", flags.dryRun ? { dryRun: true } : {})
+                );
                 if (flags.json) {
                     out.result(SafeJSON.stringify(result));
                     return;

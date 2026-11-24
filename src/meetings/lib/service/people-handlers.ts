@@ -5,6 +5,7 @@ import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { dedupeVoiceLines } from "@genesiscz/utils/meetings/voice-library";
 import { roomDeviceOffers } from "../room-devices";
 import { autoVoiceWorkers } from "../speaker-labels/voice";
 import { backfillVoices } from "../voice-backfill";
@@ -158,6 +159,17 @@ export function voicesHandlers(
                     : await backfillVoices({ ...access, ...params });
             if (!deps.voiceJobs && !result.dryRun && result.added) {
                 context.emit?.("people.changed", {});
+            }
+            return result;
+        },
+        // The service writes the repair, so an open Voices pane hears it (people.changed) and refreshes.
+        "voices.dedupe": (params, context) => {
+            const result = dedupeVoiceLines(params.dryRun ? { dryRun: true } : {});
+            if (result.token) {
+                context.emit?.("people.changed", {});
+                for (const meeting of new Set(result.rows.map((row) => row.meeting))) {
+                    context.emit?.("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] });
+                }
             }
             return result;
         },

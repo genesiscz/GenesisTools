@@ -462,10 +462,10 @@ describe("toolset method names", () => {
         expect(api.methods.find((method) => method.name === "quitCaptureBlockers")?.effect).toBe("reversible");
     });
 
-    test("dedupeVoices names its CLI twin and is reversible", () => {
+    test("dedupeVoices names its CLI twin and is destructive", () => {
         const api = new MeetingsToolset().api;
         expect(describeMethod([api], "meetings.dedupeVoices")).toContain("meetings voices dedupe");
-        expect(api.methods.find((method) => method.name === "dedupeVoices")?.effect).toBe("reversible");
+        expect(api.methods.find((method) => method.name === "dedupeVoices")?.effect).toBe("destructive");
     });
 
     test("P3 voice library REPL commands document their CLI twins and forward scoped requests", async () => {

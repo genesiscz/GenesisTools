@@ -1938,6 +1938,36 @@ export const voiceBackfill = defineMethod({
     effect: "reversible",
 });
 
+export const voicesDedupe = defineMethod({
+    name: "voices.dedupe",
+    params: z
+        .object({
+            /** true: list the repeated samples; nothing is saved. */
+            dryRun: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.object({
+        dryRun: z.boolean(),
+        /** Each removed sample with the sample of the same line and owner that stays (the first one saved). */
+        rows: z.array(
+            z.object({
+                id: idSchema,
+                keeps: idSchema,
+                owner: ownerSchema,
+                project: z.string(),
+                meeting: z.string(),
+                fromSec: z.number(),
+                toSec: z.number(),
+            })
+        ),
+        revision: z.number().int().nonnegative(),
+        /** The correction receipt that keeps the removed rows; absent on a dry run or when nothing repeats. */
+        token: z.string().optional(),
+    }),
+    doc: "Remove the samples that repeat a line their owner already holds (a backfill after a join learned it again under the joined record's id); the first saved sample of each line stays, and one correction receipt keeps the removed rows. Undo is refused while the kept sample holds the line. dryRun lists them and saves nothing.",
+    effect: "destructive",
+});
+
 export const VOICES_METHODS = [
     voicesList,
     voicesPreview,
@@ -1951,6 +1981,7 @@ export const VOICES_METHODS = [
     voicesRename,
     voicesQuality,
     voiceBackfill,
+    voicesDedupe,
     voicesJobs,
     voicesJobsCancel,
 ] as const;
