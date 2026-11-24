@@ -9,6 +9,7 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
 |---|---|
 | Find the meeting | `tools wisprflow meetings list "<query>"` (`--since`, `--attendee`) |
 | Raw export, unchanged | `tools wisprflow meetings export <id> --dir <dir> --timestamps` |
+| Re-export one file only (keeps a hand-edited Transcript.md) | add `--only summary` (a comma list of `summary`, `transcript`, `json`) to the export command |
 | Invitees and the Teams link | `tools wisprflow calendar search "<title>" --format json` -> `events[].attendees`, `conferenceUrl` |
 | Candidate term errors | `tools meetings new --source wisprflow:<id> --project <name>`, then the seats and voices step in pass 1 and `tools meetings suggest <meeting>` |
 | Per-label stats, spans and "several people" hints | `tools meetings speakers stats <meeting> --attendance teams` (`--gap 2m`, `--json`). The spans come from silences, not from goodbyes, so still scan for leave phrases (R1) |
