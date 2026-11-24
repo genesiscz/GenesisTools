@@ -1,4 +1,5 @@
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -109,6 +110,60 @@ function moveDestination(text: string) {
     return matches.values().next().value ?? { name: owner.name };
 }
 
+/**
+ * The owner a rename names, exactly as typed: "Name <email>" or a name. A rename joins or renames spellings of one
+ * name key, so the loose name match `--to` of a move uses would pick the other spelling.
+ */
+function renameOwner(text: string) {
+    const owner = parsePerson(text);
+    return owner.email ? { name: owner.name, email: owner.email } : { name: owner.name };
+}
+
+function ownerLabel(owner: { name: string; email?: string }): string {
+    return owner.email ? `${owner.name} <${owner.email}>` : owner.name;
+}
+
+const UNDO_COMMAND: Record<"people.unmerge" | "voices.undo", (token: string) => string> = {
+    "people.unmerge": (token) => toolCommand("meetings people unmerge", token),
+    "voices.undo": (token) => toolCommand("meetings voices undo", token),
+};
+
+function printRename(result: MeetingsResult<"voices.rename">, input: { person: string; to: string; json?: boolean }) {
+    if (input.json) {
+        out.result(SafeJSON.stringify(result));
+    }
+
+    if (!("mechanism" in result)) {
+        ui.err(result.reason);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (input.json) {
+        return;
+    }
+
+    const from = ownerLabel(result.from);
+    const to = ownerLabel(result.to);
+    const samples = `${result.ids.length} ${result.ids.length === 1 ? "sample" : "samples"}`;
+    const merge = result.mechanism === "merge";
+    if (result.status === "preview") {
+        const joined = `Would join ${from} with ${to}: the people list and the voice library then treat them as one person`;
+        out.println(
+            merge
+                ? `${joined}${result.ids.length ? `, and ${samples} of ${from} count as ${to}'s.` : ". No sample changes its owner."}`
+                : `Would rename ${samples} of ${from} to ${to}. No owner is refused; ${result.affected.length} suggested lines are reconsidered.`
+        );
+        out.println(`Apply: ${toolCommand("meetings voices rename", input.person, "--to", input.to, "--yes")}`);
+        return;
+    }
+
+    out.println(merge ? `Joined ${from} with ${to}.` : `Renamed ${samples} of ${from} to ${to}.`);
+    if (result.undo) {
+        out.println(`Undo: ${UNDO_COMMAND[result.undo.method](result.undo.token)}`);
+    }
+}
+
 async function listPeople(opts: VoiceOptions) {
     const result = await withMeetingsClient((client) =>
         client.call("voices.list", { ...browseScope(opts), person: opts.person })
@@ -152,6 +207,12 @@ async function listPeople(opts: VoiceOptions) {
     out.println(table.toString());
     for (const conflict of result.conflicts) {
         ui.warn(`${conflict.project}: ${conflict.message}`);
+    }
+    for (const hint of result.mergeHints) {
+        const [a, b] = hint.owners.map(ownerLabel);
+        ui.info(
+            `${a} and ${b} are one person in the people list, but their voice samples are apart. Join them: ${hint.command}`
+        );
     }
 }
 
@@ -465,6 +526,29 @@ export function registerVoicesCommand(program: Command): void {
             guarded(async () => {
                 const params = { person, id: stableId(opts.sample), to: moveDestination(opts.to) };
                 printCorrection(await withMeetingsClient((c) => c.call("voices.move", params)), flags(opts).json);
+            })
+        );
+
+    voices
+        .command("rename <person>")
+        .description(
+            "Name a person's voice samples again with no refusal: join them with a known person, or re-key them to a new name"
+        )
+        .requiredOption("--to <person>", 'the name to use, optionally "Name <email>"')
+        .option("--yes", "apply the rename the preview shows")
+        .option("--json", "print the preview or the applied rename with its undo")
+        .action((person: string, opts: VoiceOptions & { to: string; yes?: boolean }) =>
+            guarded(async () => {
+                const params = { from: renameOwner(person), to: renameOwner(opts.to) };
+                const result = await withMeetingsClient(async (client) => {
+                    const plan = await client.call("voices.rename", { ...params, preview: true });
+                    if (!opts.yes || !("planToken" in plan)) {
+                        return plan;
+                    }
+
+                    return client.call("voices.rename", { ...params, planToken: plan.planToken });
+                });
+                printRename(result, { person, to: opts.to, json: flags(opts).json });
             })
         );
 

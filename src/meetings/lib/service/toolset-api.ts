@@ -33,6 +33,7 @@ import {
     voicesQuality,
     voicesReject,
     voicesRemove,
+    voicesRename,
     voicesSample,
     voicesUndo,
 } from "./api";
@@ -927,6 +928,10 @@ export const voiceLibraryMethods = {
     undo: defineMethod({
         ...voicesUndo,
         doc: `Undo a correction by token. Return the receipt or refusal from ${toolCommand("meetings voices undo")}.`,
+    }),
+    rename: defineMethod({
+        ...voicesRename,
+        doc: `Name a person's voice samples again with no wrong-person refusal: a target the people list knows becomes a people merge (undo.method people.unmerge), a new name re-keys the samples (undo.method voices.undo). Set preview to true for the mechanism, sample IDs and planToken to pass when confirming. CLI: ${toolCommand("meetings voices rename")} <person> --to <person> [--yes] --json.`,
     }),
 };
 

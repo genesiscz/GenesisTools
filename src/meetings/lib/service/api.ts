@@ -1657,12 +1657,18 @@ const voiceRemovalSchema = z.object({
     affected: voiceAffectedSchema,
 });
 
+/**
+ * Two listed owners that the people list joins by its name key (one of them has no address) while no people merge
+ * joins their voice samples. `command` is the merge that joins them.
+ */
+const voiceMergeHintSchema = z.object({ owners: z.tuple([ownerSchema, ownerSchema]), command: z.string() });
 export const voicesList = defineMethod({
     name: "voices.list",
     params: voiceBrowseSchema,
     result: z.object({
         learnt: z.array(learntVoiceSchema),
         conflicts: z.array(z.object({ project: z.string(), file: z.string(), message: z.string() })),
+        mergeHints: z.array(voiceMergeHintSchema),
         people: z.array(
             z.object({
                 project: z.string(),
@@ -1674,7 +1680,7 @@ export const voicesList = defineMethod({
             })
         ),
     }),
-    doc: "Read project voice samples, their meeting, seat, track, transcript times and words. An attended person without a sample has an empty samples array. Saves nothing.",
+    doc: "Read project voice samples, their meeting, seat, track, transcript times and words. An attended person without a sample has an empty samples array. mergeHints names two listed owners the people list joins by name while their samples stay apart, with the merge command that joins them. Saves nothing.",
     effect: "read",
 });
 export const voicesPreview = defineMethod({
@@ -1800,6 +1806,43 @@ export const voicesUndo = defineMethod({
     effect: "reversible",
     doc: "Revert a library correction by token while it still owns the affected bindings.",
 });
+const renameOutcome = {
+    planToken: z.string(),
+    /** The samples that change: a merge moves them under the target's name, a re-key renames them. */
+    ids: z.array(idSchema),
+    affected: voiceAffectedSchema,
+    from: ownerSchema,
+    to: ownerSchema,
+};
+export const voicesRename = defineMethod({
+    name: "voices.rename",
+    params: z
+        .object({
+            from: ownerSchema,
+            to: ownerSchema,
+            preview: z.boolean().optional(),
+            planToken: z.string().optional(),
+            token: z.string().min(1).optional(),
+        })
+        .strict(),
+    result: z.union([
+        z.object({
+            status: z.enum(["preview", "applied"]),
+            mechanism: z.literal("merge"),
+            ...renameOutcome,
+            undo: z.object({ method: z.literal("people.unmerge"), token: z.string() }).optional(),
+        }),
+        z.object({
+            status: z.enum(["preview", "applied"]),
+            mechanism: z.literal("rekey"),
+            ...renameOutcome,
+            undo: z.object({ method: z.literal("voices.undo"), token: z.string() }).optional(),
+        }),
+        z.object({ status: z.enum(["stale", "refused"]), reason: z.string() }),
+    ]),
+    effect: "reversible",
+    doc: "Name a person's voice samples again, with no wrong-person refusal. A target the people list knows becomes a people merge of the two (undo: people.unmerge); a new name re-keys the samples (undo: voices.undo). Preview reports the mechanism, the samples and the suggestions it reconsiders.",
+});
 export const voicesQuality = defineMethod({
     name: "voices.quality",
     params: voiceBrowseSchema,
@@ -1892,6 +1935,7 @@ export const VOICES_METHODS = [
     voicesMove,
     voicesReject,
     voicesUndo,
+    voicesRename,
     voicesQuality,
     voiceBackfill,
     voicesJobs,

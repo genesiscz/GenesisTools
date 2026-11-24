@@ -309,19 +309,31 @@ export class PeopleBook {
         });
     }
 
-    /** Writes a merge of two people under a new undo token. */
-    async merge(merge: { people: [PersonRefValue, PersonRefValue]; name: string }): Promise<PeopleMerge> {
+    /** Writes a merge of two people under a new undo token, or under `token` once: a retried request gets its merge. */
+    async merge(merge: {
+        people: [PersonRefValue, PersonRefValue];
+        name: string;
+        token?: string;
+    }): Promise<PeopleMerge> {
         // Checked as the next read checks it: a merge the reader drops could never be undone by its token.
         const saved = peopleMergeSchema.parse({
-            token: randomUUID(),
+            token: merge.token ?? randomUUID(),
             people: [personRefSchema.parse(merge.people[0]), personRefSchema.parse(merge.people[1])],
             name: merge.name.trim(),
             at: this.now().toISOString(),
         });
-        return this.change((data) => {
-            data.merges.push(saved);
-            return saved;
-        });
+        return this.change(
+            (data) => {
+                const known = data.merges.find((one) => one.token === saved.token);
+                if (known) {
+                    return known;
+                }
+
+                data.merges.push(saved);
+                return saved;
+            },
+            (result) => result === saved
+        );
     }
 
     /** Removes the merge `token` names; undefined when the book has no such merge. */

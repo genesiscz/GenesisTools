@@ -15,6 +15,7 @@ import {
     planVoiceRemoval,
     previewVoices,
     removeVoice,
+    renameVoiceOwner,
     voiceQuality,
     voiceSample,
 } from "../voices";
@@ -137,6 +138,16 @@ export function voicesHandlers(
                 p,
                 context
             ),
+        "voices.rename": async (p, context) => {
+            const result = await renameVoiceOwner({ ...access, ...p, people: await directoryOf(store, deps) });
+            if (result.status === "applied") {
+                context.emit?.("people.changed", {});
+                for (const meeting of new Set(result.affected.map((row) => row.meeting))) {
+                    context.emit?.("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] });
+                }
+            }
+            return result;
+        },
         "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {

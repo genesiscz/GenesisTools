@@ -234,6 +234,7 @@ export class MeetingsToolset extends ReplToolset {
                         quality: serviceCall("voices.quality"),
                         reject: serviceCall("voices.reject"),
                         remove: serviceCall("voices.remove"),
+                        rename: serviceCall("voices.rename"),
                         sample: resolveSample,
                         undo: serviceCall("voices.undo"),
                     }

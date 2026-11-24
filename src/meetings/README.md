@@ -567,6 +567,15 @@ Take `sample_id` from `people[].samples[].id` in the first command. Each `vs_` I
 
 Moving a clip blocks its former owner from learning that line again. Use `wrong-person` to reject the current owner, or `bad-audio` or `several-voices` to reject the source for everyone. Move, reject and remove return the correction token that `voices undo` accepts.
 
+`voices rename <person> --to <person>` names all of a person's samples again and refuses nobody, so it fits two spellings of one person (`alice.example` and `Example Alice (QT)`). Without `--yes` it prints what it would do and writes nothing. When the people list knows the target, the rename is a people merge of the two: the samples stay as they are, both names group as one voice owner, and `people unmerge <token>` splits them again. A new name re-keys every sample of the person as one voice correction, which `voices undo <token>` reverts. `--json` prints `mechanism` (`merge` or `rekey`) and `undo` (the method and token).
+
+```sh
+tools meetings voices rename "alice.example" --to "Example Alice (QT)"
+tools meetings voices rename "alice.example" --to "Example Alice (QT)" --yes
+```
+
+The voice library joins two owner names only through an explicit people merge, even when the people list already shows them as one person by name. When two listed owners are such a pair, `voices` and `voices samples` print the merge that joins them, and `--json` carries it in `mergeHints[]` (`owners` and `command`). `people merge` accepts two spellings that the people list joins by name and keeps them as typed, so the voice library groups their samples.
+
 `voices remove <person>` forgets samples, so a later eligible backfill can recover them. For a numbered selection, give the project and its one-based sample number. Omitting the number selects all of that person's samples in the project. When several projects or people match, use a project or a stable ID. To inspect and confirm a removal across invocations, pass the returned `planToken` with the same selector. A change to the selection or revision makes the plan stale. An all-project bulk removal requires this preview.
 
 ```sh

@@ -6,12 +6,15 @@ import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
+import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voiceBackend from "@genesiscz/utils/meetings/voice";
@@ -37,7 +40,7 @@ import { meetingListRow, selectMeetings } from "./list-rows";
 import { momentCacheDir, planMoment } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
-import { decisionReachSchema, voicesList, voicesMove, voicesRemove } from "./service/api";
+import { decisionReachSchema, voicesList, voicesMove, voicesRemove, voicesRename } from "./service/api";
 import { InProcessMeetingsClient } from "./service/client";
 import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
@@ -318,6 +321,7 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "quality",
             "reject",
             "remove",
+            "rename",
             "samples",
             "score",
             "undo",
@@ -3683,6 +3687,67 @@ describe("P3 voice library CLI", () => {
             { reason: "bad-audio", token: reject.token, source: { rootMeeting: y.id } },
         ]);
         expect(new MeetingStore().read(y.id)?.items[0]?.status).toBe("confirmed");
+    });
+
+    test("rename joins a known spelling by a people merge, re-keys to a new name with no refusal, each undo restores, and the listing hints the merge", async () => {
+        const contacts = spyOn(ContactsPeopleSource.prototype, "people").mockResolvedValue({ state: "ok", people: [] });
+        try {
+            const { x } = await fixture();
+            // Two roster spellings of one name key with no sample yet: two owners of the listing, as on a real Mac.
+            const spelling = "wren.example";
+            await new MeetingStore().update(x.id, { command: "test", change: "roster spelling" }, (record) => {
+                record.participants.push({ name: spelling, from: ["fixture"] });
+            });
+            const ids = (await listing("samples", person)).people[0]!.samples.map((s) => s.id);
+            const stored = () => readVoiceLibrary().library;
+            const hints = (await listing("--all")).mergeHints;
+            expect(hints.map((hint) => hint.owners.map((owner) => owner.name).sort())).toEqual([
+                [spelling, visitor].sort(),
+            ]);
+            const [a, b] = hints[0]!.owners;
+            expect(hints[0]!.command).toBe(toolCommand("meetings people merge", a.name, b.name, "--yes"));
+
+            const rename = async (...args: string[]) => voicesRename.result.parse(await cli("rename", ...args));
+            expect(await rename(spelling, "--to", visitor)).toMatchObject({
+                status: "preview",
+                mechanism: "merge",
+                ids: [],
+            });
+            expect(new PeopleBook().read().merges).toEqual([]);
+            const joined = await rename(spelling, "--to", visitor, "--yes");
+            if (joined.status !== "applied" || joined.mechanism !== "merge" || !joined.undo) {
+                throw new Error("Expected an applied merge with its undo.");
+            }
+            expect(joined.undo.method).toBe("people.unmerge");
+            expect(new PeopleBook().read().merges[0]?.people).toEqual([{ name: spelling }, { name: visitor }]);
+            const merged = await listing("--all");
+            expect(merged.mergeHints).toEqual([]);
+            expect(merged.people.map((row) => row.person).sort()).toEqual([person, visitor].sort());
+            await expect(cli("rename", spelling, "--to", visitor, "--yes")).rejects.toThrow("one voice owner already");
+            await new PeopleBook().unmerge(joined.undo.token);
+            expect((await listing("--all")).mergeHints).toHaveLength(1);
+
+            // A new name: every sample of the owner is re-keyed, and no owner is refused.
+            const preview = await rename(person, "--to", "Lark Example");
+            expect(preview).toMatchObject({ status: "preview", mechanism: "rekey" });
+            expect(stored().samples.filter((s) => s.owner.name === person)).toHaveLength(3);
+            const renamed = await rename(person, "--to", "Lark Example", "--yes");
+            if (renamed.status !== "applied" || renamed.mechanism !== "rekey" || !renamed.undo) {
+                throw new Error("Expected an applied re-key with its undo.");
+            }
+            expect([renamed.ids.sort(), renamed.undo.method]).toEqual([ids.sort(), "voices.undo"]);
+            expect(stored().samples.map((s) => s.owner)).toEqual(ids.map(() => ({ name: "Lark Example" })));
+            expect(stored().rejected).toEqual([]);
+            expect((await listing("samples", "Lark Example")).people[0]?.samples).toHaveLength(3);
+            await correction("undo", renamed.undo.token);
+            expect(stored().samples.map((s) => s.owner)).toEqual(ids.map(() => ({ name: person })));
+            expect(stored().rejected).toEqual([]);
+            await expect(cli("rename", "Nobody Example", "--to", "Ghost Example")).rejects.toThrow(
+                "has no voice samples to rename"
+            );
+        } finally {
+            contacts.mockRestore();
+        }
     });
 
     test("a stale numbered preview cannot remove the next clip and a stable ID keeps its sound", async () => {
