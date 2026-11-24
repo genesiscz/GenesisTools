@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, test } from "bun:test";
-import { concurrentMap, debounce, rateLimitAwareDelay, retry, throttle, withTimeout } from "./async";
+import { concurrentMap, debounce, KeyedRerun, rateLimitAwareDelay, retry, throttle, withTimeout } from "./async";
 
 // Bun supports advanceTimersByTime at runtime but the type definitions are incomplete
 declare module "bun:test" {
@@ -198,6 +198,106 @@ describe("debounce", () => {
         debounced("a", "b");
         jest.advanceTimersByTime(100);
         expect(received).toEqual(["a", "b"]);
+    });
+});
+
+describe("KeyedRerun", () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    /** Lets the promise callbacks queued by a finished call run. */
+    const settle = async () => {
+        for (let i = 0; i < 5; i++) {
+            await Promise.resolve();
+        }
+    };
+
+    /** A rerun whose calls wait for `finish()`; `calls` lists the key of each call as it starts. */
+    function controlled(options: { callStarted?: boolean } = {}) {
+        const calls: string[] = [];
+        const pending: Array<{ started: () => void; finish: () => void }> = [];
+        const rerun = new KeyedRerun<string>({
+            run: (key, started) => {
+                calls.push(key);
+                if (options.callStarted !== false) {
+                    started();
+                }
+                return new Promise<void>((resolve) => pending.push({ started, finish: resolve }));
+            },
+        });
+        return { rerun, calls, pending };
+    }
+
+    it("runs once, the delay after the last trigger", () => {
+        const { rerun, calls } = controlled();
+        rerun.trigger("m1", 1000);
+        jest.advanceTimersByTime(600);
+        rerun.trigger("m1", 1000);
+        jest.advanceTimersByTime(999);
+        expect(calls).toEqual([]);
+        jest.advanceTimersByTime(1);
+        expect(calls).toEqual(["m1"]);
+        expect(rerun.busy).toBe(true);
+    });
+
+    it("two triggers during a call give exactly one more call after it", async () => {
+        const { rerun, calls, pending } = controlled();
+        rerun.trigger("m1", 1000);
+        jest.advanceTimersByTime(1000);
+        rerun.trigger("m1", 1000);
+        rerun.trigger("m1", 1000);
+        jest.advanceTimersByTime(5000);
+        expect(calls).toEqual(["m1"]);
+        pending[0]!.finish();
+        await settle();
+        jest.advanceTimersByTime(1000);
+        expect(calls).toEqual(["m1", "m1"]);
+        pending[1]!.finish();
+        await settle();
+        jest.advanceTimersByTime(5000);
+        expect(calls).toEqual(["m1", "m1"]);
+        expect(rerun.busy).toBe(false);
+    });
+
+    it("a trigger before the call took its inputs is that call's, not a rerun", async () => {
+        const { rerun, calls, pending } = controlled({ callStarted: false });
+        rerun.trigger("m1", 1000);
+        jest.advanceTimersByTime(1000);
+        rerun.trigger("m1", 1000);
+        pending[0]!.started();
+        pending[0]!.finish();
+        await settle();
+        jest.advanceTimersByTime(5000);
+        expect(calls).toEqual(["m1"]);
+        expect(rerun.busy).toBe(false);
+    });
+
+    it("keys run independently, a failed call reaches onError, and stop cancels waiting calls", async () => {
+        const errors: string[] = [];
+        const calls: string[] = [];
+        const rerun = new KeyedRerun<string>({
+            run: async (key) => {
+                calls.push(key);
+                throw new Error(`${key} failed`);
+            },
+            onError: (_key, error) => errors.push(error instanceof Error ? error.message : String(error)),
+        });
+        rerun.trigger("m1", 100);
+        rerun.trigger("m2", 300);
+        jest.advanceTimersByTime(100);
+        await settle();
+        expect(calls).toEqual(["m1"]);
+        expect(errors).toEqual(["m1 failed"]);
+        rerun.stop();
+        jest.advanceTimersByTime(1000);
+        rerun.trigger("m3", 0);
+        jest.advanceTimersByTime(1000);
+        expect(calls).toEqual(["m1"]);
+        expect(rerun.busy).toBe(false);
     });
 });
 

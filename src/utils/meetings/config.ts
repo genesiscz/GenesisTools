@@ -672,8 +672,12 @@ const storedConfigSchema = z
             .object({
                 voices: z
                     .object({
-                        /** Seconds after the last learned sample before the meeting's speaker suggestions run again. */
-                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(10),
+                        /**
+                         * Seconds after the last learned sample before the meeting's speaker suggestions run again.
+                         * Short, so names follow the answers while the user is still answering; a sample learned
+                         * during a pass brings exactly one more pass.
+                         */
+                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(1),
                     })
                     .prefault({}),
             })

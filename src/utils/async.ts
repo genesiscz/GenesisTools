@@ -125,6 +125,101 @@ export function debounce<T extends (...args: never[]) => void>(
     };
 }
 
+// ============= Keyed rerun =============
+
+interface RerunState {
+    timer?: ReturnType<typeof setTimeout>;
+    running: boolean;
+    /** A trigger came after the running call took its inputs: one more call follows it. */
+    dirty: boolean;
+    delayMs: number;
+}
+
+/**
+ * Calls `run(key)` `delayMs` after the last `trigger(key)`, and never twice at once for one key. A trigger while a call
+ * runs marks the key dirty, and exactly one more call follows that one (after the delay again, so triggers that keep
+ * coming still share it). The call says when it took its inputs with `started()`: a trigger before that is covered by
+ * the call and asks for no rerun. A call that throws goes to `onError`; the key stays usable.
+ */
+export class KeyedRerun<K> {
+    private readonly keys = new Map<K, RerunState>();
+    private stopped = false;
+
+    constructor(
+        private readonly options: {
+            run: (key: K, started: () => void) => Promise<unknown>;
+            onError?: (key: K, error: unknown) => void;
+        }
+    ) {}
+
+    trigger(key: K, delayMs: number): void {
+        if (this.stopped) {
+            return;
+        }
+
+        const state = this.keys.get(key) ?? { running: false, dirty: false, delayMs };
+        state.delayMs = delayMs;
+        this.keys.set(key, state);
+
+        if (state.running) {
+            state.dirty = true;
+            return;
+        }
+
+        this.arm(key, state);
+    }
+
+    /** A call is waiting for its delay or running. */
+    get busy(): boolean {
+        return this.keys.size > 0;
+    }
+
+    /** Cancels every waiting call. A running call finishes and is not repeated. */
+    stop(): void {
+        this.stopped = true;
+
+        for (const [key, state] of this.keys) {
+            clearTimeout(state.timer);
+            state.timer = undefined;
+
+            if (!state.running) {
+                this.keys.delete(key);
+            }
+        }
+    }
+
+    private arm(key: K, state: RerunState): void {
+        clearTimeout(state.timer);
+        state.timer = setTimeout(() => this.fire(key, state), state.delayMs);
+    }
+
+    private fire(key: K, state: RerunState): void {
+        state.timer = undefined;
+        state.dirty = false;
+        const call = async () => {
+            try {
+                await this.options.run(key, () => {
+                    state.dirty = false;
+                });
+            } catch (error) {
+                this.options.onError?.(key, error);
+            }
+        };
+        // Set before `run` starts, so a trigger from inside the call marks it dirty instead of arming a second one.
+        state.running = true;
+        void call().then(() => {
+            state.running = false;
+
+            if (state.dirty && !this.stopped) {
+                state.dirty = false;
+                this.arm(key, state);
+            } else {
+                this.keys.delete(key);
+            }
+        });
+    }
+}
+
 // ============= Throttle =============
 
 /**

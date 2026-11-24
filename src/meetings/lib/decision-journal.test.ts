@@ -96,6 +96,7 @@ import type { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
 import { LineSpeakers } from "./speaker-evidence";
 import * as voiceLabeler from "./speaker-labels/voice";
+import { StaleSuggestionError } from "./suggest";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
@@ -703,6 +704,42 @@ describe("speaker answers and their project voice prints", () => {
             } finally {
                 again.stop();
             }
+        } finally {
+            jobs.stop();
+            fx.restore();
+        }
+    });
+
+    test("P6 a naming pass that newer writes overtook runs once more, and only that pass finishes its samples", async () => {
+        const fx = await voiceAnswerFixture();
+        const { MeetingVoiceJobs } = await import("./service/voice-jobs");
+        const named = Promise.withResolvers<void>();
+        const passes: string[] = [];
+        const jobs = new MeetingVoiceJobs({
+            store: new MeetingStore(fx.store.storage),
+            notify: (row) => {
+                if (row.progress.step.startsWith("Naming again") && row.state === "done") {
+                    named.resolve();
+                }
+            },
+            config: async () => meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 0 } } }),
+            nameMeeting: async ({ meeting }) => {
+                passes.push(meeting);
+                if (passes.length === 1) {
+                    throw new StaleSuggestionError(meeting);
+                }
+                return { meeting, added: 0, warnings: [] };
+            },
+        });
+        const pending = () =>
+            new DecisionJournal({ store: new MeetingStore(fx.store.storage) }).pendingNaming(fx.meeting.id, fx.project);
+        try {
+            const answer = await fx.answer();
+            await fx.learn(answer.entry!.token);
+            await jobs.discover(fx.store.read(fx.meeting.id)!);
+            await waitForVoiceJob(named.promise, "the naming pass after the overtaken one");
+            expect(passes).toEqual([fx.meeting.id, fx.meeting.id]);
+            expect(pending()).toEqual([]);
         } finally {
             jobs.stop();
             fx.restore();

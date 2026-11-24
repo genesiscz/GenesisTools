@@ -24,8 +24,8 @@ beforeEach(() => {
 });
 afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
-test("P6 naming delay reads the persisted Meetings setting and defaults old configs to ten seconds", async () => {
-    expect(meetingsConfigSchema.parse({}).meetings.voices.reproposeDelaySec).toBe(10);
+test("P6 naming delay reads the persisted Meetings setting and defaults old configs to one second", async () => {
+    expect(meetingsConfigSchema.parse({}).meetings.voices.reproposeDelaySec).toBe(1);
     expect(
         meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 2 } } }).meetings.voices.reproposeDelaySec
     ).toBe(2);
