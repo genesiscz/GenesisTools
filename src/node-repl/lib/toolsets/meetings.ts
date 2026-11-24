@@ -52,6 +52,9 @@ import {
     type measure,
     meetingsToolsetApi,
     overview,
+    polishBuild,
+    polishCheck,
+    polishInit,
     prepareListen,
     preview,
     projectsLabels,
@@ -272,6 +275,23 @@ export class MeetingsToolset extends ReplToolset {
                             dictionaryTest.params.parse({ phrase, project, entry, meeting, limit }),
                             {}
                         ),
+                },
+                polish: {
+                    build: async (file: string, force?: boolean) => {
+                        const input = polishBuild.params.parse({ file, force });
+                        const { buildPolished } = await import("@app/meetings/lib/polish/build");
+                        return buildPolished({ file: input.file, force: input.force, store });
+                    },
+                    check: async (file: string) => {
+                        const input = polishCheck.params.parse({ file });
+                        const { buildPolished } = await import("@app/meetings/lib/polish/build");
+                        return buildPolished({ file: input.file, mode: "check", store });
+                    },
+                    init: async (from: string, out?: string) => {
+                        const input = polishInit.params.parse({ from, out });
+                        const { initPolished } = await import("@app/meetings/lib/polish/adopt");
+                        return initPolished(input);
+                    },
                 },
                 config: {
                     get: async (path?: string) => {

@@ -34,6 +34,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["people"], load: async () => (await import("./commands/people")).registerPeopleCommand },
     { names: ["assign"], load: async () => (await import("./commands/assign")).registerAssignCommands },
     { names: ["dictionary"], load: async () => (await import("./commands/dictionary")).registerDictionaryCommand },
+    { names: ["polish"], load: async () => (await import("./commands/polish")).registerPolishCommands },
     {
         names: ["window", "overview", "export"],
         load: async () => (await import("./commands/views")).registerViewCommands,

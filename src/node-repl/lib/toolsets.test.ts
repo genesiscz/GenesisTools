@@ -429,6 +429,16 @@ describe("work toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("polish.build, polish.check and polish.init name their CLI twins", () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.polish.build")).toContain("meetings polish build");
+        expect(describeMethod([api], "meetings.polish.check")).toContain("meetings polish build");
+        expect(describeMethod([api], "meetings.polish.check")).toContain("--check");
+        expect(describeMethod([api], "meetings.polish.init")).toContain("meetings polish init");
+        expect(api.methods.find((method) => method.name === "polish.check")?.effect).toBe("read");
+        expect(api.methods.find((method) => method.name === "polish.build")?.effect).toBe("reversible");
+    });
+
     test("captureBlockers and quitCaptureBlockers are meetings methods that name their CLI twins", () => {
         const api = new MeetingsToolset().api;
         expect(describeMethod([api], "meetings.captureBlockers")).toContain("meetings record blockers");

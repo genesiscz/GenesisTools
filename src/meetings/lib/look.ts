@@ -15,7 +15,7 @@ import { inStretch, unlabeledStretches } from "./unlabeled";
 // A pairing finding carries its call line in evidence.transcriptLine and its measured microphone partner here.
 const echoPair = z.looseObject({ micLineIndex: z.number().int().nonnegative(), lagMs: z.number().nonnegative() });
 
-type SpeakerRange = Extract<MeetingItem, { kind: "speaker-range" }>;
+export type SpeakerRange = Extract<MeetingItem, { kind: "speaker-range" }>;
 
 function voicePrediction(match: VoiceMatch | undefined, covering: SpeakerRange[]) {
     if (match) {
@@ -46,7 +46,12 @@ function voicePrediction(match: VoiceMatch | undefined, covering: SpeakerRange[]
     return { person: person ?? null, candidate: person ?? null, score: proposal.evidence.score, quality: "suggested" };
 }
 
-function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: number }) {
+/**
+ * The decisions that name each line's speaker, as `look` reads them: the last suggested and the last confirmed range
+ * of the line's label that covers it, a person assignment, and the label's rename. The polished file's speaker diff
+ * reads the same facts, so both name a line alike.
+ */
+export function lineSpeakerFacts(record: MeetingRecord, window: { fromSec: number; toSec: number }) {
     const ranges = record.items.filter(
         (item): item is SpeakerRange =>
             item.kind === "speaker-range" &&
@@ -56,6 +61,38 @@ function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: numb
     );
     const unlabeled = unlabeledStretches(record.items).filter((item) => item.status === "confirmed");
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
+
+    return (line: Pick<LineEvidence, "index" | "label" | "startSec">) => {
+        const covering = ranges.filter(
+            (item) =>
+                item.label === line.label &&
+                item.fromSec <= line.startSec &&
+                line.startSec <= item.toSec &&
+                (item.fromSec !== item.toSec ||
+                    typeof item.evidence?.transcriptLine !== "number" ||
+                    item.evidence.transcriptLine === line.index)
+        );
+        const confirmed = covering.findLast((item) => item.status === "confirmed");
+        return {
+            covering,
+            suggested: covering.findLast((item) => item.status === "suggested" && item.speaker),
+            confirmed,
+            assigned: assignments.findLast(
+                (assignment) =>
+                    assignment.label === line.label &&
+                    line.startSec >= assignment.fromSec - LINE_AT_TOLERANCE_SEC &&
+                    line.startSec <= assignment.toSec + LINE_AT_TOLERANCE_SEC
+            ),
+            multiple: Boolean(confirmed?.voices?.length || confirmed?.segments?.length),
+            globalName: inStretch(unlabeled, line.label, line.startSec)
+                ? null
+                : (record.speakers.labels[line.label] ?? null),
+        };
+    };
+}
+
+function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: number }) {
+    const facts = lineSpeakerFacts(record, window);
     const pairs = new Map<number, z.output<typeof echoPair>>();
     for (const item of record.items) {
         const index = item.evidence?.transcriptLine;
@@ -68,25 +105,7 @@ function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: numb
     }
 
     return (line: LineEvidence) => {
-        const covering = ranges.filter(
-            (item) =>
-                item.label === line.label &&
-                item.fromSec <= line.startSec &&
-                line.startSec <= item.toSec &&
-                (item.fromSec !== item.toSec ||
-                    typeof item.evidence?.transcriptLine !== "number" ||
-                    item.evidence.transcriptLine === line.index)
-        );
-        const suggested = covering.findLast((item) => item.status === "suggested" && item.speaker);
-        const confirmed = covering.findLast((item) => item.status === "confirmed");
-        const assigned = assignments.findLast(
-            (assignment) =>
-                assignment.label === line.label &&
-                line.startSec >= assignment.fromSec - LINE_AT_TOLERANCE_SEC &&
-                line.startSec <= assignment.toSec + LINE_AT_TOLERANCE_SEC
-        );
-        const multiple = confirmed?.voices?.length || confirmed?.segments?.length;
-        const globalName = inStretch(unlabeled, line.label, line.startSec) ? null : record.speakers.labels[line.label];
+        const { covering, suggested, confirmed, assigned, multiple, globalName } = facts(line);
         const found = line.voice ?? record.evidence?.voice?.lines[String(line.index)];
         return {
             suggestedName: suggested?.speaker ?? null,
