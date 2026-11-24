@@ -1,7 +1,7 @@
 import { chmod, copyFile, link, mkdtemp, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { confirm, isCancel, multiselect } from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
 import type { Command } from "commander";
 import { claudeCodePatches } from "../../../lib/patches";
@@ -240,9 +240,10 @@ async function managePatches(options: PickerOptions): Promise<void> {
 
     if (recovering) {
         out.println(`Installed edits differ from the current patch definitions in ${mismatches.join(", ")}.`);
-        const recover = await confirm({
+        const recover = await p.confirm({
             message: "Rebuild from the pristine backup and choose which patches to reapply?",
             initialValue: false,
+            cancel: "back",
         });
 
         if (recover !== true) {
@@ -255,7 +256,8 @@ async function managePatches(options: PickerOptions): Promise<void> {
     let selected: string[] = [];
 
     if (edits.length) {
-        const answer = await multiselect({
+        const answer = await p.multiselect({
+            cancel: "back",
             message: "Select the patches this executable should have",
             options: edits.map(({ patch, applied }) => ({
                 value: patch.id,
@@ -266,7 +268,7 @@ async function managePatches(options: PickerOptions): Promise<void> {
             required: false,
         });
 
-        if (isCancel(answer)) {
+        if (p.isCancel(answer)) {
             return;
         }
 
@@ -334,9 +336,10 @@ async function managePatches(options: PickerOptions): Promise<void> {
         return;
     }
 
-    const approved = await confirm({
+    const approved = await p.confirm({
         message: `Apply this diff to ${target.path}?`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (approved !== true) {
