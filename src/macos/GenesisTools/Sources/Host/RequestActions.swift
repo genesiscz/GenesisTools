@@ -204,10 +204,13 @@ final class PlayMeetingButton: RequestActionButton {
                   let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
             return object["error"] as? [String: Any]
         }.first
-        let code = (error?["data"] as? [String: Any])?["code"] as? String ?? error?["code"] as? String
         let message = (error?["message"] as? String)
             ?? lines.last.map { $0.replacingOccurrences(of: #"^[✗×]\s*"#, with: "", options: .regularExpression) }
             ?? "exit \(status)"
+        // A refusal the CLI wraps names its code only as the message's lead (`[no-transcript-source] …`).
+        let lead = message.range(of: #"^\[[a-z0-9-]+\]"#, options: .regularExpression)
+            .map { String(message[$0].dropFirst().dropLast()) }
+        let code = (error?["data"] as? [String: Any])?["code"] as? String ?? lead ?? error?["code"] as? String
         return RequestActionProblem(sentence: sentence(code: code), detail: message)
     }
 

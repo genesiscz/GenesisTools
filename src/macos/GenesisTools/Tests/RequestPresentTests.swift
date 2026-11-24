@@ -247,6 +247,9 @@ final class RequestPresentTests: XCTestCase {
         play.link.action()
         XCTAssertEqual(fake.runs.count, 1, "a dimmed Play runs nothing")
         XCTAssertEqual(PlayMeetingButton.problem(status: 1, stderr: "✗ boom\n").detail, "boom", "the CLI glyph never reaches Details")
+        // The CLI's own JSON line names the code only as the message's lead when it wraps the refusal.
+        let wrapped = #"{"error":{"code":-32000,"message":"[no-transcript-source] m has no source with a transcript."}}"#
+        XCTAssertEqual(PlayMeetingButton.problem(status: 1, stderr: wrapped).sentence, "This meeting has no sound to play yet.")
     }
 
     func testOpenLinkOpensOnlyAWebPage() throws {
