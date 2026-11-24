@@ -55,7 +55,10 @@ interface Page<T> {
     events?: T[];
 }
 
-async function call<T>(kit: Kit, tool: string, args: Record<string, unknown>): Promise<T> {
+/** What the meeting readers need of a session: one tool call. A test passes a stub with only this. */
+export type McpKit = Pick<Kit, "call">;
+
+async function call<T>(kit: McpKit, tool: string, args: Record<string, unknown>): Promise<T> {
     log.debug({ tool, args }, "calling wisprflow MCP");
     const raw = await kit.call(SERVER, tool, args);
 
@@ -158,7 +161,7 @@ export async function listMcpSeries(meetingId: string, limit = 25): Promise<Meet
 }
 
 /** Reads a paginated text field to its end, following the server's continuation marker. */
-async function readAll(kit: Kit, meetingId: string, field: "transcript" | "content"): Promise<string> {
+async function readAll(kit: McpKit, meetingId: string, field: "transcript" | "content"): Promise<string> {
     const view = field === "transcript" ? "view_transcript" : "view_content";
     const chunks: string[] = [];
     let start: number | undefined = 0;
@@ -214,8 +217,12 @@ export function parseMcpTranscript(raw: string): TranscriptEntry[] {
     return entries;
 }
 
-export async function getMcpMeeting(id: string, options: { transcript: boolean }): Promise<Meeting> {
-    return withMcp(async (kit) => {
+export async function getMcpMeeting(
+    id: string,
+    options: { transcript: boolean },
+    open: <T>(fn: (kit: McpKit) => Promise<T>) => Promise<T> = withMcp
+): Promise<Meeting> {
+    return open(async (kit) => {
         const head = await call<RawMeeting>(kit, "get_meeting", { meeting_id: id });
         const [content, transcript, people] = await Promise.all([
             readAll(kit, id, "content"),
