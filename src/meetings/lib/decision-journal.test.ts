@@ -77,6 +77,8 @@ import {
     uncertainSharedCallRanges,
 } from "./listen-quality";
 import { meetingFieldsChange } from "./meeting-fields";
+import { planMoment } from "./moment";
+import { momentTargetSchema } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { personStays, presenceOf, rosterPresence, stayLeaveSource } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
@@ -4380,12 +4382,23 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
     /** A client over the fixture's journal; `decision.apply` names the user only through `relayedActor`, as the service does. */
     function relayClient(
         fx: Awaited<ReturnType<typeof fixture>>,
-        request: () => { id: string; rows?: RequestRow[]; status: string; picked?: string[]; via?: string } | null
+        request: () => { id: string; rows?: RequestRow[]; status: string; picked?: string[]; via?: string } | null,
+        lines?: TranscriptEntry[]
     ) {
         const applied: unknown[] = [];
+        const listen = meetingsConfigSchema.parse({}).global.playback.listen;
         const call = async (method: string, params: Record<string, unknown>) => {
             if (method === "journal.read") {
                 return { meeting: fx.meeting.id, entries: fx.journal.read(fx.meeting.id) };
+            }
+
+            // The service plans the Moment on the meeting's transcript; a fixture without one has no sound to plan.
+            if (method === "moment.plan") {
+                const record = fx.store.read(fx.meeting.id)!;
+                const target = momentTargetSchema.parse(params.target);
+                return lines
+                    ? { moment: planMoment({ record, transcript: lines, listen, target }) }
+                    : { cannot: { code: "no-audio", message: "The fixture keeps no sound." } };
             }
 
             applied.push(params);
@@ -4499,6 +4512,64 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         // Undo of the user's entry brings the agent's decision back.
         await fx.journal.revert({ meeting: fx.meeting.id, token: adoption.token, actor: person });
         expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+    });
+
+    test("a row at one instant plays the stretch its Moment plans: a one-line speaker range and a question asked at one second", async () => {
+        const lines: TranscriptEntry[] = [
+            { speaker: "Voice", startSec: 30, text: "We ship the Ada build on Friday." },
+            { speaker: "Other", startSec: 36, text: "Fine by me." },
+            { speaker: "Voice", startSec: 50, text: "Then Ada goes to the review." },
+            { speaker: "Other", startSec: 58, text: "Agreed." },
+        ];
+        const fx = await fixture([
+            speakerRange("i5", 30),
+            question("i6", { fromSec: 50, toSec: 50, decides: ["i1"] }),
+            term("i1", 50, { proposed: "ADA" }),
+        ]);
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i5"], speaker: "Bob Example" },
+            actor: relayer,
+            reason: 'Alice in chat: "that one is Bob"',
+        });
+        // The agent passed the reason through a shell twice, so each inner quote mark carries three backslashes.
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i6", answer: "ADA" },
+            actor: relayer,
+            reason: 'Alice in chat: "she said \\\\\\"Ada\\\\\\" there"',
+        });
+        const pending = personDoor({});
+        await confirmRelayed({
+            groups: relayedGroups(fx.meeting.id, ["i5", "i6"]),
+            store: fx.store,
+            client: relayClient(fx, () => null, lines).client,
+            rerun: "again",
+            gt: pending.gt,
+        });
+        const rows = pending.posted[0]?.rows ?? [];
+        const record = fx.store.read(fx.meeting.id)!;
+        const listen = meetingsConfigSchema.parse({}).global.playback.listen;
+        const planned = (id: string) => planMoment({ record, transcript: lines, listen, target: { kind: "item", id } });
+
+        expect(rows.map((row) => row.title)).toEqual(["i5 · Bob Example", expect.stringMatching(/^Q\d+ · ADA$/)]);
+        expect(rows.map((row) => row.quote)).toEqual(["that one is Bob", 'she said "Ada" there']);
+        expect(rows.map((row) => row.action)).toEqual(
+            ["i5", "i6"].map((id) => ({
+                kind: "play-meeting",
+                label: "Play clip",
+                meeting: fx.meeting.id,
+                fromSec: planned(id).fromSec,
+                toSec: planned(id).toSec,
+            }))
+        );
+        // The speaker range hears its one line to its end; the question hears the line it was asked on.
+        const spans = rows.map((row) =>
+            row.action?.kind === "play-meeting" ? { from: row.action.fromSec, to: row.action.toSec } : undefined
+        );
+        expect(spans[0]).toEqual({ from: 30, to: 36 });
+        expect(spans.every((span) => span !== undefined && span.to > span.from)).toBe(true);
+        expect(noticeInputSchema.parse(pending.posted[0])).toBeTruthy();
     });
 
     test("a quote keeps the user's words: a shell's backslashes before quote marks and backslashes go, once or several times", () => {

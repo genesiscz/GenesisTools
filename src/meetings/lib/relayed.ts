@@ -188,8 +188,17 @@ export function relayedOf(options: {
     };
 }
 
-/** What one row shows: the item and its decision, the user's words, where it is, and Play for exactly its range. */
-function requestRow(row: RelayedRow, record: MeetingRecord): RequestRow {
+/** A stretch of the meeting a row's Play button plays, in transcript seconds. */
+export interface RelayedPlay {
+    fromSec: number;
+    toSec: number;
+}
+
+/**
+ * What one row shows: the item and its decision, the user's words, where it is, and Play for exactly its range: the
+ * item's own range, or for an item at one instant the stretch its Moment plans (`play`).
+ */
+function requestRow(row: RelayedRow, record: MeetingRecord, play?: RelayedPlay): RequestRow {
     const item = record.items.find((each) => each.id === row.item);
     const action = row.entry.action;
     const decision =
@@ -199,6 +208,7 @@ function requestRow(row: RelayedRow, record: MeetingRecord): RequestRow {
               ? `rejected: ${shownValue(item) ?? row.item}`
               : (shownValue(item) ?? "confirmed");
     const span = item ? spanOf(item) : undefined;
+    const heard = span && span.toSec > span.fromSec ? span : play;
     const quote = relayedQuote(row.entry);
     const where = [
         record.title || record.id,
@@ -210,22 +220,75 @@ function requestRow(row: RelayedRow, record: MeetingRecord): RequestRow {
         title: `${row.label} · ${decision}`.slice(0, 200),
         ...(quote ? { quote: quote.slice(0, 2000) } : {}),
         detail: where.filter(Boolean).join(" · ").slice(0, 500),
-        ...(span && span.toSec > span.fromSec
+        ...(heard && heard.toSec > heard.fromSec
             ? {
                   action: {
                       kind: "play-meeting" as const,
                       label: "Play clip",
                       meeting: row.meeting.id,
-                      fromSec: span.fromSec,
-                      toSec: span.toSec,
+                      fromSec: Math.max(0, heard.fromSec),
+                      toSec: heard.toSec,
                   },
               }
             : {}),
     };
 }
 
+/**
+ * The stretch to play for each row whose item sits at one instant (a speaker range of one line, a question asked at one
+ * second): the span of the item's Moment, which hears the line or the lines the decision names. Keyed by
+ * `relayedRowId`; a row whose Moment cannot be planned keeps its own span.
+ */
+export async function relayedPlays(
+    rows: readonly RelayedRow[],
+    records: ReadonlyMap<string, MeetingRecord>,
+    client: Pick<MeetingsClient, "call">
+): Promise<Map<string, RelayedPlay>> {
+    const plays = new Map<string, RelayedPlay>();
+
+    await Promise.all(
+        rows.map(async (row) => {
+            const item = records.get(row.meeting.id)?.items.find((each) => each.id === row.item);
+            const span = item ? spanOf(item) : undefined;
+
+            if (!item || (span && span.toSec > span.fromSec)) {
+                return;
+            }
+
+            try {
+                const { moment, cannot } = await client.call("moment.plan", {
+                    meeting: row.meeting.id,
+                    target: { kind: "item", id: row.item },
+                    tone: false,
+                    screen: false,
+                });
+
+                if (moment) {
+                    plays.set(relayedRowId(row.meeting.id, row.item, row.entry.token), {
+                        fromSec: moment.fromSec,
+                        toSec: moment.toSec,
+                    });
+                } else {
+                    logger.debug({ meeting: row.meeting.id, item: row.item, cannot }, "relayed row: no Moment to play");
+                }
+            } catch (error) {
+                logger.debug(
+                    { error, meeting: row.meeting.id, item: row.item },
+                    "relayed row: its Moment did not plan"
+                );
+            }
+        })
+    );
+
+    return plays;
+}
+
 /** The window (D443): who asks, what a confirmation changes, one row per answer, and Confirm as mine / Not now. */
-export function relayedRequest(rows: readonly RelayedRow[], records: ReadonlyMap<string, MeetingRecord>): NoticeInput {
+export function relayedRequest(
+    rows: readonly RelayedRow[],
+    records: ReadonlyMap<string, MeetingRecord>,
+    plays: ReadonlyMap<string, RelayedPlay> = new Map()
+): NoticeInput {
     const first = rows[0]!;
     const meetings = [...new Map(rows.map((row) => [row.meeting.id, row.meeting])).values()];
     const title =
@@ -242,7 +305,15 @@ export function relayedRequest(rows: readonly RelayedRow[], records: ReadonlyMap
             value: (meeting.title || meeting.id).slice(0, 500),
             help: meeting.id,
         })),
-        rows: rows.slice(0, 40).map((row) => requestRow(row, records.get(row.meeting.id)!)),
+        rows: rows
+            .slice(0, 40)
+            .map((row) =>
+                requestRow(
+                    row,
+                    records.get(row.meeting.id)!,
+                    plays.get(relayedRowId(row.meeting.id, row.item, row.entry.token))
+                )
+            ),
         buttons: { confirm: CONFIRM_AS_MINE, decline: NOT_NOW },
     };
 }
@@ -354,7 +425,7 @@ export async function confirmRelayed(options: {
         };
     }
 
-    const request = relayedRequest(rows, records);
+    const request = relayedRequest(rows, records, await relayedPlays(rows, records, client));
     let outcome: Awaited<ReturnType<RelayedConfirmDoor["person"]["confirm"]>>;
 
     try {
