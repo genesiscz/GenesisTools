@@ -164,9 +164,12 @@ A missing meeting names only the store that was searched. To find which store ho
    user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. A relayed answer names the
    lines but teaches no voice: the decision journal records it as your answer, and voice learning and `voices backfill`
    take only a person's answers. To have that person's voice learned, give the user a stretch where only that person
-   speaks and ask the user to listen to it and run, in a terminal of their own:
-   `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`.
-   The command refuses an agent, so never run it yourself. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
+   speaks and ask the user to listen to it (`tools meetings play <meeting> --at <start> --to <end>`). When the user says
+   only that person speaks, run `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`
+   (REPL: `meetings.voices.add({ meeting, fromSec, toSec, person, confirmed: true })`). From an agent it saves nothing
+   yet: it opens a confirmation window for the user, with a Play clip button, and prints a `==== FOR AGENTS: STOP ====`
+   block. Stop, ask the user to answer that window, and run the same command again after the user confirms. After
+   Not now, do not ask again for that stretch. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
    so you act on each answer while the user is still listening. Do not poll the record. When the user reviews in the
    Meetings window, add `--with-comments --follow`: the comments the user sends from a transcript selection arrive on
