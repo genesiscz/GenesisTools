@@ -1,7 +1,7 @@
 {
     "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
     "name": "genesis-tools",
-    "version": "1.0.195",
+    "version": "1.0.199",
     "description": "Plugins for GenesisTools CLI development and management",
     "owner": {
         "name": "genesiscz",
