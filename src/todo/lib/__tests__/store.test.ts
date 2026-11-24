@@ -70,6 +70,21 @@ describe("add()", () => {
         expect(todo.sessionId).toBe("abc-123");
     });
 
+    it("places one alert at the event start when --at has no reminder, and keeps the reminders it is given", async () => {
+        const timed = await store.add({ title: "Call Alice", at: "2026-11-27T12:00:00.000Z" });
+        const given = await store.add({
+            title: "Call Bob",
+            at: "2026-11-27T12:00:00.000Z",
+            reminders: ["2026-11-27T11:00:00.000Z"],
+        });
+        const untimed = await store.add({ title: "No time" });
+
+        expect(timed.reminders).toEqual([{ at: "2026-11-27T12:00:00.000Z", label: "event start", synced: null }]);
+        expect((await store.get(timed.id))?.reminders).toEqual(timed.reminders);
+        expect(given.reminders.map((r) => r.at)).toEqual(["2026-11-27T11:00:00.000Z"]);
+        expect(untimed.reminders).toEqual([]);
+    });
+
     it("parses reminders from string inputs", async () => {
         const todo = await store.add({
             title: "Reminder test",

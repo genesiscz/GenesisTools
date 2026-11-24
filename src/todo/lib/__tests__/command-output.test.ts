@@ -158,6 +158,42 @@ describe("`sync --all` output contract", () => {
     });
 });
 
+describe("the alert at the event start", () => {
+    it("is on the record that `add` prints, before any sync", async () => {
+        await createAddCommand().parseAsync(
+            ["slot", "--at", "2026-11-27T12:00:00.000Z", "--project", TEST_DIR, "-f", "json"],
+            {
+                from: "user",
+            }
+        );
+
+        const parsed = SafeJSON.parse(stdout.join("\n")) as Todo;
+
+        expect(parsed.reminders).toEqual([{ at: "2026-11-27T12:00:00.000Z", label: "event start", synced: null }]);
+    });
+
+    it("moves with `edit --at` while no event owns it", async () => {
+        await createAddCommand().parseAsync(
+            ["slot", "--at", "2026-11-27T12:00:00.000Z", "--project", TEST_DIR, "-f", "json"],
+            {
+                from: "user",
+            }
+        );
+        const created = SafeJSON.parse(stdout.join("\n")) as Todo;
+        stdout = [];
+
+        await createEditCommand().parseAsync(
+            [created.id, "--at", "2026-11-28T09:00:00.000Z", "--project", TEST_DIR, "-f", "json"],
+            { from: "user" }
+        );
+
+        const parsed = SafeJSON.parse(stdout.join("\n")) as Todo;
+
+        expect(parsed.at).toBe("2026-11-28T09:00:00.000Z");
+        expect(parsed.reminders).toEqual([{ at: "2026-11-28T09:00:00.000Z", label: "event start", synced: null }]);
+    });
+});
+
 /**
  * Run as the real CLI, because the defect lived in the process, not in a function: DarwinKit's helper
  * is unref'd and its connect step had no timer, so with nothing else open Bun ended `tools todo add
@@ -200,6 +236,7 @@ describe("a sync whose darwinkit helper reports no grant", () => {
 
         expect(exitCode).toBe(1);
         expect(record.title).toBe("slot");
+        expect(record.reminders).toEqual([{ at: "2026-11-27T12:00:00.000Z", label: "event start", synced: null }]);
         expect(err).toContain(`SYNC_FAILED calendar ${record.id}: `);
         expect(err).toContain("macos calendar doctor --request-access");
         expect(err).toContain(`SYNC_FAILED reminders ${record.id}: `);

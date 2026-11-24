@@ -118,7 +118,7 @@ Rules that follow from that:
 
 - **Three wall-clock slots are three todos**, one `--at` each. `--at` is singular, and one todo can only ever be one event.
 - **One todo with three `--reminder`s is ONE event with three alerts**, starting at `--at` (or at the latest reminder when `--at` is absent). Use this for "nudge me an hour before, then 15 minutes before".
-- With `--at` and no `--reminder`, one alert is placed at the event start.
+- With `--at` and no `--reminder`, one alert is placed at the event start. `add` writes it into the record at once (`reminders[]`, label `event start`), whatever the sync does, and `edit --at` moves it along while no event owns it.
 - An alert later than the start fires at the start.
 - The event lasts 30 minutes.
 
