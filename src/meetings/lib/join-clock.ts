@@ -1,19 +1,8 @@
-import type { JoinPart, MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { type JoinPart, type MeetingRecord, toJoinedSec, toPartSec } from "@genesiscz/utils/meetings/record";
+
+export { toJoinedSec, toPartSec };
+
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
-
-/**
- * A second on a part's own transcript clock, on the joined clock. Both directions round to the microsecond, so a
- * second the record holds to the millisecond (or the microsecond) comes back through `toPartSec` bit-identical, and a
- * sound cut on the part's file gets the same ffmpeg arguments as before the join.
- */
-export function toJoinedSec(partSec: number, offsetMs: number): number {
-    return Math.round(partSec * 1e6 + offsetMs * 1e3) / 1e6;
-}
-
-/** A second on the joined clock, on the part's own clock (`toJoinedSec` the other way). */
-export function toPartSec(joinedSec: number, offsetMs: number): number {
-    return Math.round(joinedSec * 1e6 - offsetMs * 1e3) / 1e6;
-}
 
 /** A part's second 0 on the joined clock. */
 export function partStartSec(part: Pick<JoinPart, "offsetMs">): number {
@@ -95,7 +84,7 @@ const FINDING_CLOCK_KEYS = new Set(["from", "to", "at"]);
  * Subtrees that keep another record's clock: voice prints name their own meeting and seconds (the voice library holds
  * them so, and an Undo finds them by those), and a known answer names the meeting it came from.
  */
-const FOREIGN_CLOCK_KEYS = new Set(["voices", "knownAnswer"]);
+const FOREIGN_CLOCK_KEYS = new Set(["voices", "knownAnswer", "corrections"]);
 /** Keys and arrays that hold item or assignment ids. */
 const ID_KEYS = new Set(["id", "item", "question"]);
 const ID_ARRAY_KEYS = new Set(["items", "except", "decided", "settled", "decides"]);

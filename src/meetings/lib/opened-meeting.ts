@@ -754,7 +754,19 @@ export class OpenedMeeting {
         }
 
         const span = await this.audioAt(fromSec, toSec);
-        const view = parts.find((one) => one.opened === span.opened)!;
+        return this.readingOf(parts.find((one) => one.opened === span.opened)!);
+    }
+
+    /**
+     * One recording of a joined record as it was before the join (`partReading` over its whole window): `recordId` is
+     * the id the recording had. Undefined on a single recording or for an id that is not one of its recordings.
+     */
+    recordingReading(recordId: string): PartReading | undefined {
+        const view = this.joinedParts()?.find((one) => one.part.record === recordId);
+        return view ? this.readingOf(view) : undefined;
+    }
+
+    private readingOf(view: JoinedPartView): PartReading {
         const offsetMs = view.part.offsetMs;
         const back = clockMove(-offsetMs);
         const inside = (sec: number | undefined) => sec !== undefined && sec >= view.fromSec && sec < view.untilSec;
@@ -768,7 +780,12 @@ export class OpenedMeeting {
                 ...(assignments.length > 0 ? { assignments: movedValue(assignments, back) } : {}),
             },
             participants: movedValue(this.current.participants, back),
-            ...(this.current.seats ? { seats: movedValue(this.current.seats, back) } : {}),
+            // The recording's own seats as they were; a join made before parts kept them reads the joined ones back.
+            ...(view.part.seats
+                ? { seats: view.part.seats }
+                : this.current.seats
+                  ? { seats: movedValue(this.current.seats, back) }
+                  : {}),
         };
         const opened = new OpenedMeeting(view.opened.store, record, undefined);
         opened.configOnce = this.config();

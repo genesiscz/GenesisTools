@@ -5,9 +5,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import {
+    JOIN_PART_FILE,
     JOINED_RECORD_VERSION,
     JOURNAL_FILE,
     type JoinPart,
+    joinedAway,
     type MeetingItem,
     type MeetingRecord,
     type MeetingStore,
@@ -40,36 +42,9 @@ import { meetingSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-join");
 
-/** The joined record that holds `id` as a part it absorbed (the later recording's old id), with that part. */
+/** The joined record that holds `id` as a recording it absorbed (the shared resolver, `joinedAway`). */
 export function joinedInto(store: MeetingStore, id: string): { record: MeetingRecord; part: JoinPart } | undefined {
-    for (const record of store.list()) {
-        const part = record.join?.parts.find((one) => one.record === id);
-
-        if (part && record.id !== id) {
-            return { record, part };
-        }
-    }
-
-    return undefined;
-}
-
-/**
- * A meeting and a second on its clock as a link or a voice sample saved them before a join: the old id of a part
- * that was joined into another record names that record, its second moved by the part's place on the joined clock.
- */
-export function resolveMeetingTime(
-    store: MeetingStore,
-    ref: string,
-    sec: number
-): { record: MeetingRecord; sec: number; joinedFrom?: string } | undefined {
-    const direct = store.resolve(ref);
-
-    if (direct) {
-        return { record: direct, sec };
-    }
-
-    const joined = joinedInto(store, ref);
-    return joined ? { record: joined.record, sec: toJoinedSec(sec, joined.part.offsetMs), joinedFrom: ref } : undefined;
+    return joinedAway(store, id);
 }
 
 /** The lines of an ndjson file as parsed values; a line that is not JSON throws with its place (nothing moved yet). */
@@ -118,8 +93,6 @@ function writeNdjson(path: string, parts: unknown[][]): void {
 const ITEM_LOGS = [JOURNAL_FILE, "questions.ndjson", "comments.ndjson"] as const;
 /** What a part folder keeps after the join: its sound, its caches and the source's copy, on its own clock. */
 const PART_KEEPS = new Set(["audio", "audio.jsonl", "evidence", "source-audio", "source-copy", "ocr-settings.json"]);
-/** The marker a part folder carries: which record it belongs to now. */
-export const JOIN_PART_FILE = "joined-into.json";
 
 export interface JoinRequest {
     store: MeetingStore;
@@ -628,6 +601,7 @@ async function joinLocked({
             endSec: endSec(part, index),
             ...(audio ? { audio } : {}),
             ...(channels ? { channels } : {}),
+            ...(part.record.seats ? { seats: part.record.seats } : {}),
         };
     });
     const movedOf = (part: LoadedPart) => moved.find((one) => one.part === part)!;

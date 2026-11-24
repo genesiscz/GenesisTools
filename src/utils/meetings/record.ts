@@ -467,6 +467,8 @@ export const channelCalibrationSchema = z.object({
 });
 export type StoredChannelCalibration = z.infer<typeof channelCalibrationSchema>;
 
+const joinMarkerSchema = z.object({ joinedInto: z.string().min(1) });
+
 /** The record version a joined record is written with: an older build refuses it instead of dropping `join`. */
 export const JOINED_RECORD_VERSION = 2;
 
@@ -490,6 +492,8 @@ export const joinPartSchema = z.object({
     audio: preservedSourceAudioSchema.optional(),
     /** The part's own channel calibration, as the record it was stored it. */
     channels: channelCalibrationSchema.optional(),
+    /** The seats of the record it was, on its own clock: a reading of this recording alone sees them as they were. */
+    seats: storedMeetingSeatsSchema.optional(),
 });
 export type JoinPart = z.infer<typeof joinPartSchema>;
 
@@ -502,6 +506,32 @@ export const meetingJoinSchema = z.object({
     parts: z.array(joinPartSchema).min(2),
 });
 export type MeetingJoin = z.infer<typeof meetingJoinSchema>;
+
+/** The marker a joined recording's folder carries: which record holds it now. */
+export const JOIN_PART_FILE = "joined-into.json";
+
+/**
+ * A second on a part's own transcript clock, on the joined clock. Both directions round to the microsecond, so a
+ * second the record holds to the millisecond (or the microsecond) comes back through `toPartSec` bit-identical, and a
+ * sound cut on the part's file gets the same ffmpeg arguments as before the join.
+ */
+export function toJoinedSec(partSec: number, offsetMs: number): number {
+    return Math.round(partSec * 1e6 + offsetMs * 1e3) / 1e6;
+}
+
+/** A second on the joined clock, on the part's own clock (`toJoinedSec` the other way). */
+export function toPartSec(joinedSec: number, offsetMs: number): number {
+    return Math.round(joinedSec * 1e6 - offsetMs * 1e3) / 1e6;
+}
+
+/** The old ids a joined record answers to (its later recordings'), each with the milliseconds its seconds move by. */
+export function joinAliases(record: Pick<MeetingRecord, "id" | "join">): Map<string, number> {
+    return new Map(
+        (record.join?.parts ?? [])
+            .filter((part) => part.record !== record.id)
+            .map((part) => [part.record, part.offsetMs])
+    );
+}
 
 export const meetingRecordSchema = z.object({
     version: z.union([z.literal(1), z.literal(JOINED_RECORD_VERSION)]).default(1),
@@ -665,6 +695,51 @@ export function heldSourceMeetings(record: MeetingRecord): Array<{ sourceId: str
     }
 
     return held;
+}
+
+/**
+ * The joined record that absorbed the recording `id` (a later recording's old id), with that recording's part: read
+ * from the marker its folder keeps, else from the records' join blocks. Undefined for any other id.
+ */
+export function joinedAway(store: MeetingStore, id: string): { record: MeetingRecord; part: JoinPart } | undefined {
+    if (!FOLDER_NAME.test(id)) {
+        return undefined;
+    }
+
+    const marker = join(store.folder(id), JOIN_PART_FILE);
+    const named = existsSync(marker)
+        ? joinMarkerSchema.safeParse(SafeJSON.parse(readFileSync(marker, "utf8"))).data?.joinedInto
+        : undefined;
+    const candidates = named ? [store.read(named)] : store.list();
+
+    for (const record of candidates) {
+        const part = record?.join?.parts.find((one) => one.record === id);
+
+        if (record && part && record.id !== id) {
+            return { record, part };
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * Where a meeting id and the seconds saved with it live now: the record itself (offset 0), or, for a later recording's
+ * old id that a join absorbed (in a voice sample, a ledger line, a link, a polished file), the joined record and the
+ * milliseconds that recording's seconds move by. The one resolver every reader of a saved meeting id uses.
+ */
+export function meetingAddress(
+    store: MeetingStore,
+    ref: string
+): { record: MeetingRecord; offsetMs: number; joinedFrom?: string } | undefined {
+    const direct = store.resolve(ref);
+
+    if (direct) {
+        return { record: direct, offsetMs: 0 };
+    }
+
+    const away = joinedAway(store, ref);
+    return away ? { record: away.record, offsetMs: away.part.offsetMs, joinedFrom: ref } : undefined;
 }
 
 export function parseSourceRef(ref: string): { source: string; id: string } | undefined {

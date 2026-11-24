@@ -9,7 +9,13 @@ import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meeti
 import { samePerson } from "@genesiscz/utils/meetings/people";
 import { type KnownPerson, type PeopleDirectory, PeopleError } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import {
+    joinAliases,
+    joinedAway,
+    meetingAddress,
+    toJoinedSec,
+    voiceRootMeeting,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { roomSeatNames, seatIntervalsFor } from "@genesiscz/utils/meetings/seats";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
@@ -99,14 +105,40 @@ function openedOf(access: VoicesAccess, record: MeetingRecord): OpenedMeeting {
     return OpenedMeeting.of(access.store, record, access.linkedSource?.(record));
 }
 
-function recordOf(access: VoicesAccess, meeting: string): MeetingRecord {
-    const record = access.store.resolve(meeting);
+/**
+ * The record a meeting id names now, and the milliseconds the seconds saved with that id move by: a later recording's
+ * old id that a join absorbed names the joined record (`meetingAddress`, the one resolver for saved ids).
+ */
+function addressOf(access: VoicesAccess, meeting: string): { record: MeetingRecord; offsetMs: number } {
+    const address = meetingAddress(access.store, meeting);
 
-    if (!record) {
+    if (!address) {
         throw new Error(`No meeting "${meeting}".`);
     }
 
-    return record;
+    return address;
+}
+
+function recordOf(access: VoicesAccess, meeting: string): MeetingRecord {
+    return addressOf(access, meeting).record;
+}
+
+/** A sample's interval on the clock of the record that holds its meeting now. */
+function onRecordClock<T extends { fromSec: number; toSec: number }>(sample: T, offsetMs: number): T {
+    return offsetMs === 0
+        ? sample
+        : { ...sample, fromSec: toJoinedSec(sample.fromSec, offsetMs), toSec: toJoinedSec(sample.toSec, offsetMs) };
+}
+
+/** A meeting scope also takes the samples saved under the old ids of the recordings a join absorbed into it. */
+function withJoinAliases(access: VoicesAccess, scope: VoiceScope): VoiceScope {
+    if (scope.kind !== "meeting") {
+        return scope;
+    }
+
+    const record = meetingAddress(access.store, scope.meeting)?.record;
+    const aliases = record ? [...joinAliases(record).keys()] : [];
+    return aliases.length > 0 ? { ...scope, meeting: record!.id, aliases } : scope;
 }
 
 /** Clock measurement belongs to an explicit writer; a preview keeps it in memory. */
@@ -204,7 +236,7 @@ function correctedLineOf<T extends { sourceIndex?: number; id?: string; startSec
 }
 
 export async function listProjectVoices(options: VoicesAccess & Browse) {
-    const scope = explicitScope(options);
+    const scope = withJoinAliases(options, explicitScope(options));
     const view = readVoiceLibrary();
     // A project listing groups owners by the people book's merges too: a merged name is one owner, as in every scope.
     const selected = voicesIn(view, scope).filter(
@@ -243,7 +275,12 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
             if (!readRecords.has(sample.meeting)) {
                 readRecords.set(sample.meeting, listed.get(sample.meeting) ?? readUnlisted(sample.meeting));
             }
-            const record = readRecords.get(sample.meeting);
+            // A sample saved under a later recording's old id lists under the joined record, on its clock.
+            const away = readRecords.get(sample.meeting) ? undefined : joinedAway(options.store, sample.meeting);
+            const record = readRecords.get(sample.meeting) ?? away?.record;
+            if (away) {
+                Object.assign(sample, onRecordClock(sample, away.part.offsetMs), { meeting: away.record.id });
+            }
             if (record) {
                 try {
                     const opened = openedMeetings.get(record.id) ?? openedOf(options, record);
@@ -333,7 +370,7 @@ function voiceMergeHints(people: readonly VoicePersonRow[]) {
 }
 
 export async function voiceQuality(options: VoicesAccess & Browse, view = readVoiceLibrary()) {
-    const scope = explicitScope(options);
+    const scope = withJoinAliases(options, explicitScope(options));
     const directory = groupedOwners(view);
     const selected = options.person && directory.select({ name: options.person });
     const config = await (options.config?.() ?? new MeetingsConfigStore().read());
@@ -362,7 +399,49 @@ export async function previewVoices(
     lines: Array<LineLabel & { fromSec: number; toSec: number; text: string; current: string }>;
 }> {
     const record = recordOf(options, options.meeting);
-    const opened = await voiceReadMeeting(openedOf(options, record));
+
+    if (record.join) {
+        // A joined meeting previews each recording as it was before the join, then tells it on the joined clock.
+        const joined = openedOf(options, record);
+        const lines: Awaited<ReturnType<typeof previewVoices>>["lines"] = [];
+        let indexBase = 0;
+
+        for (const part of record.join.parts) {
+            const reading = joined.recordingReading(part.record);
+
+            if (!reading) {
+                continue;
+            }
+
+            const own = await previewRecording(options, reading.opened.record, reading.opened);
+            lines.push(
+                ...own.map((line) => ({
+                    ...line,
+                    index: line.index + indexBase,
+                    fromSec: reading.toJoinedSec(line.fromSec),
+                    toSec: reading.toJoinedSec(line.toSec),
+                }))
+            );
+            indexBase += (await reading.opened.meeting()).transcript.length;
+        }
+
+        return { meeting: record.id, ...(record.project ? { project: record.project } : {}), lines };
+    }
+
+    return {
+        meeting: record.id,
+        ...(record.project ? { project: record.project } : {}),
+        lines: await previewRecording(options, record, openedOf(options, record)),
+    };
+}
+
+/** `previewVoices` of one recording: its lines with the voice label the pass proposes and the speaker shown now. */
+async function previewRecording(
+    options: VoicesAccess & { onProgress?: VoiceProgress; signal?: AbortSignal },
+    record: MeetingRecord,
+    base: OpenedMeeting
+) {
+    const opened = await voiceReadMeeting(base);
     if (options.onProgress) {
         voiceProgressForMeeting.set(opened, options.onProgress);
     }
@@ -386,26 +465,22 @@ export async function previewVoices(
         applyAbove: config.global.suggest.applyAbove,
     });
     const currentSpeaker = correctedLineOf(corrected.entries);
-    return {
-        meeting: record.id,
-        ...(record.project ? { project: record.project } : {}),
-        lines: labels
-            .filter((label) => label.labeler === "voice")
-            .flatMap((label) => {
-                const span = lines.span(label.index);
-                const entry = meeting.transcript[label.index];
-                return span && entry
-                    ? [
-                          {
-                              ...label,
-                              ...span,
-                              text: entry.text,
-                              current: currentSpeaker(label.index, entry)?.speaker ?? entry.speaker,
-                          },
-                      ]
-                    : [];
-            }),
-    };
+    return labels
+        .filter((label) => label.labeler === "voice")
+        .flatMap((label) => {
+            const span = lines.span(label.index);
+            const entry = meeting.transcript[label.index];
+            return span && entry
+                ? [
+                      {
+                          ...label,
+                          ...span,
+                          text: entry.text,
+                          current: currentSpeaker(label.index, entry)?.speaker ?? entry.speaker,
+                      },
+                  ]
+                : [];
+        });
 }
 
 export async function applyVoices(
@@ -479,8 +554,10 @@ function select(view: VoiceLibrarySnapshot, options: Selection, bulk: boolean) {
 export async function voiceSample(
     options: VoicesAccess & Selection
 ): Promise<SoundSlice & { meeting: string; fromSec: number; toSec: number }> {
-    const sample = select(readVoiceLibrary(), options, false)[0]!;
-    const record = recordOf(options, sample.meeting);
+    const saved = select(readVoiceLibrary(), options, false)[0]!;
+    const address = addressOf(options, saved.meeting);
+    const record = address.record;
+    const sample = onRecordClock(saved, address.offsetMs);
     const sound = await openedOf(options, record).sound();
     const slice = sound.slice({ ...sample, purpose: "listen" });
 
@@ -623,6 +700,7 @@ async function resolveCorrectionSource(access: VoicesAccess, sample: VoiceSample
     let record: MeetingRecord | undefined;
     try {
         record = access.store.read(sample.meeting);
+        // A sample of a recording a join absorbed keeps the source it was saved with: its line keys are its own.
     } catch (error) {
         log.debug({ error, meeting: sample.meeting }, "voice correction record unreadable");
     }
@@ -816,8 +894,11 @@ export async function removeVoice(options: VoicesAccess & Selection & { predicti
 }
 
 export async function addVoiceSample(
-    options: VoicesAccess & { meeting: string; fromSec: number; toSec: number; person: string; confirmed: boolean }
+    input: VoicesAccess & { meeting: string; fromSec: number; toSec: number; person: string; confirmed: boolean }
 ): Promise<{ samples: number; skipped?: string[] }> {
+    // A later recording's old id and its own seconds name the joined record at the moved seconds.
+    const address = meetingAddress(input.store, input.meeting);
+    const options = address ? { ...onRecordClock(input, address.offsetMs), meeting: address.record.id } : input;
     if (
         !options.confirmed ||
         !Number.isFinite(options.fromSec) ||

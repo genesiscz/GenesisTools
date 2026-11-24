@@ -156,7 +156,11 @@ export const voiceLibrarySchema = z
     });
 export type LibraryV2 = z.infer<typeof voiceLibrarySchema>;
 type Manifest = LibraryV2["imports"][number];
-export type VoiceScope = { kind: "all" } | { kind: "project"; project: string } | { kind: "meeting"; meeting: string };
+export type VoiceScope =
+    | { kind: "all" }
+    | { kind: "project"; project: string }
+    /** `aliases`: the old ids of the recordings a join absorbed into the meeting; their samples are the meeting's. */
+    | { kind: "meeting"; meeting: string; aliases?: readonly string[] };
 export type VoiceScopeSettings = { sampleScope: "all" | "project"; outlierBelow: number };
 
 export interface VoiceLibrarySnapshot {
@@ -759,10 +763,12 @@ export function oneNamePerVoiceOwner(
     };
 }
 
-export function inScope(sample: VoiceSample, scope: VoiceScope): boolean {
+export function inScope(sample: Pick<VoiceSample, "meeting" | "project">, scope: VoiceScope): boolean {
     return (
         scope.kind === "all" ||
-        (scope.kind === "meeting" ? sample.meeting === scope.meeting : sample.project === scope.project)
+        (scope.kind === "meeting"
+            ? sample.meeting === scope.meeting || (scope.aliases?.includes(sample.meeting) ?? false)
+            : sample.project === scope.project)
     );
 }
 
