@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage";
-import { prepareFindings } from "./add-findings";
+import { planFindings, prepareFindings } from "./add-findings";
 import { DecisionJournal } from "./decision-journal";
 import { findingsFileSchema } from "./findings";
 
@@ -28,6 +28,43 @@ const transcript = [
     { startSec: 5, speaker: "Speaker 2", text: "Other voice" },
     { startSec: 10, speaker: "Speaker 1", text: "Last words" },
 ];
+
+describe("a line on a speaker range", () => {
+    const wide = findingsFileSchema.parse([
+        {
+            kind: "speaker-range",
+            from: 0,
+            to: 10,
+            label: "Speaker 1",
+            speaker: "Alice",
+            line: 2,
+            confidence: 0.8,
+            reason: "voice evidence",
+        },
+    ]);
+
+    test("on a range wider than one second it still names every line of the label, and adding it warns", () => {
+        const { added, warnings } = prepareFindings({ findings: wide, items: [], transcript });
+        const warning = `${added[0]!.id}: "line": 2 names one line only when "from" and "to" are the same second; this range applies to every "Speaker 1" line from 00:00 to 00:10. To name one line, give "from" and "to" its second`;
+        expect(warnings).toEqual([warning]);
+        expect(prepareFindings({ findings: wide, items: [] }).warnings).toEqual([warning]);
+        // The stored meaning stays: suggest keeps a stretch's first line on it, and the range reaches both lines.
+        const record = meetingRecordSchema.parse({
+            id: "2026-11-02_15-00-lines",
+            title: "Lines",
+            start: "2026-11-02T15:00:00.000Z",
+            createdAt: "2026-11-02T15:00:00.000Z",
+            createdBy: "new",
+        });
+        const plan = planFindings({ findings: wide, record, transcript, config: meetingsConfigSchema.parse({}) });
+        expect(plan.findings[0]?.lines.map((line) => line.index)).toEqual([0, 2]);
+    });
+
+    test("on a range inside one second it names that line, with no warning", () => {
+        const one = findingsFileSchema.parse([{ ...wide[0], from: 10, to: 10 }]);
+        expect(prepareFindings({ findings: one, items: [], transcript }).warnings).toEqual([]);
+    });
+});
 
 describe("idempotent findings", () => {
     test("full replay retains ids, including a forward ref, and mixed replay resolves new questions to retained ranges", () => {
