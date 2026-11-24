@@ -106,6 +106,104 @@
     var gnValidateLink = md.validateLink;
     md.validateLink = (url) => /^file:/i.test(String(url).trim()) || gnValidateLink(url);
 
+    // Raw inline HTML stays inside its own paragraph, list item, heading or table cell. The page parses the whole note
+    // at once, and the HTML parser carries an open <a>, <b>, <em> and the like into every block after it: one
+    // placeholder such as `#L<a>-<b>` made the rest of the note a bold link (2026-11-24). A tag with no attributes and
+    // no closing tag in its block is a placeholder (`<a>`, `<id>`, `<path>`) and shows as typed; a tag with
+    // attributes is HTML and closes where its block ends; a closing tag with no opening tag shows as typed.
+    var GN_VOID_TAG = {
+        area: 1,
+        base: 1,
+        br: 1,
+        col: 1,
+        embed: 1,
+        hr: 1,
+        img: 1,
+        input: 1,
+        link: 1,
+        meta: 1,
+        param: 1,
+        source: 1,
+        track: 1,
+        wbr: 1,
+    };
+    function gnInlineTag(html) {
+        var close = /^<\/([A-Za-z][A-Za-z0-9-]*)\s*>$/.exec(html);
+        if (close) {
+            return { name: close[1].toLowerCase(), close: true };
+        }
+        var open = /^<([A-Za-z][A-Za-z0-9-]*)([\s\S]*?)(\/?)>$/.exec(html);
+        if (!open) {
+            return null;
+        }
+        return { name: open[1].toLowerCase(), attrs: /\S/.test(open[2]), selfClosing: open[3] === "/" };
+    }
+    function gnBalanceInlineHTML(kids, state) {
+        var open = [];
+        function closer(name) {
+            var t = new state.Token("html_inline", "", 0);
+            t.content = `</${name}>`;
+            return t;
+        }
+        // A placeholder is text: the renderer escapes it, so the page shows the brackets.
+        function unclosed(entry) {
+            if (entry.attrs) {
+                return closer(entry.name);
+            }
+            entry.token.type = "text";
+            return null;
+        }
+        for (var j = 0; j < kids.length; j++) {
+            var k = kids[j];
+            var tag = k.type === "html_inline" ? gnInlineTag(k.content) : null;
+            if (!tag || GN_VOID_TAG[tag.name]) {
+                continue;
+            }
+            if (!tag.close) {
+                if (tag.selfClosing) {
+                    // `<span/>` opens a span in HTML; the author meant an empty one.
+                    kids.splice(j + 1, 0, closer(tag.name));
+                    j++;
+                } else {
+                    open.push({ name: tag.name, attrs: tag.attrs, token: k });
+                }
+                continue;
+            }
+            var at = open.length - 1;
+            while (at >= 0 && open[at].name !== tag.name) {
+                at--;
+            }
+            if (at < 0) {
+                k.type = "text";
+                continue;
+            }
+            // Tags opened inside this one and still open end here too.
+            while (open.length - 1 > at) {
+                var end = unclosed(open.pop());
+                if (end) {
+                    kids.splice(j, 0, end);
+                    j++;
+                }
+            }
+            open.pop();
+        }
+        while (open.length) {
+            var last = unclosed(open.pop());
+            if (last) {
+                kids.push(last);
+            }
+        }
+    }
+    // Before linkify, which counts html <a> tags to leave the text inside a link alone.
+    md.core.ruler.after("inline", "gn_inline_html", (state) => {
+        var t = state.tokens;
+        for (var i = 0; i < t.length; i++) {
+            if (t[i].type === "inline" && t[i].children) {
+                gnBalanceInlineHTML(t[i].children, state);
+            }
+        }
+    });
+
     md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
         var inline = tokens[idx + 1];
         var text = inline && inline.content ? inline.content : "";
