@@ -7,6 +7,7 @@ import { speakingEvidence } from "../platforms";
 import { roomDeviceOffers } from "../room-devices";
 import { decidedSeatRanges, explicitPreviewSeats, includeSeatVoiceHints, suggestSeats } from "../seat-suggest";
 import { type LinkedSource, sourceRefOf } from "../sources";
+import { mergeMatcher } from "../speaker-scores";
 
 const { log } = logger.scoped("meetings-service");
 
@@ -72,6 +73,7 @@ export async function seatSuggestion({
         devices: opened.roomDevices,
         room: params.room,
         remote: params.remote,
+        samePerson: mergeMatcher(opened.peopleMerges),
     });
     if (source && record.project && suggestion.people.some((row) => row.seat === "unsure" && row.confidence === 0)) {
         const { readSeatVoiceHints } = await import("../seat-voice");

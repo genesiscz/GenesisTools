@@ -6,7 +6,7 @@ import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@ge
 import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
 import { type DeviceDecision, mappedRoomDevices, type RoomDevice } from "@genesiscz/utils/meetings/people";
-import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
+import { PeopleBook, type PeopleBookData, type PeopleMerge } from "@genesiscz/utils/meetings/people-book";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
 import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
@@ -87,7 +87,7 @@ export function attendanceIdRefusal(spec: string | undefined, attendanceId: stri
  */
 export class OpenedMeeting {
     private current: MeetingRecord;
-    private deviceHistoryOnce?: DeviceDecision[];
+    private peopleBookOnce?: PeopleBookData;
     private devicesOnce?: RoomDevice[];
     private linkedOnce?: Promise<LinkedSource>;
     private meetingOnce?: Promise<SourceMeeting>;
@@ -131,9 +131,18 @@ export class OpenedMeeting {
         return this.current;
     }
 
+    private get peopleBook(): PeopleBookData {
+        this.peopleBookOnce ??= new PeopleBook({ storage: this.store.storage }).read();
+        return this.peopleBookOnce;
+    }
+
     get deviceHistory(): DeviceDecision[] {
-        this.deviceHistoryOnce ??= new PeopleBook({ storage: this.store.storage }).read().devices;
-        return this.deviceHistoryOnce;
+        return this.peopleBook.devices;
+    }
+
+    /** The people book's merges: two names the user made one person (`people merge`). */
+    get peopleMerges(): PeopleMerge[] {
+        return this.peopleBook.merges;
     }
 
     get roomDevices(): RoomDevice[] {
