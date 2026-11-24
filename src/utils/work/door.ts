@@ -5,6 +5,7 @@
  * way passes with a reason.
  */
 import type { Reply } from "@genesiscz/utils/output/reply";
+import { z } from "zod";
 import type { WorkMethodName } from "./api";
 
 /** The per-call options every door takes beside the params. */
@@ -19,6 +20,36 @@ export interface WorkDoorCall {
      * the write is the owner's, in this project. Absent: the caller is this process, as for the CLI.
      */
     atSurface?: { project: string };
+}
+
+/**
+ * The per-call options as the MCP tools and the REPL's `work` global take them, beside a write's own params. The CLI
+ * takes them as flags of the same names (`--request-id`, `--dry-run`, `--owner-said`, `--override`).
+ */
+export const workCallEnvelope = z.object({
+    requestId: z.string().optional().describe("a repeat with the same id answers the stored reply and writes nothing"),
+    dryRun: z.boolean().optional().describe("answer the changes, write nothing"),
+    ownerSaid: z.string().optional().describe("the owner's words when you act on them"),
+    override: z
+        .string()
+        .optional()
+        .describe("why this session does a write that a role rule refuses; the journal keeps who did it and why"),
+});
+
+/** The door options of the envelope keys in `args`; a key of another type counts as not given. */
+export function callOptionsOf(args: Record<string, unknown>): Omit<WorkDoorCall, "atSurface"> {
+    return {
+        ...(typeof args.requestId === "string" ? { request: args.requestId } : {}),
+        ...(args.dryRun === true ? { dryRun: true } : {}),
+        ...(typeof args.ownerSaid === "string" ? { ownerSaid: args.ownerSaid } : {}),
+        ...(typeof args.override === "string" ? { override: args.override } : {}),
+    };
+}
+
+/** The method's own params: `args` without the envelope keys. */
+export function withoutCallOptions(args: Record<string, unknown>): Record<string, unknown> {
+    const { requestId: _r, dryRun: _d, ownerSaid: _o, override: _v, ...rest } = args;
+    return rest;
 }
 
 export interface WorkDoor {
