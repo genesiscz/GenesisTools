@@ -543,6 +543,19 @@ export function toJoinedSec(partSec: number, offsetMs: number): number {
     return Math.round(partSec * 1e6 + offsetMs * 1e3) / 1e6;
 }
 
+/**
+ * The milliseconds a saved print's seconds move by on the clock of `at.meeting`, whose `aliases` are the recordings a
+ * join absorbed into it: 0 for its own seconds, the part's offset for a print saved under an absorbed recording's id,
+ * undefined for another meeting. `root` is the print's voice root, which names the joined record for both kinds of
+ * print, so the clock follows `meeting`, the id the print was saved under.
+ */
+export function printOffsetMs(
+    print: { root: string; meeting: string },
+    at: { meeting?: string; aliases?: ReadonlyMap<string, number> }
+): number | undefined {
+    return print.root === at.meeting ? (at.aliases?.get(print.meeting) ?? 0) : at.aliases?.get(print.root);
+}
+
 /** A second on the joined clock, on the part's own clock (`toJoinedSec` the other way). */
 export function toPartSec(joinedSec: number, offsetMs: number): number {
     return Math.round(joinedSec * 1e6 - offsetMs * 1e3) / 1e6;

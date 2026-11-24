@@ -39,6 +39,7 @@ import {
     meetingRecordSchema,
     missingMeetingText,
     nextId,
+    printOffsetMs,
     titleSlug,
     toJoinedSec,
 } from "./record";
@@ -1807,6 +1808,12 @@ describe("a later recording's old id after a join", () => {
         expect(toJoinedSec(2526, address!.offsetMs)).toBe(3180.273);
         expect(meetingAddress(store, kept.id)).toMatchObject({ record: { id: kept.id }, offsetMs: 0 });
         expect([...joinAliases(joined)]).toEqual([[later, 654273]]);
+        // A print saved under the old id keeps that recording's seconds, whichever root its source names.
+        const at = { meeting: kept.id, aliases: joinAliases(joined) };
+        expect(printOffsetMs({ root: kept.id, meeting: later }, at)).toBe(654273);
+        expect(printOffsetMs({ root: later, meeting: later }, at)).toBe(654273);
+        expect(printOffsetMs({ root: kept.id, meeting: kept.id }, at)).toBe(0);
+        expect(printOffsetMs({ root: "2026-11-01_08-00-other-fixture", meeting: kept.id }, at)).toBeUndefined();
         const sample = { meeting: later, project: "work" };
         expect(inScope(sample, { kind: "meeting", meeting: kept.id })).toBe(false);
         expect(inScope(sample, { kind: "meeting", meeting: kept.id, aliases: [later] })).toBe(true);

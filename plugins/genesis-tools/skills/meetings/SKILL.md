@@ -90,6 +90,11 @@ A missing meeting names only the store that was searched. To find which store ho
      (below). To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
      to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
+   - After a join, a line keeps one sample: its sample saved under the later recording's old id counts for the joined
+     meeting, and backfill reports it as present. A backfill from before this fix may have saved such a line a second
+     time. Run `tools meetings voices dedupe --dry-run` (`await meetings.dedupeVoices({ dryRun: true })`) to list
+     those repeats; readers already count each line once. Ask the user before running it without `--dry-run`; it
+     keeps the first sample of each line, and its correction receipt keeps the removed rows.
    - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
      use certain lines from this meeting as temporary samples. It excludes the line it is scoring. A person without
      a sample can still be proposed if they are the only such person present on that seat, the voice clearly matches
@@ -337,6 +342,7 @@ decision is saved. Inspect progress (`done` / `total`, current step), added and 
 | `voices jobs --project "$project" --json` | `meetings.voiceJobs({ project })` |
 | `voices jobs cancel "$jobId" --json` | `meetings.cancelVoiceJob(jobId)` |
 | `voices backfill "$meeting" --json` | `meetings.backfillVoices({ meetings: [meeting] })` |
+| `voices dedupe --dry-run --json` | `meetings.dedupeVoices({ dryRun: true })` |
 
 Use the job ID from the list to cancel queued or running work. The saved decision and already learned samples survive
 cancellation. Explicit backfill retries eligible lines and counts existing samples separately. The service also checks

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { MeetingsConfigStore, meetingsConfigSchema, projectNameSchema } from "./config";
 import { nameKey } from "./people";
 import { PeopleBook, type PeopleMerge, type PersonRefValue } from "./people-book";
-import { type MeetingRecord, MeetingStore, voiceRootMeeting } from "./record";
+import { joinedAway, type MeetingRecord, MeetingStore, voiceRootMeeting } from "./record";
 
 export const voicePrintSchema = z
     .object({
@@ -426,6 +426,35 @@ function recordedRoot(store: MeetingStore, id: string) {
     return record ? voiceRootMeeting(store, record) : id;
 }
 
+/**
+ * The voice root of the joined record that absorbed the recording `id`, for a sample saved under that recording's
+ * old id before the join; `id` itself for any other id. The join half of `meetingAddress`: an id with a record
+ * keeps it, and an id without one never reaches the store's prefix match, which could name another meeting.
+ */
+function joinedVoiceRoot(store: MeetingStore, id: string): string {
+    const away =
+        /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id) && !existsSync(store.path(id)) ? joinedAway(store, id) : undefined;
+    return away ? voiceRootMeeting(store, away.record) : id;
+}
+
+/** Sources the overlay read under a joined record, with the root each one is saved under. */
+type JoinedRoots = Map<SampleSource, { saved: string; read: string }>;
+
+/** Runs `write` with each source the overlay moved onto a joined record back at the root it is saved under. */
+function withSavedRoots<T>(joined: JoinedRoots, write: () => T): T {
+    const moved = [...joined].filter(([source, root]) => source.rootMeeting === root.read);
+    for (const [source, root] of moved) {
+        source.rootMeeting = root.saved;
+    }
+    try {
+        return write();
+    } finally {
+        for (const [source, root] of moved) {
+            source.rootMeeting = root.read;
+        }
+    }
+}
+
 /** The model most samples were taken with; a tie goes to the first file by name. Files without samples do not vote. */
 function electedModel(stores: readonly LegacyStore[]): string {
     const counts = new Map<string, number>();
@@ -507,17 +536,25 @@ function reconcile(projects: string[], options: MigrationOptions) {
     }
     // v1 and early v2 used the immediate meeting as root. Correct proven parent chains in the
     // overlay too, so browsing and predicting never have to upgrade a file to exclude a copy.
+    // A recording a join absorbed reads as the joined record too, so a line saved under its old id and the same line
+    // learned after the join are one line. That rewrite stays in memory (`joined`): a join never changes the library.
     const store = new MeetingStore();
-    const roots = new Map<string, string>();
+    const roots = new Map<string, { recorded: string; joined: string }>();
+    const joined: JoinedRoots = new Map();
     function canonical(source: SampleSource) {
         const id = source.rootMeeting;
         if (!roots.has(id)) {
-            roots.set(id, recordedRoot(store, id));
+            const recorded = recordedRoot(store, id);
+            roots.set(id, { recorded, joined: joinedVoiceRoot(store, recorded) });
         }
         const root = roots.get(id)!;
-        if (root !== id) {
-            source.rootMeeting = root;
+        if (root.recorded !== id) {
+            source.rootMeeting = root.recorded;
             changed = true;
+        }
+        if (root.joined !== root.recorded) {
+            source.rootMeeting = root.joined;
+            joined.set(source, { saved: root.recorded, read: root.joined });
         }
     }
     for (const sample of [...library.samples, ...library.rejected]) {
@@ -537,7 +574,7 @@ function reconcile(projects: string[], options: MigrationOptions) {
             }
         }
     }
-    return { library, conflicts, imported, changed };
+    return { library, conflicts, imported, changed, joined };
 }
 
 export function readVoiceLibrary(options: Pick<MigrationOptions, "idDigest"> = {}): VoiceLibrarySnapshot {
@@ -581,7 +618,7 @@ function transact<T>(
             if (changed) {
                 library.revision++;
                 voiceLibrarySchema.parse(library);
-                const bytes = SafeJSON.stringify(library);
+                const bytes = withSavedRoots(pending.joined, () => SafeJSON.stringify(library));
                 const publish: NonNullable<MigrationOptions["publish"]> =
                     options.publish ?? ((path, data) => atomicWriteFileSync(path, data, { mode: 0o600 }));
                 publish(file, bytes);
@@ -622,7 +659,7 @@ export function projectVoiceStore(project: string): VoiceStore {
     }
     const { library } = pending;
     const people = new Map<string, { samples: VoicePrint[] }>();
-    for (const sample of library.samples) {
+    for (const sample of oneSamplePerLine(library.samples)) {
         if (sample.project !== project || refused(library, sample.source, sample.owner)) {
             continue;
         }
@@ -772,6 +809,47 @@ export function inScope(sample: Pick<VoiceSample, "meeting" | "project">, scope:
     );
 }
 
+/** A transcript line's own key (`voiceLineKeys`); a span-only legacy address names a stretch of audio, not a line. */
+function isLineKey(lineKey: string): boolean {
+    return lineKey.startsWith('["entry-v1",') || lineKey.startsWith('["line-v1",');
+}
+
+/**
+ * Each row that repeats a line its owner already holds in its project, with the row it repeats (the first saved). A
+ * backfill after a join learned the absorbed recording's answered lines again under the joined record's id, beside the
+ * rows saved under the recording's old id; the overlay reads both roots as the joined record, so they are one line.
+ * Span-only legacy rows stay the distinct attachments their import made them.
+ */
+export function repeatedLineSamples<S extends Pick<VoiceSample, "project" | "owner" | "source">>(
+    samples: readonly S[]
+): Array<{ sample: S; repeats: S }> {
+    const held = new Map<string, S[]>();
+    const repeated: Array<{ sample: S; repeats: S }> = [];
+    for (const sample of samples) {
+        if (!isLineKey(sample.source.lineKey)) {
+            continue;
+        }
+        const key = [sample.project, sample.source.rootMeeting, sample.source.lineKey].join("\0");
+        const rows = held.get(key) ?? [];
+        const first = rows.find((row) => sameVoiceOwner(row.owner, sample.owner));
+        if (first) {
+            repeated.push({ sample, repeats: first });
+        } else {
+            rows.push(sample);
+            held.set(key, rows);
+        }
+    }
+    return repeated;
+}
+
+/** `samples` with one row per line and owner (`repeatedLineSamples`), in saved order: what counts and listings read. */
+export function oneSamplePerLine<S extends Pick<VoiceSample, "project" | "owner" | "source">>(
+    samples: readonly S[]
+): S[] {
+    const repeated = new Set(repeatedLineSamples(samples).map(({ sample }) => sample));
+    return samples.filter((sample) => !repeated.has(sample));
+}
+
 export interface VoicePersonRow {
     owner: VoiceOwner;
     projects: string[];
@@ -783,7 +861,7 @@ export function voicesIn(view: VoiceLibrarySnapshot, scope: VoiceScope, owner?: 
     const selected = owner && (directory.select(owner) ?? directory.binding(owner));
     type Row = { owner: VoiceOwner; projects: Set<string>; samples: VoicePersonRow["samples"] };
     const groups = new Map<object | string, Row>();
-    for (const sample of view.library.samples) {
+    for (const sample of oneSamplePerLine(view.library.samples)) {
         if (!inScope(sample, scope) || refused(view.library, sample.source, sample.owner)) {
             continue;
         }
@@ -843,7 +921,7 @@ export function predictionPrints(input: {
     const directory = groupedOwners(view);
     const eligible = input.owners && new Set(input.owners.map(directory.select));
     const scope = input.scope ?? predictionScope();
-    const samples = library.samples.filter(
+    const samples = oneSamplePerLine(library.samples).filter(
         (sample) =>
             (scope === "all" || sample.project === input.project) &&
             (!eligible || eligible.has(directory.binding(sample.owner))) &&
@@ -901,9 +979,12 @@ function insertLocked(
     const owner = ownerSchema.parse(input.owner);
     const print = voicePrintSchema.parse(input.print);
     const source = sourceSchema.parse(input.source);
+    const store = new MeetingStore();
     if (source.rootMeeting === print.meeting && !source.spanKey) {
-        source.rootMeeting = recordedRoot(new MeetingStore(), source.rootMeeting);
+        source.rootMeeting = recordedRoot(store, source.rootMeeting);
     }
+    // A print addressed under a recording a join absorbed is a line of the joined record, as the overlay reads it.
+    source.rootMeeting = joinedVoiceRoot(store, source.rootMeeting);
     const model = nonblank.parse(input.model);
     if (!acceptsModel(library, model)) {
         throw new Error(
@@ -929,7 +1010,16 @@ function insertLocked(
         );
         if (receipt?.kind === "learn") {
             recoveredId = receipt.id;
-            const present = library.samples.some((s) => s.id === receipt.id && ownerKey(s.owner) === ownerKey(owner));
+            const held = library.samples.find((s) => s.id === receipt.id && ownerKey(s.owner) === ownerKey(owner));
+            const present = !!held;
+            // After a join the decision's print comes back re-addressed (the joined record's id and clock) for the
+            // line it already holds: the same line of the same recording with the same voice is the same sample.
+            const same =
+                held &&
+                (receipt.requestDigest === requestDigest ||
+                    (sameLine(held.source, source) &&
+                        held.source.recordingKey === source.recordingKey &&
+                        isDeepStrictEqual(held.embedding, print.embedding)));
             if (
                 receipt.requestDigest !== requestDigest ||
                 present ||
@@ -938,7 +1028,7 @@ function insertLocked(
                 return {
                     changed: false,
                     result: {
-                        status: present && receipt.requestDigest === requestDigest ? "already-present" : "conflict",
+                        status: same ? "already-present" : "conflict",
                         id: receipt.id,
                         revision: receipt.revision,
                     },
@@ -1064,6 +1154,7 @@ export function changeVoiceLearning(options: {
     dryRun?: boolean;
 }) {
     function edit(library: LibraryV2) {
+        const store = new MeetingStore();
         const beforeModel = library.model;
         const beforeSamples = [...library.samples];
         const beforeReceipts = [...library.receipts];
@@ -1111,7 +1202,10 @@ export function changeVoiceLearning(options: {
         }
         for (const owned of options.remove ?? []) {
             const print = voicePrintSchema.parse(owned.print);
-            const source = owned.source ?? sourceForVoicePrint(print);
+            const saved = owned.source ?? sourceForVoicePrint(print);
+            // A journal entry from before a join names the absorbed recording; the library reads that line as a
+            // line of the joined record.
+            const source = { ...saved, rootMeeting: joinedVoiceRoot(store, saved.rootMeeting) };
             const matchingItem = byDecision.get(decisionKey(owned, print.question)) ?? [];
             const matchingId = owned.id ? (byAttachment.get(decisionKey(owned, owned.id)) ?? []) : [];
             const priorIndex = Math.max(
@@ -1157,6 +1251,30 @@ export function changeVoiceLearning(options: {
                 continue;
             }
             remaining.delete(sample.id);
+            const retire = (learned: LearnReceipt) => {
+                const at = library.receipts.indexOf(learned);
+                if (at >= 0 && learned.active !== false) {
+                    library.receipts[at] = { ...learned, active: false, revision: library.revision + 1 };
+                }
+            };
+            // A backfill after a join could learn this decision's line again under the joined record's id: the
+            // decision's rows of one line go together, each with its learning receipt.
+            for (const [id, row] of remaining) {
+                const learned = latestReceipt.get(id);
+                if (
+                    learned &&
+                    learned.token === owned.token &&
+                    row.sample.project === sample.project &&
+                    sameVoiceOwner(row.sample.owner, sample.owner) &&
+                    sameLine(row.sample.source, sample.source)
+                ) {
+                    remaining.delete(id);
+                    retire(learned);
+                }
+            }
+            if (receipt) {
+                retire(receipt);
+            }
             if (owned.before) {
                 // A legacy replacement is visible to later removals in the same batch.
                 library.samples = [...remaining.values()].map(({ sample }) => sample);
@@ -1268,6 +1386,17 @@ export type VoiceCorrection = (
     impact?: StoredCorrection["impact"];
 };
 
+/** `ids` and the rows that repeat their lines (`repeatedLineSamples`): a correction reaches every row of a line. */
+function withRepeats(library: LibraryV2, ids: readonly SampleId[]): Set<SampleId> {
+    const all = new Set(ids);
+    for (const { sample, repeats } of repeatedLineSamples(library.samples)) {
+        if (all.has(repeats.id)) {
+            all.add(sample.id);
+        }
+    }
+    return all;
+}
+
 function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
     const { token = randomUUID(), expectedRevision, expectedIds, impact, resolvedSource, ...operation } = action;
     const requestDigest = sha256Json(operation);
@@ -1349,7 +1478,7 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
             receipt.after.map((s) => original.positions![original.before.findIndex((row) => row.id === s.id)]!);
     } else if (action.kind === "rename") {
         // Each sample keeps its source, confirmation and position; only its owner's name changes.
-        const ids = new Set(action.ids);
+        const ids = withRepeats(library, action.ids);
         receipt.before = library.samples.filter((s) => ids.has(s.id));
         if (!ids.size || receipt.before.length !== ids.size) {
             throw new Error("Stale voice sample selection.");
@@ -1360,7 +1489,7 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
         }
         receipt.after = receipt.before.map((s) => ({ ...s, owner: to }));
     } else {
-        const ids = new Set(action.kind === "remove" ? action.ids : [action.id]);
+        const ids = action.kind === "remove" ? withRepeats(library, action.ids) : new Set([action.id]);
         receipt.before = library.samples.filter((s) => ids.has(s.id));
         if (!ids.size || receipt.before.length !== ids.size) {
             throw new Error("Stale voice sample selection.");
@@ -1476,6 +1605,59 @@ export function previewVoiceCorrection(library: LibraryV2, action: VoiceCorrecti
 
 export function correctVoiceSample(action: VoiceCorrection) {
     return transact((library) => correctionEdit(library, action)).result;
+}
+
+export interface RepeatedLineRow {
+    id: SampleId;
+    /** The row of the same line and owner that stays: the first one saved. */
+    keeps: SampleId;
+    owner: VoiceOwner;
+    project: string;
+    meeting: string;
+    fromSec: number;
+    toSec: number;
+}
+
+/**
+ * Removes every row that repeats a line its owner already holds (`repeatedLineSamples`) as one correction, whose
+ * receipt keeps the removed rows; the first saved row of each line stays. `dryRun` lists the rows and saves nothing.
+ * The receipt is a record, not an undo: putting a repeat back beside the row it repeats is refused as a conflict.
+ */
+export interface DedupeResult {
+    dryRun: boolean;
+    rows: RepeatedLineRow[];
+    revision: number;
+    /** The correction receipt that keeps the removed rows; absent on a dry run or when nothing repeats. */
+    token?: string;
+}
+
+export function dedupeVoiceLines(options: { dryRun?: boolean } = {}): DedupeResult {
+    const repeated = (library: LibraryV2): RepeatedLineRow[] =>
+        repeatedLineSamples(library.samples).map(({ sample, repeats }) => ({
+            id: sample.id,
+            keeps: repeats.id,
+            owner: sample.owner,
+            project: sample.project,
+            meeting: sample.meeting,
+            fromSec: sample.fromSec,
+            toSec: sample.toSec,
+        }));
+    if (options.dryRun) {
+        const pending = reconcile(legacyProjects(), {});
+        requireValid(pending);
+        return { dryRun: true, rows: repeated(pending.library), revision: pending.library.revision };
+    }
+    return transact<DedupeResult>((library) => {
+        const rows = repeated(library);
+        if (!rows.length) {
+            return { changed: false, result: { dryRun: false, rows, revision: library.revision } };
+        }
+        const receipt = correctionEdit(library, { kind: "remove", ids: rows.map((row) => row.id) }).result;
+        return {
+            changed: true,
+            result: { dryRun: false, rows, revision: receipt.revision, token: receipt.token },
+        };
+    }).result;
 }
 
 export function voicePrintKey(person: string, print: VoicePrint): string {

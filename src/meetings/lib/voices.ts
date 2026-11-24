@@ -26,6 +26,7 @@ import {
     groupedOwners,
     inScope,
     meetingVoiceOwner,
+    oneSamplePerLine,
     ownerKey,
     predictionScope,
     previewVoiceCorrection,
@@ -380,7 +381,9 @@ export async function voiceQuality(options: VoicesAccess & Browse, view = readVo
         {
             model: library.model,
             conflicts: view.conflicts,
-            samples: library.samples.filter((s) => inScope(s, scope) && !refused(library, s.source, s.owner)),
+            samples: oneSamplePerLine(library.samples).filter(
+                (s) => inScope(s, scope) && !refused(library, s.source, s.owner)
+            ),
         },
         { ...config.global.speakerLabels.voice, directory }
     ).filter(

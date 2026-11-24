@@ -370,6 +370,7 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "apply",
             "backfill",
             "collect",
+            "dedupe",
             "enroll",
             "jobs",
             "move",
