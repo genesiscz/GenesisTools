@@ -310,6 +310,35 @@ function scorePair(run: RunKeys, term: IndexedTerm): { value: number; kind: Term
     return undefined;
 }
 
+/**
+ * Scores heard runs against written words (a screen's text) with the score the vocabulary match uses, 0 to 100. It keys
+ * each run and each written term once, so one matcher serves many runs over the same text.
+ */
+export class SoundMatcher {
+    private readonly runs = new Map<string, RunKeys>();
+    private readonly written = new Map<string, IndexedTerm>();
+
+    /** Undefined when `written` cannot be the run: another first sound, fewer parts than the run has words, under 3 letters. */
+    score(heard: string, written: string): number | undefined {
+        let run = this.runs.get(heard);
+
+        if (!run) {
+            run = runKeys(heard.trim().split(/\s+/).join(" "));
+            this.runs.set(heard, run);
+        }
+
+        let term = this.written.get(written);
+
+        if (!term) {
+            term = indexTerm({ term: written, source: "written" });
+            this.written.set(written, term);
+        }
+
+        const scored = scorePair(run, term);
+        return scored ? Math.round(scored.value * 100) : undefined;
+    }
+}
+
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}.'-]*/gu;
 
 function words(text: string): string[] {

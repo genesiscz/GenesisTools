@@ -15,12 +15,18 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
 import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
-import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
-import { compactEvidence, rawMeeting } from "../lib/raw";
+import { compactEvidence } from "../lib/raw";
+import { rawEvidence, withDeviceFacts } from "../lib/raw-evidence";
+import {
+    DEFAULT_SCREEN_LINES,
+    openScreenRecord,
+    SCREEN_LEAD_WINDOW_SEC,
+    screenRecordFacts,
+    screenRecordLine,
+} from "../lib/screen-leads";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
-import { rawTerms } from "../lib/suggest-terms";
-import { lineDeviceCandidates, meetingVoices } from "../lib/voice";
+import { meetingVoices } from "../lib/voice";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -45,6 +51,7 @@ async function evidence(
         from?: string;
         to?: string;
         wordCheck?: string;
+        screenLines?: string;
         voices?: string;
         voiceFeatures?: boolean;
         lineEligibility?: string;
@@ -109,6 +116,12 @@ async function evidence(
             throw new Error("--voices and --voice-features print with --format json, --format lines or --raw");
         }
 
+        const screenLines = opts.screenLines === undefined ? undefined : Number(opts.screenLines);
+
+        if (screenLines !== undefined && !(Number.isInteger(screenLines) && screenLines >= 0)) {
+            throw new Error("--screen-lines needs a whole number of lines, 0 or more");
+        }
+
         if (opts.table) {
             const from = opts.from === undefined ? 0 : (parseClock(opts.from) ?? NaN);
             const to = opts.to === undefined ? Infinity : (parseClock(opts.to) ?? NaN);
@@ -119,12 +132,6 @@ async function evidence(
             out.print(`${compactEvidence(raw)}\n`);
             return;
         }
-        const { source } = await opened.linked();
-        const meeting = await opened.meeting();
-        const found = await opened.evidence();
-
-        const presence = await opened.presence(opts.attendance);
-        const energy = await opened.energy();
         const voice = wantsVoice
             ? new Map(
                   (
@@ -136,15 +143,6 @@ async function evidence(
                   ).map((measured) => [measured.index, measured])
               )
             : undefined;
-        // Both JSON outputs give a line its voice features and the people its device can name, in one way.
-        const withDevice = <L extends { index: number }>(
-            line: L,
-            device: Parameters<typeof lineDeviceCandidates>[0]
-        ) => ({
-            ...line,
-            ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
-            deviceCandidates: lineDeviceCandidates(device),
-        });
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw || format === "lines") {
@@ -163,53 +161,29 @@ async function evidence(
                 return;
             }
 
-            const current = opened.record;
-            const check = await opened.wordCheck(choice);
-
-            try {
-                const terms = rawTerms({
-                    meeting,
-                    record: current,
-                    dictionary: await opened.dictionary(),
-                    sourceWords: await opened.sourceWords(),
-                    ...(check.check ? { wordCheck: check.check } : { unavailable: check.reason }),
-                });
-                const raw = rawMeeting({
-                    localSpeech: localSpeechDuring({ start: meeting.start, end: meeting.end }),
-                    record: current,
-                    meeting,
-                    evidence: found,
-                    presence,
-                    energyMicShare: energy.share,
-                    callSilent: await opened.silentCallSpans(),
-                    points: await opened.summaryPoints(),
-                    terms,
-                    people: (await opened.config()).projects[current.project ?? ""]?.match?.people,
-                });
-                const enriched = {
-                    ...raw,
-                    voice: readiness,
-                    lines: raw.lines.map((line) =>
-                        withDevice(line, {
-                            record: current,
-                            atSec: line.fromSec,
-                            micShare: Math.max(line.energyMicShare ?? 0, line.channel.micShare ?? 0),
-                            liveName: line.liveName,
-                        })
-                    ),
-                };
-                out.result(format === "lines" ? compactEvidence(enriched) : SafeJSON.stringify(enriched, null, 2));
-            } finally {
-                check.check?.dispose();
-            }
-
+            const raw = await rawEvidence(opened, {
+                attendance: opts.attendance,
+                ...(choice ? { wordCheck: choice } : {}),
+                screenLines,
+                voice,
+            });
+            out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(raw, null, 2));
             return;
         }
+
+        const { source } = await opened.linked();
+        const meeting = await opened.meeting();
+        const found = await opened.evidence();
+
+        const presence = await opened.presence(opts.attendance);
+        const energy = await opened.energy();
 
         if (!found) {
             fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
             return;
         }
+
+        const screen = screenRecordFacts({ id: record.id, read: await openScreenRecord(store, record) });
 
         const lines = lineEvidence(meeting.transcript, found, presence, energy.share);
         const selfLabelWords = meeting.transcript
@@ -249,6 +223,7 @@ async function evidence(
                 SafeJSON.stringify(
                     {
                         meeting: record.id,
+                        screen,
                         selfName: found.selfName,
                         indicator: {
                             knownLines: lines.filter((line) => !line.speakingUnknown).length,
@@ -259,11 +234,15 @@ async function evidence(
                         files: found.files,
                         devices: found.devices,
                         lines: lines.map((line) => {
-                            const withCandidates = withDevice(line, {
-                                record,
-                                atSec: line.startSec,
-                                micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
-                                liveName: line.liveName,
+                            const withCandidates = withDeviceFacts({
+                                line,
+                                device: {
+                                    record,
+                                    atSec: line.startSec,
+                                    micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
+                                    liveName: line.liveName,
+                                },
+                                voice,
                             });
                             // A shared device names no winner: several people speak into it, whatever the share.
                             const shared =
@@ -320,6 +299,8 @@ async function evidence(
                 `audio energy: ${channels.layout} (mic segments median left share ${channels.micMedian}, call ${channels.systemMedian}; ${channels.segments.mic} + ${channels.segments.system} segments)`
             );
         }
+
+        ui.dim(screenRecordLine(screen));
 
         if (sharedNames.size > 1) {
             ui.dim("A shared microphone identifies its active people as candidates, not its owner as speaker.");
@@ -433,6 +414,10 @@ export function registerEvidenceCommand(program: Command): void {
         .option(
             "--word-check <provider>",
             `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
+        )
+        .option(
+            "--screen-lines <n>",
+            `--raw: screen OCR lines per unknown word, vocabulary run and spoken identifier, from frames within ${SCREEN_LEAD_WINDOW_SEC} s that sound like it (default ${DEFAULT_SCREEN_LINES}, 0 = none)`
         )
         .option("--format [format]", "table | json | lines (compact per-line facts with a name legend)")
         .option("--json", "the same as --format json")

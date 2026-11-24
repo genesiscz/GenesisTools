@@ -546,7 +546,87 @@ test("voice readiness hints from set and raw evidence leave stdout as a single J
     expect(set?.stdout).toBe("");
     expect(SafeJSON.parse(evidence?.stdout ?? "", { strict: true })).toMatchObject({
         voice: { seats: false, samples: 0, people: {}, ready: false, hints },
+        screen: { recorded: false },
     });
+});
+
+// I7: the term pass guessed at words the screen showed, because evidence --raw had no screen text beside its leads.
+test("evidence --raw names the screen record and gives a vocabulary run the screen line near it", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Screen leads",
+            start: "2026-11-01T10:00:00.000Z",
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "screen-leads-source" } },
+        },
+        { command: "new", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    writeFileSync(
+        join(folder, "ocr.jsonl"),
+        `${SafeJSON.stringify({ file: "frames/a.jpg", at: "2026-11-01T10:00:40.000Z", displayId: 1, text: "ContentRows component", blocks: [] })}\n`
+    );
+    const mocks = [
+        spyOn(wisprflowSource, "load").mockResolvedValue({
+            sourceMeetingId: "screen-leads-source",
+            title: record.title,
+            start: record.start,
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [{ speaker: "Alice Example", startSec: 30, text: "Otevři content rose, prosím." }],
+        }),
+        spyOn(wisprflowSource, "recordingClock").mockResolvedValue(null),
+        spyOn(wisprflowSource, "evidence").mockResolvedValue({ segments: [], speaking: [], files: [] }),
+        spyOn(wisprflowSource, "dictionary").mockResolvedValue([{ value: "ContentRows" }]),
+    ];
+    const results: string[] = [];
+    const dimmed: string[] = [];
+    const result = spyOn(out, "result").mockImplementation((value: unknown) => {
+        results.push(String(value));
+    });
+    const dim = spyOn(ui, "dim").mockImplementation((text: string) => {
+        dimmed.push(text);
+    });
+    const table = spyOn(out, "println").mockImplementation(() => {});
+    try {
+        for (const args of [
+            ["--raw", "--word-check", "off"],
+            ["--raw", "--word-check", "off", "--screen-lines", "0"],
+            ["--json"],
+            [],
+        ]) {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "evidence" });
+            await program.parseAsync(["evidence", record.id, ...args], { from: "user" });
+        }
+    } finally {
+        for (const mock of [...mocks, result, dim, table]) {
+            mock.mockRestore();
+        }
+    }
+    const [led, off, json] = results.map((text) => SafeJSON.parse(text, { strict: true }));
+    expect(led).toMatchObject({
+        screen: { recorded: true, frames: 1, pending: 0, fromSec: 40, leads: { windowSec: 60, linesPerLead: 3 } },
+        terms: {
+            runs: [
+                {
+                    heard: "content rose",
+                    screen: {
+                        frames: 1,
+                        lines: [{ atSec: 40, frame: "frames/a.jpg", form: "ContentRows", score: 100 }],
+                    },
+                },
+            ],
+        },
+    });
+    expect(off).toMatchObject({ screen: { recorded: true, leads: { linesPerLead: 0 } } });
+    expect(off.terms.runs[0]).not.toHaveProperty("screen");
+    // The other outputs name the same record: --json as a typed key, the table in its summary lines.
+    expect(json).toMatchObject({ screen: { recorded: true, frames: 1, fromSec: 40 } });
+    expect(json.screen).not.toHaveProperty("leads");
+    expect(dimmed.some((line) => line.startsWith("screen: 1 frame with OCR"))).toBe(true);
 });
 
 test("play's positional time and track reach the original track's file seconds without starting sound", async () => {
