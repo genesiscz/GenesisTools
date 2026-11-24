@@ -62,17 +62,27 @@ struct RequestActionContext {
     }
 }
 
+/// Why a declared button cannot do its work: one plain sentence for the window, and the technical text (the CLI's
+/// words, any command it names) for Details.
+struct RequestActionProblem: Equatable {
+    let sentence: String
+    let detail: String
+}
+
 /// One extra button a request declared: a click keeps the window open and answers nothing.
 @MainActor
 protocol RequestActionButton: AnyObject {
-    /// The button as the window shows it now (Play clip, then Stop while the clip plays).
+    /// The button as the window shows it now (Play clip, then Stop while the clip plays; dimmed with its reason when it
+    /// cannot run).
     var link: ApprovalLink { get }
     /// The footnote's sentence about this button, so the footnote says everything the window can do.
     var footnote: String { get }
-    /// Why the last click did nothing ("The clip could not play: …"), shown under the rows; nil once it worked.
-    var note: String? { get }
-    /// Called when `link` or `note` changed, so the window shows the new ones.
+    /// Why the button cannot run here, learnt before a click (`prepare`) or from one; nil while it can.
+    var problem: RequestActionProblem? { get }
+    /// Called when `link` or `problem` changed, so the window shows the new ones.
     var changed: (() -> Void)? { get set }
+    /// The window is on screen: check, without side effects, whether a click could work.
+    func prepare()
     /// The window closed: stop what this button started.
     func close()
 }
@@ -96,15 +106,17 @@ enum RequestActions {
     }
 }
 
-/// `play-meeting`: plays the range with `tools meetings play <meeting> --at --to`, the cut the CLI plays; a second
-/// click stops the player, and the button turns back to Play when the clip ends.
+/// `play-meeting`: plays the range with `tools meetings play <meeting> --at --to` (the cut the CLI plays, `--track` when
+/// the request names one); a second click stops the player, and the button turns back to Play when the clip ends.
+/// When the window opens it plans the same play with `--no-start`, so a range with no sound shows a dimmed button and
+/// its reason instead of failing on the click.
 @MainActor
 final class PlayMeetingButton: RequestActionButton {
     private let action: RequestPresentParamsActionsItemOption0
     private let context: RequestActionContext
     private var pid: Int32?
     private var starting = false
-    private(set) var note: String?
+    private(set) var problem: RequestActionProblem?
     var changed: (() -> Void)?
 
     init(_ action: RequestPresentParamsActionsItemOption0, context: RequestActionContext) {
@@ -120,29 +132,37 @@ final class PlayMeetingButton: RequestActionButton {
     /// Whole seconds, as `play --at` reads them: the start rounded down and the end up, so the cut holds the range.
     var argv: [String] {
         ["meetings", "play", action.meeting, "--at", String(Int(action.fromSec.rounded(.down))),
-         "--to", String(Int(action.toSec.rounded(.up))), "--json"]
+         "--to", String(Int(action.toSec.rounded(.up)))] + (action.track.map { ["--track", $0] } ?? []) + ["--json"]
     }
 
     var link: ApprovalLink {
-        pid == nil
-            ? ApprovalLink(title: starting ? "Starting…" : action.label, symbol: "play.fill") { [weak self] in self?.play() }
-            : ApprovalLink(title: "Stop", symbol: "stop.fill") { [weak self] in self?.stopPlaying() }
+        if let pid {
+            return ApprovalLink(title: "Stop", symbol: "stop.fill") { [weak self] in self?.stop(pid) }
+        }
+        return ApprovalLink(title: starting ? "Starting…" : action.label, symbol: "play.fill",
+                            enabled: problem == nil, help: problem?.sentence) { [weak self] in self?.play() }
     }
 
     var footnote: String { "\(action.label) only plays the clip." }
 
+    func prepare() {
+        context.tools(argv + ["--no-start"]) { [weak self] status, _, stderr in
+            guard let self, status != 0, pid == nil else { return }
+            problem = Self.problem(status: status, stderr: stderr)
+            changed?()
+        }
+    }
+
     func play() {
-        guard pid == nil, !starting else { return }
+        guard pid == nil, !starting, problem == nil else { return }
         starting = true
-        note = nil
         changed?()
         context.tools(argv) { [weak self] status, stdout, stderr in
             guard let self else { return }
             starting = false
             guard status == 0, let pid = Self.pid(in: stdout) else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                HubPerf.log("request.action play-meeting failed: exit \(status) \(reason)")
-                note = "The clip could not play: \(reason)"
+                problem = Self.problem(status: status, stderr: stderr)
+                HubPerf.log("request.action play-meeting failed: \(problem?.detail ?? "exit \(status)")")
                 changed?()
                 return
             }
@@ -156,16 +176,16 @@ final class PlayMeetingButton: RequestActionButton {
         }
     }
 
-    func stopPlaying() {
-        guard let pid else { return }
-        context.stop(pid)
-        self.pid = nil
+    private func stop(_ playing: Int32) {
+        guard pid == playing else { return }
+        context.stop(playing)
+        pid = nil
         changed?()
     }
 
     func close() {
         changed = nil
-        stopPlaying()
+        if let pid { stop(pid) }
     }
 
     /// The player's pid from `play --json`; nil when the plan started no player.
@@ -174,6 +194,32 @@ final class PlayMeetingButton: RequestActionButton {
               let pid = object["pid"] as? Int else { return nil }
         return Int32(pid)
     }
+
+    /// The CLI's refusal as a sentence a person reads and the CLI's own text for Details. The meetings CLI writes its
+    /// error as one JSON line on stderr (`{"error":{"data":{"code":…},"message":…}}`); its code picks the sentence.
+    static func problem(status: Int32, stderr: String) -> RequestActionProblem {
+        let lines = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let error = lines.lazy.compactMap { line -> [String: Any]? in
+            guard line.hasPrefix("{"),
+                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
+            return object["error"] as? [String: Any]
+        }.first
+        let code = (error?["data"] as? [String: Any])?["code"] as? String ?? error?["code"] as? String
+        let message = (error?["message"] as? String)
+            ?? lines.last.map { $0.replacingOccurrences(of: #"^[✗×]\s*"#, with: "", options: .regularExpression) }
+            ?? "exit \(status)"
+        return RequestActionProblem(sentence: sentence(code: code), detail: message)
+    }
+
+    /// The plain sentence for a refusal code of `meetings play`.
+    static func sentence(code: String?) -> String {
+        switch code {
+        case "no-transcript-source", "no-audio", "no-sound", "no-source-audio", "unplayable":
+            "This meeting has no sound to play yet."
+        default:
+            "The clip could not play."
+        }
+    }
 }
 
 /// `open-link`: opens an http(s) page; a genesis.tools router link opens its app.
@@ -181,7 +227,7 @@ final class PlayMeetingButton: RequestActionButton {
 final class OpenLinkButton: RequestActionButton {
     private let action: RequestPresentParamsActionsItemOption1
     private let context: RequestActionContext
-    let note: String? = nil
+    let problem: RequestActionProblem? = nil
     var changed: (() -> Void)?
 
     init(_ action: RequestPresentParamsActionsItemOption1, context: RequestActionContext) {
@@ -205,6 +251,8 @@ final class OpenLinkButton: RequestActionButton {
     }
 
     var footnote: String { "\(action.label) only opens the page." }
+
+    func prepare() {}
 
     func close() {
         changed = nil

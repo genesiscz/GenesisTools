@@ -1161,6 +1161,9 @@ test("a surface without buttons shows the rows and each action as the command or
             toSec: 89.2,
         })
     ).toBe("Play clip: tools meetings play 2026-01-12_10-00-planning --at 01:15 --to 01:30");
+    expect(
+        requestActionLine({ kind: "play-meeting", label: "Play", meeting: "m", fromSec: 1, toSec: 2, track: "mic-raw" })
+    ).toBe("Play: tools meetings play m --at 00:01 --to 00:02 --track mic-raw");
     expect(requestActionLine({ kind: "open-link", label: "Open page", url: "https://example.com/x" })).toBe(
         "Open page: https://example.com/x"
     );
