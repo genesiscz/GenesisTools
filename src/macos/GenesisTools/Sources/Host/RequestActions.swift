@@ -97,12 +97,30 @@ enum RequestActions {
     ]
 
     static func buttons(for params: RequestPresentParams, context: RequestActionContext) -> [RequestActionButton] {
-        (params.actions ?? []).compactMap { action in
-            for make in makers {
-                if let button = make(action, context) { return button }
+        (params.actions ?? []).compactMap { button(for: $0, context: context) }
+    }
+
+    /// Each row's own button by row id. A row's action has the same kinds and fields as the request's actions, so it
+    /// is read as one of them and made by the same makers.
+    static func rowButtons(for params: RequestPresentParams, context: RequestActionContext) -> [String: RequestActionButton] {
+        var buttons: [String: RequestActionButton] = [:]
+        for row in params.rows ?? [] {
+            guard let action = row.action else { continue }
+            do {
+                let item = try JSONDecoder().decode(RequestPresentParamsActionsItem.self, from: JSONEncoder().encode(action))
+                buttons[row.id] = button(for: item, context: context)
+            } catch {
+                HubPerf.log("request.action row \(row.id) has an action this app cannot read: \(error)")
             }
-            return nil
         }
+        return buttons
+    }
+
+    static func button(for action: RequestPresentParamsActionsItem, context: RequestActionContext) -> RequestActionButton? {
+        for make in makers {
+            if let button = make(action, context) { return button }
+        }
+        return nil
     }
 }
 

@@ -108,6 +108,9 @@ public final class ApprovalDialogModel: ObservableObject {
     /// The paths a destructive request names, as rows with their icons and open buttons (the rm window). Empty for a
     /// request that has only facts. `refresh` replaces them when a size arrives after the window opened.
     @Published public private(set) var items: [ApprovalItem]
+    /// The things a request covers, each ticked on its own with its own button (a request's `rows`); `selected`
+    /// holds the ids still ticked. Empty for a request of paths or of facts. `refresh(checks:)` replaces their buttons.
+    @Published public private(set) var checks: [ApprovalCheck]
     /// Touch ID inside the window: the sensor listens from the first frame and a touch approves (`onVerified`).
     /// nil keeps the Allow button, whose `onAllow` runs the host's own authentication.
     public let verifier: ApprovalVerifier?
@@ -158,7 +161,8 @@ public final class ApprovalDialogModel: ObservableObject {
                 allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
                 verifier: ApprovalVerifier? = nil, links: [ApprovalLink] = [], summary: String? = nil,
                 disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false,
-                touchIDWaitsForClick: Bool = false, deadlineLabel: String = "Denies itself in ", denyTitle: String = "Deny") {
+                touchIDWaitsForClick: Bool = false, deadlineLabel: String = "Denies itself in ", denyTitle: String = "Deny",
+                checks: [ApprovalCheck] = []) {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -175,6 +179,7 @@ public final class ApprovalDialogModel: ObservableObject {
         self.deadlineLabel = deadlineLabel
         self.identifier = identifier
         self.items = items
+        self.checks = checks
         self.verifier = verifier
         self.links = links
         self.summary = summary
@@ -182,7 +187,7 @@ public final class ApprovalDialogModel: ObservableObject {
         self.hint = hint
         self.selectable = selectable
         self.disposal = disposals.first?.id ?? ""
-        self.selected = Set(items.map(\.id))
+        self.selected = Set(items.map(\.id) + checks.map(\.id))
         verifier?.onVerified = { [weak self] method in self?.verified(method: method) }
         // An agent opened the window itself: the sensor stays off until the person clicks "Approve with Touch ID…".
         if touchIDWaitsForClick {
@@ -212,10 +217,20 @@ public final class ApprovalDialogModel: ObservableObject {
         self.summary = summary
     }
 
+    /// The same checks with their buttons' current words; the ticks stay as the person left them.
+    public func refresh(checks: [ApprovalCheck]) {
+        self.checks = checks
+    }
+
     /// The title with the live count when rows can be unticked.
     public var displayTitle: String {
         guard selectable, let titleForSelection else { return title }
-        return titleForSelection(selected.count, items.count)
+        return titleForSelection(selected.count, items.count + checks.count)
+    }
+
+    /// The checks still ticked, in their order.
+    public var selectedChecks: [ApprovalCheck] {
+        checks.filter { selected.contains($0.id) }
     }
 
     /// The rows still on, in their order.
@@ -265,10 +280,15 @@ public final class ApprovalDialogModel: ObservableObject {
 
     /// Ticks or unticks a row; with nothing ticked the sensor pauses, and it listens again with the first tick.
     public func setSelected(_ item: ApprovalItem, _ on: Bool) {
+        setSelected(id: item.id, on)
+    }
+
+    /// Ticks or unticks the row or check `id`, with the same pause and resume of the sensor.
+    public func setSelected(id: String, _ on: Bool) {
         if on {
-            selected.insert(item.id)
+            selected.insert(id)
         } else {
-            selected.remove(item.id)
+            selected.remove(id)
         }
 
         // Nothing picked: the sensor must not approve an empty request; it listens again once a row is on.
@@ -353,6 +373,12 @@ public struct ApprovalDialogView: View {
                     .padding(.leading, 66)
             }
 
+            if !model.checks.isEmpty {
+                ApprovalCheckList(checks: model.checks, identifier: model.identifier, selection: checkBinding)
+                    .padding(.leading, 66)
+                    .disabled(model.answered)
+            }
+
             // Drawn with or without items: a request of no items (the vault window) puts its state here, such as the
             // caller having exited.
             if let summary = model.summary {
@@ -407,7 +433,7 @@ public struct ApprovalDialogView: View {
         }
         .padding(20)
         // Rows with a name, a folder and three buttons need the room; a request of facts keeps the alert's width.
-        .frame(width: model.items.isEmpty ? 480 : 580)
+        .frame(width: model.items.isEmpty && model.checks.isEmpty ? 480 : 580)
         // The hidden title bar is no safe area (`safeAreaRegions = []` on the hosting controller), so the dialog
         // uses the full height and the panel's fitting size is the view's own; the strip stays draggable through
         // `.titlebarZone()`.
@@ -423,6 +449,14 @@ public struct ApprovalDialogView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(model.identifier)
+    }
+
+    private var checkBinding: Binding<Set<String>> {
+        Binding(get: { model.selected }, set: { next in
+            for check in model.checks where model.selected.contains(check.id) != next.contains(check.id) {
+                model.setSelected(id: check.id, next.contains(check.id))
+            }
+        })
     }
 
     private var selectionBinding: Binding<Set<String>> {
@@ -568,6 +602,8 @@ public struct ApprovalDialogView: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .fixedSize()
+                // Rows that can be unticked: with none ticked there is nothing to confirm.
+                .disabled(model.selectable && model.selected.isEmpty)
                 .accessibilityIdentifier("\(model.identifier)-allow")
         }
         .controlSize(.regular)
