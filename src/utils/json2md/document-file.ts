@@ -240,9 +240,7 @@ export async function buildDocument<T>(
     // in another directory, is meant to be able to run: building a vault note from the repo
     // recorded a `json2md build ../../../../../…` command, which works from exactly one place.
     // A path inside the current directory stays short; anything outside it goes in absolute.
-    const fromCwd = relative(process.cwd(), modulePath);
-    const portable = fromCwd !== "" && !fromCwd.startsWith("..") && !isAbsolute(fromCwd) ? fromCwd : modulePath;
-    const command = definition.command ?? overrides.rebuildCommand?.(portable);
+    const command = definition.command ?? overrides.rebuildCommand?.(portablePath(modulePath));
     const markdown = stampMarkdown(body, {
         source: sourceHash,
         generator: relative(dirname(outPath), modulePath) || modulePath,
@@ -251,6 +249,15 @@ export async function buildDocument<T>(
     });
 
     return { markdown, body, outPath, dataPath, sourceHash, data };
+}
+
+/**
+ * A generator's path as a durable rebuild command names it: relative when it lies under the current directory,
+ * absolute otherwise, so the command works from wherever another person runs it.
+ */
+export function portablePath(modulePath: string): string {
+    const fromCwd = relative(process.cwd(), modulePath);
+    return fromCwd !== "" && !fromCwd.startsWith("..") && !isAbsolute(fromCwd) ? fromCwd : modulePath;
 }
 
 function hintsOf(hints: DocumentHints): DocumentHints {
@@ -282,25 +289,46 @@ export interface WriteOptions extends DocumentHints {
     mergeFrontmatter?: boolean;
 }
 
+/** What a generator hands {@link writeGenerated} and {@link checkGenerated}: the stamped document and its parts. */
+export interface GeneratedBuild {
+    /** The finished document, stamp included. */
+    markdown: string;
+    /** The same document without its stamp. */
+    body: string;
+    /** Hash of the generator's input, recorded in the stamp so a data change reads apart from a generator change. */
+    sourceHash: string;
+}
+
+export interface GeneratedWriteOptions<R extends GeneratedBuild> {
+    outPath: string;
+    /**
+     * Renders the document. It is called first with the timestamp the existing file's stamp records, so an unchanged
+     * document keeps its generated-at, and again without one when the file must be rewritten.
+     */
+    build: (generatedAt?: string) => Promise<R>;
+    force?: boolean;
+    dryRun?: boolean;
+    mergeFrontmatter?: boolean;
+}
+
 /**
- * Renders and writes the document, refusing to overwrite a hand edit.
+ * Writes any stamped generated document, refusing to overwrite a hand edit: the write half of {@link writeDocument},
+ * for a generator whose input is not one JSON file (the meetings polished file reads its records live).
  *
  * 🛑 Every verdict except `stale` and `clean` is a refusal, not a warning. Overwriting is the
  * one outcome that cannot be undone from the repository, because the edit exists nowhere else.
  */
-export async function writeDocument<T>(
-    modulePath: string,
-    definition: DocumentDefinition<T>,
-    options: WriteOptions = {}
-): Promise<WriteResult> {
-    const outPath = outputPathFor(modulePath, definition);
+export async function writeGenerated<R extends GeneratedBuild>(
+    options: GeneratedWriteOptions<R>
+): Promise<R & { outcome: WriteOutcome; check: CheckResult | null; carried: string[] }> {
+    const { outPath } = options;
     const existing = Bun.file(outPath);
 
     if (!(await existing.exists())) {
-        const built = await buildDocument(modulePath, definition, hintsOf(options));
+        const built = await options.build();
 
         if (!options.dryRun) {
-            await Bun.write(built.outPath, built.markdown);
+            await Bun.write(outPath, built.markdown);
         }
 
         return { ...built, outcome: options.dryRun ? "would-write" : "written", check: null, carried: [] };
@@ -309,10 +337,7 @@ export async function writeDocument<T>(
     const current = await existing.text();
     // Rebuild at the previous timestamp first. Only if THAT still differs has something real
     // changed, so an unchanged document keeps its original generated-at and never re-diffs.
-    const pinned = await buildDocument(modulePath, definition, {
-        ...hintsOf(options),
-        generatedAt: stripStamp(current).stamp?.generated,
-    });
+    const pinned = await options.build(stripStamp(current).stamp?.generated);
     const check = checkMarkdown({ current, regenerated: pinned.markdown, sourceHash: pinned.sourceHash });
 
     if (check.verdict === "clean") {
@@ -320,7 +345,7 @@ export async function writeDocument<T>(
             options.mergeFrontmatter === false && stripStamp(current).body !== stripStamp(pinned.markdown).body;
 
         if (removeExtras && !options.dryRun) {
-            await Bun.write(pinned.outPath, pinned.markdown);
+            await Bun.write(outPath, pinned.markdown);
         }
 
         return {
@@ -338,7 +363,7 @@ export async function writeDocument<T>(
         return { ...pinned, outcome: "refused", check, carried: [] };
     }
 
-    const fresh = await buildDocument(modulePath, definition, hintsOf(options));
+    const fresh = await options.build();
     const legacy = check.stamp ? legacyOwnedKeys(check.stamp, stripStamp(current).body) : null;
     const owned = legacy ?? ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set<string>();
     // The previous ownership set prevents removed generator keys from being carried back.
@@ -348,10 +373,31 @@ export async function writeDocument<T>(
             : carryFrontmatterKeys(fresh.markdown, current, owned);
 
     if (!options.dryRun) {
-        await Bun.write(fresh.outPath, markdown);
+        await Bun.write(outPath, markdown);
     }
 
     return { ...fresh, markdown, outcome: options.dryRun ? "would-write" : "written", check, carried };
+}
+
+/**
+ * Renders and writes the document, refusing to overwrite a hand edit ({@link writeGenerated}).
+ */
+export async function writeDocument<T>(
+    modulePath: string,
+    definition: DocumentDefinition<T>,
+    options: WriteOptions = {}
+): Promise<WriteResult> {
+    return writeGenerated({
+        outPath: outputPathFor(modulePath, definition),
+        build: (generatedAt) =>
+            buildDocument(modulePath, definition, {
+                ...hintsOf(options),
+                ...(generatedAt === undefined ? {} : { generatedAt }),
+            }),
+        force: options.force,
+        dryRun: options.dryRun,
+        mergeFrontmatter: options.mergeFrontmatter,
+    });
 }
 
 export interface DocumentCheck extends CheckResult {
@@ -362,13 +408,12 @@ export interface DocumentCheck extends CheckResult {
     diff: string;
 }
 
-/** Checks the written document against what the definition produces now. */
-export async function checkDocument<T>(
-    modulePath: string,
-    definition: DocumentDefinition<T>,
-    hints: DocumentHints = {}
-): Promise<DocumentCheck> {
-    const outPath = outputPathFor(modulePath, definition);
+/** Checks any stamped generated document against what its generator produces now: the check half of {@link checkDocument}. */
+export async function checkGenerated(options: {
+    outPath: string;
+    build: (generatedAt?: string) => Promise<GeneratedBuild>;
+}): Promise<DocumentCheck> {
+    const { outPath } = options;
     const file = Bun.file(outPath);
 
     if (!(await file.exists())) {
@@ -385,10 +430,7 @@ export async function checkDocument<T>(
 
     const current = await file.text();
     // Pinned to the file's own timestamp, so the generated-at line is never itself the change.
-    const built = await buildDocument(modulePath, definition, {
-        ...hintsOf(hints),
-        generatedAt: stripStamp(current).stamp?.generated,
-    });
+    const built = await options.build(stripStamp(current).stamp?.generated);
     const check = checkMarkdown({ current, regenerated: built.markdown, sourceHash: built.sourceHash });
 
     return {
@@ -399,12 +441,57 @@ export async function checkDocument<T>(
     };
 }
 
+/** Checks the written document against what the definition produces now. */
+export async function checkDocument<T>(
+    modulePath: string,
+    definition: DocumentDefinition<T>,
+    hints: DocumentHints = {}
+): Promise<DocumentCheck> {
+    return checkGenerated({
+        outPath: outputPathFor(modulePath, definition),
+        build: (generatedAt) =>
+            buildDocument(modulePath, definition, {
+                ...hintsOf(hints),
+                ...(generatedAt === undefined ? {} : { generatedAt }),
+            }),
+    });
+}
+
 type DiffOp = { kind: " " | "-" | "+"; text: string };
 
 /** Longest common subsequence over lines. Capped, because the table is O(n × m). */
 const LCS_LINE_CAP = 2000;
 
+/**
+ * The common first and last lines are kept aside before the comparison, so one edit in a long document (a generated
+ * file of thousands of lines) compares only the changed middle instead of falling back to the positional diff, which
+ * marks every line after an inserted one as changed.
+ */
 function diffOps(a: readonly string[], b: readonly string[]): DiffOp[] {
+    let start = 0;
+
+    while (start < a.length && start < b.length && a[start] === b[start]) {
+        start += 1;
+    }
+
+    let endA = a.length;
+    let endB = b.length;
+
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+        endA -= 1;
+        endB -= 1;
+    }
+
+    const same = (lines: readonly string[]): DiffOp[] => lines.map((text) => ({ kind: " ", text }));
+
+    return [
+        ...same(a.slice(0, start)),
+        ...middleOps(a.slice(start, endA), b.slice(start, endB)),
+        ...same(a.slice(endA)),
+    ];
+}
+
+function middleOps(a: readonly string[], b: readonly string[]): DiffOp[] {
     if (a.length > LCS_LINE_CAP || b.length > LCS_LINE_CAP) {
         // Positional fallback. Less readable, but it never allocates a huge table.
         const ops: DiffOp[] = [];
