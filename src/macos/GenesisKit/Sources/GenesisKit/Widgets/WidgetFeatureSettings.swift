@@ -940,12 +940,30 @@ private struct WidgetModuleSettings: View {
         VStack(spacing: 18) {
             WidgetSettingsLoading(model: model)
             if model.settingsLoaded {
+                showCard
                 group("Top notch", index: nil)
                 ForEach(0..<3) { index in group("Side group \(index + 1)", index: index) }
             }
             WidgetSettingsError(model: model)
         }.task { model.refreshSettings() }
     }
+    /// The widget's own switch, first on this page: it shows or hides the top notch and every side group and keeps
+    /// each choice below (Martin, 2026-11-24: "the first you check"). The same preference as General's "Show the widget".
+    private var showCard: some View {
+        NativeSettingsCard("Widget") {
+            NativeSettingsToggle(
+                "Show the widget", detail: "The top notch and the side groups. Turning it off keeps every choice below.",
+                identifier: "widget.modules.showWidget",
+                isOn: Binding(
+                    get: { model.preferences.showWidget },
+                    set: { shown in model.writePreferences { $0.showWidget = shown } }))
+            if !model.preferences.showWidget {
+                Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     private func group(_ title: String, index: Int?) -> some View {
         let placement = model.preferences.placement
         // "Visible edges" hides this edge, so a module change here showed nothing (Martin, 2026-10-22).
