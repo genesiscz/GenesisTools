@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { KeyedRerun } from "@genesiscz/utils/async";
 import { JobRegistry } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -8,6 +9,7 @@ import { PathLockBusyError, waitForPathArbitration } from "@genesiscz/utils/stor
 import { DecisionJournal } from "../decision-journal";
 import { recordPeople } from "../listen-answers";
 import { errorText } from "../shared";
+import { StaleSuggestionError } from "../suggest";
 import { type BackfillRow, backfillRecords, type LearningRun, learnMeetingVoices } from "../voice-backfill";
 import { answeredVoiceTargets } from "../voice-samples";
 import { applyVoices, type VoicesAccess } from "../voices";
@@ -34,7 +36,13 @@ export class MeetingVoiceJobs {
     private readonly runs = new Map<string, Run>();
     private readonly seen = new Map<string, Map<string, string>>();
     private readonly cancelledTokens = new Map<string, Set<string>>();
-    private readonly naming = new Map<string, { timer: ReturnType<typeof setTimeout> }>();
+    /** One naming pass per meeting: `reproposeDelaySec` after its last new sample, and one more after a pass that a
+     * newer sample or a newer record write overtook. */
+    private readonly naming = new KeyedRerun<string>({
+        run: (meeting, started) => this.nameAgain(meeting, started),
+        onError: (meeting, error) => log.debug({ error, meeting }, "voice naming job ended"),
+    });
+    private readonly namingFor = new Map<string, { project: string; delaySec: number }>();
     private tail: Promise<void> = Promise.resolve();
     private closed = false;
 
@@ -48,7 +56,7 @@ export class MeetingVoiceJobs {
 
     get busy(): boolean {
         return (
-            this.naming.size > 0 ||
+            this.naming.busy ||
             [...this.runs.values()].some(({ row }) => row.state === "queued" || row.state === "running")
         );
     }
@@ -68,10 +76,7 @@ export class MeetingVoiceJobs {
 
     stop(): void {
         this.closed = true;
-        for (const { timer } of this.naming.values()) {
-            clearTimeout(timer);
-        }
-        this.naming.clear();
+        this.naming.stop();
         for (const id of this.runs.keys()) {
             this.cancel(id);
         }
@@ -205,7 +210,7 @@ export class MeetingVoiceJobs {
                 if (pending.length) {
                     const config = await (this.options.config?.() ??
                         new MeetingsConfigStore(this.options.store.storage).read());
-                    this.scheduleNaming(record.id, project, pending, config.meetings.voices.reproposeDelaySec);
+                    this.scheduleNaming(record.id, project, config.meetings.voices.reproposeDelaySec);
                 }
                 return rows;
             }
@@ -240,45 +245,62 @@ export class MeetingVoiceJobs {
         }
     }
 
-    private scheduleNaming(meeting: string, project: string, ids: SampleId[], delaySec: number): void {
+    private scheduleNaming(meeting: string, project: string, delaySec: number): void {
         if (this.closed) {
             return;
         }
-        const previous = this.naming.get(meeting);
-        if (previous) {
-            clearTimeout(previous.timer);
+        this.namingFor.set(meeting, { project, delaySec });
+        this.naming.trigger(meeting, delaySec * 1000);
+    }
+
+    /**
+     * One naming job on the service's queue. It reads the samples still waiting for a pass when it starts, so the
+     * samples learned while it waited in the queue are its own. A pass that newer record writes overtook every time it
+     * tried (`StaleSuggestionError`) asks for one more pass; its samples stay waiting until a pass finishes.
+     */
+    private nameAgain(meeting: string, started: () => void): Promise<void> {
+        const scope = this.namingFor.get(meeting);
+        if (!scope || this.closed) {
+            return Promise.resolve();
         }
-        const timer = setTimeout(() => {
-            void this.tail
-                .then(() => {
-                    if (this.closed || this.naming.get(meeting)?.timer !== timer) {
-                        return;
-                    }
-                    this.naming.delete(meeting);
-                    const step = `Naming again with ${ids.length} new samples`;
-                    return this.enqueue({ meeting, project, kind: "answer-samples", step }, async (run) => {
-                        if (this.options.store.read(meeting)?.project !== project) {
-                            return;
-                        }
-                        const named = await (this.options.nameMeeting ?? applyVoices)({
-                            ...this.options,
-                            meeting,
-                            signal: run.controller.signal,
-                        });
-                        log.info(
-                            { meeting, samples: ids.length, added: named.added, warnings: named.warnings },
-                            "voice naming pass after new samples"
-                        );
-                        if (named.warnings.length) {
-                            this.update(run, { warnings: named.warnings });
-                        }
-                        await new DecisionJournal({ store: this.options.store }).finishNaming(meeting, project, ids);
-                        this.options.named?.(meeting);
+        const { project, delaySec } = scope;
+        const journal = new DecisionJournal({ store: this.options.store });
+        let ids: SampleId[] = [];
+        const starting = () => {
+            started();
+            ids = journal.pendingNaming(meeting, project);
+            return `Naming again with ${ids.length} new samples`;
+        };
+        return this.enqueue(
+            { meeting, project, kind: "answer-samples", step: "Naming again", starting },
+            async (run) => {
+                if (this.options.store.read(meeting)?.project !== project) {
+                    return;
+                }
+                let named: Awaited<ReturnType<typeof applyVoices>>;
+                try {
+                    named = await (this.options.nameMeeting ?? applyVoices)({
+                        ...this.options,
+                        meeting,
+                        signal: run.controller.signal,
                     });
-                })
-                .catch((error: unknown) => log.debug({ error, meeting }, "voice naming job ended"));
-        }, delaySec * 1000);
-        this.naming.set(meeting, { timer });
+                } catch (error) {
+                    if (error instanceof StaleSuggestionError) {
+                        this.scheduleNaming(meeting, project, delaySec);
+                    }
+                    throw error;
+                }
+                log.info(
+                    { meeting, samples: ids.length, added: named.added, warnings: named.warnings },
+                    "voice naming pass after new samples"
+                );
+                if (named.warnings.length) {
+                    this.update(run, { warnings: named.warnings });
+                }
+                await journal.finishNaming(meeting, project, ids);
+                this.options.named?.(meeting);
+            }
+        );
     }
 
     private update(run: Run, change: Partial<VoiceJob>): void {
@@ -293,8 +315,17 @@ export class MeetingVoiceJobs {
         {
             step,
             suppressRetry,
+            starting,
             ...scope
-        }: { kind: VoiceJob["kind"]; project: string; meeting: string; step: string; suppressRetry?: () => void },
+        }: {
+            kind: VoiceJob["kind"];
+            project: string;
+            meeting: string;
+            step: string;
+            suppressRetry?: () => void;
+            /** Runs when the job leaves the queue; its answer is the step shown while it runs. */
+            starting?: () => string;
+        },
         work: (run: Run) => Promise<T>
     ): Promise<T> {
         const id = randomUUID();
@@ -311,7 +342,11 @@ export class MeetingVoiceJobs {
         this.update(run, {});
         const done = this.tail.then(async () => {
             run.controller.signal.throwIfAborted();
-            this.update(run, { state: "running" });
+            const runningStep = starting?.();
+            this.update(run, {
+                state: "running",
+                ...(runningStep ? { progress: { ...run.row.progress, step: runningStep } } : {}),
+            });
             const job = this.registry.run<T | undefined>({
                 id,
                 kind: row.kind,
