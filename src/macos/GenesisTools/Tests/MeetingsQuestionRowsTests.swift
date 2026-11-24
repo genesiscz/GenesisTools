@@ -176,6 +176,13 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(PeopleText.questionPeople([present, absent], choices: [absent.name], query: "", hideAbsent: true).map(\.id), [present.id])
         XCTAssertEqual(PeopleText.questionPeople([present, absent], choices: [], query: "", hideAbsent: false).count, 2)
     }
+    func testATypedNameListsMatchesOutsideTheCallAfterThePresentOnes() {
+        // 2026-11-24: "Dami" in a question's picker offered only "Use 'Dami' as typed", as its one match was absent then.
+        XCTAssertEqual(PeopleText.questionPeople([absent, present], choices: [], query: "example", hideAbsent: true).map(\.id),
+                       [present.id, absent.id])
+        XCTAssertEqual(PeopleText.questionPeople([absent], choices: [], query: "bob", hideAbsent: true).map(\.id), [absent.id])
+        XCTAssertEqual(PeopleText.questionPeople([absent, present], choices: [], query: " ", hideAbsent: true).map(\.id), [present.id])
+    }
     func testL17EveryDecidedLineKeepsItsFullText() throws {
         XCTAssertGreaterThan(try evidence().decidedLines.required(0).text.count, 240)
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[{"kind":"said","text":"Old truncated quote"}],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
