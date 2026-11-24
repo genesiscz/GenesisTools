@@ -4283,6 +4283,37 @@ test("voices apply delegates to the existing speakers pass and never confirms it
     expect(run).toHaveBeenCalledWith({ store, record, rules: ["speakers"] });
 });
 
+test("a second naming pass on one meeting waits for the running one, then runs", async () => {
+    const store = new MeetingStore(new Storage("voice-apply-lock-fixture"));
+    const record = await store.create(
+        { title: "Apply", start: "2026-11-01T10:00:00Z", createdBy: "new", project: "apply-voice-fixture" },
+        { command: "new", change: "fixture" }
+    );
+    const firstStarted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const run = spyOn(suggestRun, "runSuggest").mockImplementation(async () => {
+        const pass = order.filter((step) => step.startsWith("start")).length + 1;
+        order.push(`start ${pass}`);
+        if (pass === 1) {
+            firstStarted.resolve();
+            await release.promise;
+        }
+        order.push(`end ${pass}`);
+        return { fresh: [], retired: [], warnings: [] };
+    });
+    p6VoiceSpies.push(run);
+    const first = applyVoices({ store, meeting: record.id });
+    await firstStarted.promise;
+    const second = applyVoices({ store, meeting: record.id });
+    // Long enough for an unlocked second pass to start; the lock polls every 50 ms.
+    await Bun.sleep(150);
+    expect(order).toEqual(["start 1"]);
+    release.resolve();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["start 1", "end 1", "start 2", "end 2"]);
+});
+
 test("removing one numbered sample preserves other tracks sharing its meeting and start time", async () => {
     const store = new MeetingStore(new Storage("voice-numbered-removal-fixture"));
     const project = "numbered-removal-fixture";

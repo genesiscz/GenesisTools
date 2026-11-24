@@ -1737,7 +1737,7 @@ export const voicesApply = defineMethod({
     name: "voices.apply",
     params: z.object({ meeting: meetingRef }).strict(),
     result: z.object({ meeting: z.string(), added: z.number().int().nonnegative(), warnings: z.array(z.string()) }),
-    doc: "Run the meeting's existing suggestion pass for speaker rules. Names stay suggested and keep the voice score; confirms no speaker.",
+    doc: "Run the meeting's existing suggestion pass for speaker rules. Names stay suggested and keep the voice score; confirms no speaker. One pass per meeting runs at a time in every process: this waits for one already running. A pass that a newer write overtook plans again; one that changes nothing writes nothing.",
     effect: "reversible",
 });
 export const voicesRemove = defineMethod({
