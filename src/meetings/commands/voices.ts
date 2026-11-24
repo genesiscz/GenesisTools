@@ -5,7 +5,13 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
-import { idSchema, ownerKey, readVoiceLibrary, voicesIn } from "@genesiscz/utils/meetings/voice-library";
+import {
+    dedupeVoiceLines,
+    idSchema,
+    ownerKey,
+    readVoiceLibrary,
+    voicesIn,
+} from "@genesiscz/utils/meetings/voice-library";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
@@ -398,6 +404,44 @@ export function registerVoicesCommand(program: Command): void {
                 out.println(table.toString());
                 ui.info(
                     `${result.dryRun ? "Would add" : "Added"} ${result.added} samples. ${result.present} already present.`
+                );
+            })
+        );
+
+    voices
+        .command("dedupe")
+        .description(
+            "Remove voice samples that repeat a line the same person already holds (a backfill after a join learned it again); the first one stays"
+        )
+        .option("--dry-run", "list the repeated samples without saving")
+        .option("--json", "print the repeated samples, the library revision and the correction token")
+        .action((opts: { dryRun?: boolean; json?: boolean }) =>
+            guarded(async () => {
+                const flags = { ...voices.opts<VoiceOptions>(), ...opts };
+                const result = dedupeVoiceLines(flags.dryRun ? { dryRun: true } : {});
+                if (flags.json) {
+                    out.result(SafeJSON.stringify(result));
+                    return;
+                }
+                if (!result.rows.length) {
+                    out.println("No voice sample repeats a line its person already holds.");
+                    return;
+                }
+                const table = createBoxTable(["SAMPLE", "KEEPS", "PERSON", "MEETING", "SECONDS"]);
+                for (const row of result.rows) {
+                    table.push([
+                        row.id,
+                        row.keeps,
+                        row.owner.name,
+                        row.meeting,
+                        `${formatClock(row.fromSec)}–${formatClock(row.toSec)}`,
+                    ]);
+                }
+                out.println(table.toString());
+                ui.info(
+                    result.token
+                        ? `Removed ${result.rows.length} repeated samples; each line keeps its first sample. Correction token: ${result.token}`
+                        : `Would remove ${result.rows.length} repeated samples. Nothing was saved.`
                 );
             })
         );

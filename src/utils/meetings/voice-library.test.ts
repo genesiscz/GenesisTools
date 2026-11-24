@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { meetingsConfigSchema } from "./config";
 import { PeopleBook } from "./people-book";
+import { JOIN_PART_FILE, JOINED_RECORD_VERSION, MeetingStore } from "./record";
 import type { ConfirmedSampleInput, LibraryV2, VoiceOwner } from "./voice-library";
 import { addVoicePrint, readVoiceStore, removeVoicePrint, type VoicePrint, voicePrintSchema } from "./voice-store";
 
@@ -666,4 +667,200 @@ test("a rename re-keys every sample of the owner with no refusal, joins an exist
     expect(() => correctVoiceSample({ kind: "rename", ids: ["vs_missing"], to: { name: "Wren Example" } })).toThrow(
         "Stale voice sample selection."
     );
+});
+
+describe("a line of a recording a join absorbed", () => {
+    const later = "2026-11-01_10-11-later-fixture";
+    const owner = { name: "Wren Example" };
+    const lineKey = SafeJSON.stringify(["entry-v1", "source-later-fixture", "line-7"]);
+    const before: VoicePrint = {
+        meeting: later,
+        sourceSha: "digest-later",
+        seat: "mic",
+        track: "source-mic",
+        fromSec: 10,
+        toSec: 12,
+        embedding: [0.25, 0.5, 0.75],
+        confirmedAt: "2026-11-01T10:20:00Z",
+        question: "i7",
+    };
+    const repeatId = "vs_repeat-fixture";
+
+    /**
+     * The defect's store: one answer saved before the join, and the same line saved again after it, as a backfill
+     * did before this fix.
+     */
+    async function repeatedLine() {
+        const { insertVoiceSample, sourceForVoicePrint } = await library();
+        const store = new MeetingStore();
+        const kept = await store.create(
+            { title: "Joined fixture", start: "2026-11-01T09:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const learned = insertVoiceSample({
+            project: "work",
+            owner,
+            print: before,
+            model,
+            source: sourceForVoicePrint(before, later, lineKey),
+            origin: "answer",
+            acquiredBy: "live",
+            decision: { token: "answer-one", item: "i7" },
+        });
+        if (!("id" in learned)) {
+            throw new Error("the answer before the join must add a sample");
+        }
+        const part = (record: string, offsetMs: number) => ({
+            record,
+            title: "Fixture",
+            sourceId: "wisprflow",
+            sourceMeetingId: `m-${record}`,
+            zeroAt: new Date(Date.UTC(2026, 10, 1, 9) + offsetMs).toISOString(),
+            offsetMs,
+            endSec: 100,
+        });
+        await store.update(kept.id, { command: "test", change: "join fixture" }, (current) => {
+            current.version = JOINED_RECORD_VERSION;
+            current.join = {
+                version: 1,
+                at: "2026-11-01T12:00:00Z",
+                backup: "/backup",
+                parts: [part(kept.id, 0), part(later, 654273)],
+            };
+        });
+        mkdirSync(store.folder(later), { recursive: true });
+        writeFileSync(join(store.folder(later), JOIN_PART_FILE), SafeJSON.stringify({ joinedInto: kept.id }));
+        const after: VoicePrint = { ...before, meeting: kept.id, fromSec: 664.273, toSec: 666.273 };
+        const source = sourceForVoicePrint(after, kept.id, lineKey);
+        const onDisk = persisted();
+        onDisk.samples.push({ ...onDisk.samples[0]!, ...after, id: repeatId, source, acquiredBy: "backfill" });
+        onDisk.receipts.push({
+            kind: "learn",
+            token: "answer-one",
+            item: "i7",
+            project: "work",
+            owner,
+            source,
+            id: repeatId,
+            revision: onDisk.revision + 1,
+            requestDigest: "fixture-digest",
+        });
+        onDisk.revision++;
+        atomicWriteFileSync(libraryPath(), SafeJSON.stringify(onDisk));
+        return { kept, learned, after };
+    }
+
+    test("its row under the old id and its row under the joined record count once, and a new answer adds none", async () => {
+        const { insertVoiceSample, predictionPrints, readVoiceLibrary, sourceForVoicePrint, voicesIn } =
+            await library();
+        const { kept, learned, after } = await repeatedLine();
+        const bytes = readFileSync(libraryPath());
+
+        const view = readVoiceLibrary();
+        expect(view.library.samples.map((s) => s.source.rootMeeting)).toEqual([kept.id, kept.id]);
+        expect(voicesIn(view, { kind: "all" }).flatMap((row) => row.samples.map((s) => s.id))).toEqual([learned.id]);
+        expect(predictionPrints({ project: "work", scope: "project", view }).samples.map((s) => s.id)).toEqual([
+            learned.id,
+        ]);
+        expect(readVoiceStore("work").people[owner.name]?.samples).toHaveLength(1);
+
+        const answer: ConfirmedSampleInput = {
+            project: "work",
+            owner,
+            print: after,
+            model,
+            source: sourceForVoicePrint(after, kept.id, lineKey),
+            origin: "answer",
+            acquiredBy: "live",
+        };
+        expect(insertVoiceSample({ ...answer, decision: { token: "answer-two", item: "i9" } })).toMatchObject({
+            status: "already-present",
+            id: learned.id,
+        });
+        // The first answer learned again on the joined clock, as the service's start-up backfill does.
+        expect(
+            insertVoiceSample({ ...answer, acquiredBy: "backfill", decision: { token: "answer-one", item: "i7" } })
+        ).toMatchObject({ status: "already-present", id: learned.id });
+        expect(readFileSync(libraryPath())).toEqual(bytes);
+    });
+
+    test("a new answer after the join, with no repeat on disk, saves nothing and the old id stays as saved", async () => {
+        const { insertVoiceSample, sourceForVoicePrint } = await library();
+        const { kept, learned, after } = await repeatedLine();
+        const onDisk = persisted();
+        onDisk.samples = onDisk.samples.filter((s) => s.id !== repeatId);
+        onDisk.receipts = onDisk.receipts.filter((r) => r.kind !== "learn" || r.id !== repeatId);
+        atomicWriteFileSync(libraryPath(), SafeJSON.stringify(onDisk));
+
+        const answer: ConfirmedSampleInput = {
+            project: "work",
+            owner,
+            print: after,
+            model,
+            source: sourceForVoicePrint(after, kept.id, lineKey),
+            origin: "answer",
+            acquiredBy: "live",
+            decision: { token: "answer-two", item: "i9" },
+        };
+        expect(insertVoiceSample(answer)).toMatchObject({ status: "already-present", id: learned.id });
+        // Another line of the absorbed recording, first learned after the join, is a new sample of the joined record.
+        const next: VoicePrint = { ...after, fromSec: 700, toSec: 702 };
+        const nextKey = SafeJSON.stringify(["entry-v1", "source-later-fixture", "line-8"]);
+        const added = insertVoiceSample({
+            ...answer,
+            print: next,
+            source: sourceForVoicePrint(next, kept.id, nextKey),
+        });
+        expect(added.status).toBe("added");
+        expect(persisted().samples.map((s) => [s.meeting, s.source.rootMeeting])).toEqual([
+            [later, later],
+            [kept.id, kept.id],
+        ]);
+    });
+
+    test("undoing the answer removes the line's repeated row too", async () => {
+        const { changeVoiceLearning, sourceForVoicePrint } = await library();
+        const { learned } = await repeatedLine();
+        changeVoiceLearning({
+            add: [],
+            remove: [
+                {
+                    project: "work",
+                    owner,
+                    model,
+                    print: before,
+                    source: sourceForVoicePrint(before, later, lineKey),
+                    id: learned.id,
+                    token: "answer-one",
+                },
+            ],
+        });
+        const saved = persisted();
+        expect(saved.samples).toEqual([]);
+        expect(saved.receipts.map((r) => (r.kind === "learn" ? [r.id, r.active] : []))).toEqual([
+            [learned.id, false],
+            [repeatId, false],
+        ]);
+    });
+
+    test("voices dedupe lists the repeat without saving, then removes it into one correction receipt", async () => {
+        const { dedupeVoiceLines } = await library();
+        const { kept, learned } = await repeatedLine();
+        const bytes = readFileSync(libraryPath());
+
+        const plan = dedupeVoiceLines({ dryRun: true });
+        expect(plan).toMatchObject({
+            dryRun: true,
+            rows: [{ id: repeatId, keeps: learned.id, owner, project: "work", meeting: kept.id, fromSec: 664.273 }],
+        });
+        expect(readFileSync(libraryPath())).toEqual(bytes);
+
+        const applied = dedupeVoiceLines();
+        expect(applied.rows.map((row) => row.id)).toEqual([repeatId]);
+        const saved = persisted();
+        expect(saved.samples.map((s) => [s.id, s.source.rootMeeting])).toEqual([[learned.id, later]]);
+        const receipt = saved.receipts.find((r) => r.kind === "correct" && r.token === applied.token);
+        expect(receipt?.kind === "correct" && receipt.before.map((s) => s.id)).toEqual([repeatId]);
+        expect(dedupeVoiceLines({ dryRun: true }).rows).toEqual([]);
+    });
 });

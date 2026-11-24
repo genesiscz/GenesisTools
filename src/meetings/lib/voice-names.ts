@@ -1,6 +1,6 @@
 import { IntervalIndex } from "@genesiscz/utils/array";
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
-import { toJoinedSec } from "@genesiscz/utils/meetings/record";
+import { printOffsetMs, toJoinedSec } from "@genesiscz/utils/meetings/record";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
 import type { SampleSource } from "@genesiscz/utils/meetings/voice-library";
 import type { VoicePrint, VoiceStore } from "@genesiscz/utils/meetings/voice-store";
@@ -284,11 +284,11 @@ function closestPrint(profile: Profile, target: Target): number {
 function ownWindow(input: {
     meeting: string;
     lineKey: string | undefined;
-    sample: { fromSec: number; toSec: number };
+    sample: { meeting: string; fromSec: number; toSec: number };
     vector: number[];
     options: Pick<NamingInputs, "meeting" | "aliases">;
 }) {
-    const offsetMs = input.meeting === input.options.meeting ? 0 : input.options.aliases?.get(input.meeting);
+    const offsetMs = printOffsetMs({ root: input.meeting, meeting: input.sample.meeting }, input.options);
 
     if (offsetMs === undefined) {
         return undefined;

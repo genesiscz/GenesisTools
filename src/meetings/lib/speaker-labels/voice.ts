@@ -9,7 +9,13 @@ import {
     type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
-import { joinAliases, type MeetingRecord, toJoinedSec, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import {
+    joinAliases,
+    type MeetingRecord,
+    printOffsetMs,
+    toJoinedSec,
+    voiceRootMeeting,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import {
@@ -222,8 +228,8 @@ function comparedSamples(options: {
             sample.track === options.line.track &&
             sample.embedding.length === voice.embedding.length &&
             !(() => {
-                const own = options.sources.get(sample)?.rootMeeting ?? sample.meeting;
-                const offsetMs = own === options.meeting ? 0 : options.aliases?.get(own);
+                const root = options.sources.get(sample)?.rootMeeting ?? sample.meeting;
+                const offsetMs = printOffsetMs({ root, meeting: sample.meeting }, options);
                 return (
                     offsetMs !== undefined &&
                     toJoinedSec(sample.fromSec, offsetMs) < toSec &&
