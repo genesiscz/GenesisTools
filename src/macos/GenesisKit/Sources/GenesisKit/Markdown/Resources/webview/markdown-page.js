@@ -1153,6 +1153,71 @@
     window.addEventListener("blur", () => {
         gnDragging = false;
     });
+    // ---- Folds: the <details> blocks of a note ----
+    // A block inside a closed fold is not drawn, yet WebKit still gives it a box: where it would sit past the fold's
+    // summary, so deep in a long fold that the box lies beyond the end of the page. A polished meeting keeps its
+    // transcript in a fold, and a link to a transcript line scrolled to that box: empty space with an empty band. So a
+    // jump the reader asked for (a line range, a find match, a heading) opens the fold and every fold around it first,
+    // and what only measures the page (scroll sync, the reading position, git bars, find ticks) skips such a block or
+    // uses the fold it sits in. The page never closes a fold: the reader does, with its summary.
+    function gnClosedFolds(el) {
+        var out = [];
+        for (var n = el; n && n.parentElement && n.id !== "gn-article"; n = n.parentElement) {
+            var p = n.parentElement;
+            if (p.localName === "details" && !p.open && n !== p.querySelector(":scope > summary")) {
+                out.push(p);
+            }
+        }
+        return out;
+    }
+    function gnFolded(el) {
+        return gnClosedFolds(el).length > 0;
+    }
+    // What the reader sees in a block's place: the block, or the outermost closed fold that holds it.
+    function gnShownBox(el) {
+        var f = gnClosedFolds(el);
+        return f.length ? f[f.length - 1] : el;
+    }
+    function gnUnfold(el) {
+        var f = gnClosedFolds(el);
+        for (var i = 0; i < f.length; i++) {
+            f[i].open = true;
+        }
+    }
+    // A render builds every fold as the note wrote it. The folds of the same document keep the state the reader or a
+    // jump gave them: a fold is known by its summary's text and its place among the folds with that text.
+    function gnFoldKeys(art) {
+        var ds = art.querySelectorAll("details"),
+            seen = {},
+            out = [];
+        for (var i = 0; i < ds.length; i++) {
+            var s = ds[i].querySelector(":scope > summary"),
+                t = s ? (s.textContent || "").replace(/\s+/g, " ").trim() : "";
+            seen[t] = (seen[t] || 0) + 1;
+            out.push({ el: ds[i], key: seen[t] + " " + t });
+        }
+        return out;
+    }
+    function gnCaptureFolds(art) {
+        var open = {},
+            fs = gnFoldKeys(art);
+        for (var i = 0; i < fs.length; i++) {
+            open[fs[i].key] = fs[i].el.open;
+        }
+        return open;
+    }
+    function gnRestoreFolds(art, open) {
+        if (!open) {
+            return;
+        }
+        var fs = gnFoldKeys(art);
+        for (var i = 0; i < fs.length; i++) {
+            var was = open[fs[i].key];
+            if (was !== undefined && was !== fs[i].el.open) {
+                fs[i].el.open = was;
+            }
+        }
+    }
     // The inverse of `gnSyncLine`: the line of the block at the sync edge, interpolated to the next block.
     function gnTopLine() {
         var art = document.getElementById("gn-article");
@@ -1169,7 +1234,7 @@
             next = null;
         for (var i = 0; i < nodes.length; i++) {
             var line = parseInt(nodes[i].getAttribute("data-line"), 10);
-            if (isNaN(line)) {
+            if (isNaN(line) || gnFolded(nodes[i])) {
                 continue;
             }
             var top = nodes[i].getBoundingClientRect().top;
@@ -2143,6 +2208,9 @@
             best = null,
             bestD = Infinity;
         for (var i = 0; i < nodes.length; i++) {
+            if (gnFolded(nodes[i])) {
+                continue;
+            }
             var d = Math.abs((parseInt(nodes[i].getAttribute("data-line"), 10) || 0) - line);
             if (d < bestD) {
                 best = nodes[i];
@@ -2174,6 +2242,9 @@
             hit = null,
             below = null;
         for (var i = 0; i < nodes.length; i++) {
+            if (gnFolded(nodes[i])) {
+                continue;
+            }
             var r = nodes[i].getBoundingClientRect();
             if (r.height <= 0) {
                 continue;
@@ -2346,8 +2417,10 @@
             selection = kept ? gnCaptureSelection() : null,
             focus = kept ? gnCaptureFocus() : null;
         var art = document.getElementById("gn-article");
+        var folds = kept ? gnCaptureFolds(art) : null;
         art.textContent = "";
         art.appendChild(gnApplyMedia(gnSummaryMarkdown(gnSanitize(html))));
+        gnRestoreFolds(art, folds);
         // An empty note says so, so it never looks like a page that failed to draw. Drawn by CSS: the find and a copy
         // of the page never see it.
         art.classList.toggle("gn-is-empty", !String(markdown || "").trim());
@@ -2549,7 +2622,7 @@
             next = null;
         for (var i = 0; i < nodes.length; i++) {
             var line = parseInt(nodes[i].getAttribute("data-line"), 10);
-            if (isNaN(line)) {
+            if (isNaN(line) || gnFolded(nodes[i])) {
                 continue;
             }
             if (line <= n) {
@@ -2693,20 +2766,39 @@
                 }
             }
         }
+        // A new range opens the folds that hold it. A block still in a closed fold (the reader closed it while the range
+        // stays) keeps its mark, but the band goes only over the blocks on screen.
+        var shown = [];
         for (j = 0; j < hit.length; j++) {
+            if (scroll) {
+                gnUnfold(hit[j]);
+            }
             hit[j].classList.add("gn-hl");
+            if (!gnFolded(hit[j])) {
+                shown.push(hit[j]);
+            }
         }
-        if (hit.length) {
-            gnPlaceBand(hit, gnHL.mode);
+        if (shown.length) {
+            gnPlaceBand(shown, gnHL.mode);
         } else {
             gnDropBand();
         }
-        if (scroll && hit.length) {
+        if (scroll && shown.length) {
             gnNav++;
             var sc = document.scrollingElement || document.documentElement;
-            sc.scrollTop = Math.max(0, hit[0].getBoundingClientRect().top + sc.scrollTop - 80);
+            sc.scrollTop = Math.max(0, shown[0].getBoundingClientRect().top + sc.scrollTop - 80);
         }
     }
+    // A fold opened or closed moves what is below it: the band follows its lines, or leaves with them into the fold.
+    document.addEventListener(
+        "toggle",
+        (e) => {
+            if (gnHL && e.target && e.target.localName === "details") {
+                gnApplyHL(false);
+            }
+        },
+        true
+    );
     window.addEventListener("resize", () => {
         if (gnHL) {
             gnApplyHL(false);
@@ -3108,7 +3200,7 @@
         for (var i = 0; i < marked.length; i++) {
             var el = marked[i],
                 git = el.hasAttribute("data-gn-git"),
-                r = el.getBoundingClientRect();
+                r = gnShownBox(el).getBoundingClientRect();
             var idx = git ? el.getAttribute("data-gn-git-i") : "d" + el.getAttribute("data-gn-diff-i");
             if (!r.width && !r.height) {
                 continue;
@@ -3212,6 +3304,7 @@
         var el = slug ? document.getElementById(slug) : null;
         if (el && document.getElementById("gn-article").contains(el)) {
             gnNav++;
+            gnUnfold(el);
             el.scrollIntoView({ behavior: gnScrollBehavior(), block: "start" });
             return true;
         }
@@ -3452,6 +3545,7 @@
         var cur = ms[gnFindIdx];
         cur.classList.add("gn-find-current");
         gnNav++;
+        gnUnfold(cur);
         cur.scrollIntoView({ behavior: gnScrollBehavior(), block: "center" });
         gnPlaceTicks();
         gnPost({ type: "find", index: gnFindIdx + 1, count: ms.length });
@@ -3503,10 +3597,9 @@
             seen = {},
             cur = null;
         for (var i = 0; i < ms.length; i++) {
-            var y = Math.max(
-                1,
-                Math.min(h - 3, Math.round(((ms[i].getBoundingClientRect().top + sc.scrollTop) / total) * h))
-            );
+            // A match in a closed fold ticks at the fold.
+            var at = gnShownBox(ms[i]).getBoundingClientRect().top + sc.scrollTop;
+            var y = Math.max(1, Math.min(h - 3, Math.round((at / total) * h)));
             if (i === gnFindIdx) {
                 cur = { y: y, i: i };
                 continue;
@@ -3551,6 +3644,7 @@
         );
         for (var i = 0; i < els.length; i++) {
             if ((els[i].textContent || "").toLowerCase().indexOf(q) !== -1) {
+                gnUnfold(els[i]);
                 els[i].scrollIntoView({ behavior: gnScrollBehavior(), block: "center" });
                 ((el) => {
                     el.classList.remove("gn-flash");
