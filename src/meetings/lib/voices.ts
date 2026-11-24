@@ -40,6 +40,7 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { OpenedMeeting } from "./opened-meeting";
 import {
+    joinedSound,
     type MeetingSound,
     measureSoundClock,
     meetingSound,
@@ -110,6 +111,23 @@ function recordOf(access: VoicesAccess, meeting: string): MeetingRecord {
 
 /** Clock measurement belongs to an explicit writer; a preview keeps it in memory. */
 export async function voiceReadMeeting(opened: OpenedMeeting): Promise<OpenedMeeting> {
+    const parts = opened.joinedParts();
+
+    if (parts) {
+        // A joined meeting reads each recording as that recording alone would, then on the joined clock.
+        const sounds = await Promise.all(parts.map(async (view) => (await voiceReadMeeting(view.opened)).sound()));
+        const joined = joinedSound(
+            parts.map((view, index) => ({
+                offsetMs: view.part.offsetMs,
+                fromSec: view.fromSec,
+                untilSec: view.untilSec,
+                sound: sounds[index]!,
+            }))
+        );
+        opened.sound = async () => joined;
+        return opened;
+    }
+
     const inputs = await readSoundInputs(opened);
     let sound = meetingSound(inputs);
 

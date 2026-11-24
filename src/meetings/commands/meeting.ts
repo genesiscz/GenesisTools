@@ -7,12 +7,13 @@ import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { localTime } from "@genesiscz/utils/transcribe/render";
+import { formatClock, localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { contextFileRevision } from "../lib/context-file";
 import { duplicateMeeting } from "../lib/duplicate";
+import { joinMeetings } from "../lib/join-recordings";
 import { linkSource } from "../lib/link";
 import { askProjectAtEnd } from "../lib/meeting-end";
 import { setMeetingFields } from "../lib/meeting-fields";
@@ -353,6 +354,46 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
     }
 }
 
+async function joinCommand(first: string, second: string, opts: { dryRun?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await joinMeetings({ store: new MeetingStore(), ids: [first, second], dryRun: opts.dryRun });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(
+            `${result.dryRun ? "Would join" : "Joined"} ${result.parts.map((part) => part.record).join(" and ")} into ${result.into}.`
+        );
+
+        for (const part of result.parts) {
+            const renumbered = part.renumbered ? ", its items take new ids" : "";
+            ui.dim(
+                `  ${part.record}: ${part.lines} lines and ${part.items} items from ${formatClock(part.offsetMs / 1000)} to ${formatClock(part.endSec)}${renumbered}`
+            );
+        }
+
+        for (const gap of result.gaps) {
+            ui.dim(
+                `  gap ${formatClock(gap.fromSec)} to ${formatClock(gap.toSec)}: nothing recorded between ${gap.from} and ${gap.to}`
+            );
+        }
+
+        if (result.rounded > 0) {
+            ui.warn(
+                `  ${result.rounded} stored seconds held more than microseconds; they were rounded to the microsecond.`
+            );
+        }
+
+        if (result.backup) {
+            ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
+        }
+    } catch (err) {
+        fail(err);
+    }
+}
+
 async function duplicate(
     ref: string,
     opts: { title?: string; json?: boolean; withoutItems?: boolean; items?: boolean }
@@ -569,6 +610,17 @@ export function registerMeetingCommands(program: Command): void {
         .option("--dry-run", "say what would move, change nothing")
         .option("--json", "print the result as JSON")
         .action(merge);
+
+    program
+        .command("join")
+        .argument("<meeting>", "one recording of the meeting: an id, a unique prefix or last")
+        .argument("<other>", "the other recording of the same meeting")
+        .description(
+            "Make two recordings of one meeting (a source split it) one record: the earlier one's id and clock, the later one's lines at their own wall time, the gap between them empty, a backup first"
+        )
+        .option("--dry-run", "say what would join, change nothing")
+        .option("--json", "print the result as JSON")
+        .action(joinCommand);
 
     program
         .command("duplicate")

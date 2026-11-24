@@ -31,7 +31,14 @@ import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import { profiler } from "@genesiscz/utils/profile";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
-import { type MeetingSound, measureSoundClock, meetingSound, readSoundClock, saveSoundClock } from "../sound";
+import {
+    joinedSound,
+    type MeetingSound,
+    measureSoundClock,
+    meetingSound,
+    readSoundClock,
+    saveSoundClock,
+} from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, LineLabel, SpeakerLabeler, VoiceSupport } from "./types";
 
@@ -229,25 +236,53 @@ export function seatVoiceCachePath(opened: OpenedMeeting): string {
     return join(opened.store.folder(opened.record.id), "evidence", "seat-voice-lines.json");
 }
 
+/**
+ * The sound with its recorder tracks on a measured clock when they can be: a saved measurement, else one measured and
+ * saved now (the base labeler is the explicit writer). Read-only previews supply their own sound without stamp tracks.
+ * A joined meeting measures each recording in its own folder, as that recording would alone.
+ */
+async function measuredSound(opened: OpenedMeeting, sound: MeetingSound): Promise<MeetingSound> {
+    if (!sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
+        return sound;
+    }
+
+    const parts = opened.joinedParts();
+
+    if (parts) {
+        const sounds = await Promise.all(
+            parts.map(async (view) => measuredSound(view.opened, await view.opened.sound()))
+        );
+        return joinedSound(
+            parts.map((view, index) => ({
+                offsetMs: view.part.offsetMs,
+                fromSec: view.fromSec,
+                untilSec: view.untilSec,
+                sound: sounds[index]!,
+            }))
+        );
+    }
+
+    const inputs = await opened.soundInputs();
+    // Another run may have saved the measurement since this snapshot was opened.
+    const clock = readSoundClock(inputs.folder);
+    if (clock) {
+        return meetingSound({ ...inputs, clock });
+    }
+    if (inputs.tracks === "best") {
+        const measured = await measureSoundClock(inputs);
+        if (measured) {
+            saveSoundClock(inputs.folder, measured.clock);
+            return meetingSound({ ...inputs, clock: measured.clock });
+        }
+    }
+    return sound;
+}
+
 async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
     let sound = context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => opened.sound()));
     {
         using _clock = prof.section("speakers.sound-clock");
-        // Read-only previews supply their own sound without stamp tracks.
-        if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
-            const inputs = await opened.soundInputs();
-            // Another run may have saved the measurement since this snapshot was opened.
-            const clock = readSoundClock(inputs.folder);
-            if (clock) {
-                sound = meetingSound({ ...inputs, clock });
-            } else if (inputs.tracks === "best") {
-                const measured = await measureSoundClock(inputs);
-                if (measured) {
-                    saveSoundClock(inputs.folder, measured.clock);
-                    sound = meetingSound({ ...inputs, clock: measured.clock });
-                }
-            }
-        }
+        sound = await measuredSound(opened, sound);
     }
     using _pass = prof.section("voices.pass");
     return await embedSeatLines({

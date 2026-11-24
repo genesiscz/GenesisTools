@@ -212,19 +212,32 @@ export function voiceLineKeys(meeting: {
         speaker: string;
         text: string;
         sourceIndex?: number;
+        sourceMeetingId?: string;
     }[];
 }): string[] {
+    // A joined meeting holds the lines of several source meetings: each line keeps the key it had in its own one.
+    const sourceOf = (line: { sourceMeetingId?: string }) => line.sourceMeetingId ?? meeting.sourceMeetingId;
+    const idKey = (line: { id?: string; sourceMeetingId?: string }) => `${sourceOf(line)}\0${line.id}`;
     const ids = new Map<string, number>();
-    for (const { id } of meeting.transcript) {
-        if (id) {
-            ids.set(id, (ids.get(id) ?? 0) + 1);
+    const firstIndex = new Map<string, number>();
+    for (const [index, line] of meeting.transcript.entries()) {
+        if (line.id) {
+            ids.set(idKey(line), (ids.get(idKey(line)) ?? 0) + 1);
+        }
+        if (!firstIndex.has(sourceOf(line))) {
+            firstIndex.set(sourceOf(line), index);
         }
     }
     return meeting.transcript.map((line, index) =>
         SafeJSON.stringify(
-            line.id && ids.get(line.id) === 1
-                ? ["entry-v1", meeting.sourceMeetingId, line.id]
-                : ["line-v1", meeting.sourceMeetingId, line.sourceIndex ?? index, sha256Json([line.speaker, line.text])]
+            line.id && ids.get(idKey(line)) === 1
+                ? ["entry-v1", sourceOf(line), line.id]
+                : [
+                      "line-v1",
+                      sourceOf(line),
+                      line.sourceIndex ?? index - (firstIndex.get(sourceOf(line)) ?? 0),
+                      sha256Json([line.speaker, line.text]),
+                  ]
         )
     );
 }

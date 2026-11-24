@@ -887,6 +887,21 @@ export const play = defineMethod({
     doc: `Play the meeting's sound from atSec (transcript seconds) in VLC or ffplay, on through the track's later pieces, or with toSec and track that range as one cut. Returns what plays (parts with their file seconds), the player's command line and, once started, its pid; start: false plans only and cuts, writes and starts nothing. CLI twin: ${toolCommand("meetings", "play")} <meeting> <time> [--to <time> --track <kind>] --json [--no-start].`,
 });
 
+export const join = defineMethod({
+    name: "join",
+    params: z.object({
+        /** The two records of one meeting that its source recorded as two, in any order. */
+        meetings: z.array(z.string().min(1)).length(2),
+        /** true: say what would join; nothing changes. */
+        dryRun: z.boolean().optional(),
+    }),
+    result: z.unknown(),
+    resultName:
+        "{ into, dryRun, parts: [{ record, title, source, offsetMs, lines, items, renumbered, endSec }], gaps, rounded, backup?, withdrawn? }",
+    effect: "reversible",
+    doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
+});
+
 export const voiceLibraryMethods = {
     list: defineMethod({
         ...voicesList,
@@ -954,6 +969,7 @@ export const meetingsToolsetApi = defineApi({
         voices,
         lineEligibility,
         play,
+        join,
         ...Object.values(voiceLibraryMethods),
         list,
         levels,

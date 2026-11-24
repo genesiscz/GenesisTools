@@ -12,6 +12,13 @@ export interface TranscriptEntry {
     id?: string;
     /** Seconds from the start of the recording, when the source records it. */
     startSec?: number;
+    /**
+     * Where the line ends, when the recording stops after it: the last line of one recording of a joined meeting, so its
+     * end is not the next recording's first line (`TranscriptLines.end`). Absent everywhere else.
+     */
+    endSec?: number;
+    /** The source meeting the line comes from, on a joined meeting of several (its voice line key names it). */
+    sourceMeetingId?: string;
     /** Accepted acoustic word timings, when supplied by the bounded local timing cache. */
     words?: Array<{ range: { location: number; length: number }; startSec: number; endSec: number; sourceId: string }>;
     speakerId?: number;

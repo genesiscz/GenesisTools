@@ -17,8 +17,9 @@ import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import type { ExportIfEdited, MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { groupTurns } from "@genesiscz/utils/transcribe/render";
+import { groupTurns, turnsWithGaps } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { joinGaps } from "./join-clock";
 import { playLinksFor } from "./link";
 import { OpenedMeeting } from "./opened-meeting";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
@@ -61,7 +62,7 @@ export function transcriptMarkdown(options: TranscriptMarkdownOptions): {
     const links = options.playLinks ? playLinksFor(record.id, options.linkGate) : undefined;
     const markdown = transcriptDocument({
         record,
-        turns: groupTurns(applied.entries),
+        turns: turnsWithGaps(groupTurns(applied.entries), joinGaps(record)),
         speakers: applied.speakers,
         guesses: applied.guesses,
         unattributed: applied.unattributed,

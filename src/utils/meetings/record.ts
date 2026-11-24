@@ -451,8 +451,60 @@ export const preservedSourceAudioSchema = z.object({
 });
 export type PreservedSourceAudio = z.infer<typeof preservedSourceAudioSchema>;
 
+/** Which audio channel is the user's microphone, calibrated on one recording's tagged segments. */
+export const channelCalibrationSchema = z.object({
+    layout: z.enum(CHANNEL_LAYOUTS),
+    micMedian: z.number().optional(),
+    systemMedian: z.number().optional(),
+    segments: z.object({ mic: z.number(), system: z.number() }),
+    reason: z.string().optional(),
+    /**
+     * The stretches of 5 min or more where the call's channel stayed silent while the microphone heard speech
+     * (`silentCallSpans`): the call played through the room, so E1 says nothing there. Absent in records calibrated
+     * before it was stored.
+     */
+    callSilent: z.array(z.object({ fromSec: z.number(), toSec: z.number() })).optional(),
+});
+export type StoredChannelCalibration = z.infer<typeof channelCalibrationSchema>;
+
+/** The record version a joined record is written with: an older build refuses it instead of dropping `join`. */
+export const JOINED_RECORD_VERSION = 2;
+
+/**
+ * One recording of a joined meeting (`meetings join`): the record it was, its source meeting, and where its own
+ * transcript second 0 sits on the joined clock.
+ */
+export const joinPartSchema = z.object({
+    /** The id of the record this part was before the join; its folder is in the join's backup. */
+    record: z.string().min(1),
+    title: z.string(),
+    sourceId: z.string().min(1),
+    sourceMeetingId: z.string().min(1),
+    /** The wall time of the part's own transcript second 0 (its source's recording clock), to the millisecond. */
+    zeroAt: isoTime,
+    /** Where that second 0 sits on the joined clock, in whole milliseconds; the earliest part has 0. */
+    offsetMs: z.number().int().nonnegative(),
+    /** The end of the part's last line on the joined clock: the gap to the next part starts here. */
+    endSec: z.number().nonnegative(),
+    /** The part's preserved source audio. `audio.sources` keeps one per source, the `--into` part's. */
+    audio: preservedSourceAudioSchema.optional(),
+    /** The part's own channel calibration, as the record it was stored it. */
+    channels: channelCalibrationSchema.optional(),
+});
+export type JoinPart = z.infer<typeof joinPartSchema>;
+
+export const meetingJoinSchema = z.object({
+    version: z.literal(1),
+    at: isoTime,
+    /** The folder that holds both records as they were before the join, with the restore steps. */
+    backup: z.string().min(1),
+    /** In time order, at least two. */
+    parts: z.array(joinPartSchema).min(2),
+});
+export type MeetingJoin = z.infer<typeof meetingJoinSchema>;
+
 export const meetingRecordSchema = z.object({
-    version: z.literal(1).default(1),
+    version: z.union([z.literal(1), z.literal(JOINED_RECORD_VERSION)]).default(1),
     id: z.string().min(1),
     title: z.string(),
     project: projectNameSchema.optional(),
@@ -543,21 +595,7 @@ export const meetingRecordSchema = z.object({
                 )
                 .optional(),
             /** Which audio channel is the user's microphone, calibrated on this recording's tagged segments. */
-            channels: z
-                .object({
-                    layout: z.enum(CHANNEL_LAYOUTS),
-                    micMedian: z.number().optional(),
-                    systemMedian: z.number().optional(),
-                    segments: z.object({ mic: z.number(), system: z.number() }),
-                    reason: z.string().optional(),
-                    /**
-                     * The stretches of 5 min or more where the call's channel stayed silent while the microphone
-                     * heard speech (`silentCallSpans`): the call played through the room, so E1 says nothing there.
-                     * Absent in records calibrated before it was stored.
-                     */
-                    callSilent: z.array(z.object({ fromSec: z.number(), toSec: z.number() })).optional(),
-                })
-                .optional(),
+            channels: channelCalibrationSchema.optional(),
         })
         .optional(),
     recording: recordingBlockSchema.optional(),
@@ -567,6 +605,8 @@ export const meetingRecordSchema = z.object({
      * untouched note (replaced) from one a person edited (kept).
      */
     exports: z.array(z.object({ path: z.string().min(1), sha256: z.string().min(1), at: isoTime })).optional(),
+    /** The recordings this meeting was split into, on one clock (`meetings join`); absent on a single recording. */
+    join: meetingJoinSchema.optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });
@@ -608,6 +648,25 @@ export function meetingId(start: string, title: string): string {
 }
 
 /** A source reference: `wisprflow:1a2b3c4d`. */
+/**
+ * Every source meeting a record holds: its linked one (`sources.<source>.meetingId`) and, on a joined record, the
+ * source meeting of each part. A lookup of "which record holds this source meeting" reads this, so a joined part is
+ * never taken for a meeting without a record.
+ */
+export function heldSourceMeetings(record: MeetingRecord): Array<{ sourceId: string; sourceMeetingId: string }> {
+    const held = Object.entries(record.sources).flatMap(([sourceId, block]) =>
+        typeof block.meetingId === "string" ? [{ sourceId, sourceMeetingId: block.meetingId }] : []
+    );
+
+    for (const part of record.join?.parts ?? []) {
+        if (!held.some((one) => one.sourceId === part.sourceId && one.sourceMeetingId === part.sourceMeetingId)) {
+            held.push({ sourceId: part.sourceId, sourceMeetingId: part.sourceMeetingId });
+        }
+    }
+
+    return held;
+}
+
 export function parseSourceRef(ref: string): { source: string; id: string } | undefined {
     const match = /^([a-z][a-z0-9-]*):(.+)$/.exec(ref);
     return match ? { source: match[1]!, id: match[2]! } : undefined;
@@ -753,6 +812,12 @@ export class MeetingStore {
             return undefined;
         }
 
+        // Version 2 exists for the join: a version-2 record without one, or a join on version 1, is not one we wrote.
+        if ((parsed.data.version === JOINED_RECORD_VERSION) !== (parsed.data.join !== undefined)) {
+            log.warn({ path, version: parsed.data.version }, "meeting record's version and join disagree; left out");
+            return undefined;
+        }
+
         return parsed.data;
     }
 
@@ -809,10 +874,11 @@ export class MeetingStore {
 
         const source = parseSourceRef(ref);
         const matches = source
-            ? records.filter((record) => {
-                  const id = record.sources[source.source]?.meetingId;
-                  return typeof id === "string" && id.startsWith(source.id);
-              })
+            ? records.filter((record) =>
+                  heldSourceMeetings(record).some(
+                      (held) => held.sourceId === source.source && held.sourceMeetingId.startsWith(source.id)
+                  )
+              )
             : records.filter((record) => record.id === ref || record.id.startsWith(ref));
         const exact = matches.find((record) => record.id === ref);
 

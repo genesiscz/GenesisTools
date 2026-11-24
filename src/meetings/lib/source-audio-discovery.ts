@@ -3,7 +3,7 @@ import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
-import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { heldSourceMeetings, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
 import type {
     LocalAudioFile,
     LocalAudioMeeting,
@@ -29,17 +29,19 @@ export type LiveSourceMeeting = (sourceId: MeetingSourceId) => Promise<string | 
 function linkedIndex(records: MeetingRecord[], sourceId: string): Map<string, MeetingRecord[]> {
     const index = new Map<string, MeetingRecord[]>();
     for (const record of records) {
-        const id = record.sources[sourceId]?.meetingId;
-        if (typeof id !== "string") {
-            continue;
-        }
+        // A joined record holds the source meetings of all its recordings.
+        for (const held of heldSourceMeetings(record)) {
+            if (held.sourceId !== sourceId) {
+                continue;
+            }
 
-        const list = index.get(id);
+            const list = index.get(held.sourceMeetingId);
 
-        if (list) {
-            list.push(record);
-        } else {
-            index.set(id, [record]);
+            if (list) {
+                list.push(record);
+            } else {
+                index.set(held.sourceMeetingId, [record]);
+            }
         }
     }
 

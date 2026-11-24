@@ -8,6 +8,7 @@ import {
     type TranscriptSource,
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { joinedSource, joinedTranscript } from "./joined-source";
 import type { LocalSourceAudio } from "./source-audio-discovery";
 
 /** Source capabilities live together; a local preview must never use an automatic remote fallback. */
@@ -95,8 +96,18 @@ export interface LinkedSource {
     sourceMeetingId: string;
 }
 
-/** The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print. */
+/**
+ * The first linked source that names a meeting of its own, with that meeting's id; on a joined record, the joined
+ * source of all its recordings on one clock. Throws a message ready to print.
+ */
 export async function linkedSource(record: MeetingRecord): Promise<LinkedSource> {
+    if (record.join) {
+        return {
+            source: await joinedSource(record, meetingSource),
+            sourceMeetingId: record.join.parts[0]!.sourceMeetingId,
+        };
+    }
+
     const ref = sourceRefOf(record);
 
     if (!ref) {
@@ -121,6 +132,21 @@ function composedTranscript(entries: TranscriptEntry[]): TranscriptEntry[] {
 
 /** Explicit local-only read for previews: the source registry owns the capability and no remote fallback runs. */
 export async function localMeetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
+    if (record.join) {
+        const parts = await Promise.all(
+            record.join.parts.map(async (part) => {
+                if (!isMeetingSourceId(part.sourceId)) {
+                    throw new Error(`Unknown source "${part.sourceId}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
+                }
+                return joinedTranscript(
+                    part,
+                    composedTranscript(await MEETING_SOURCES[part.sourceId].localTranscript(part.sourceMeetingId))
+                );
+            })
+        );
+        return parts.flat();
+    }
+
     const ref = sourceRefOf(record);
     if (!ref) {
         throw new MeetingsStateError("no-transcript-source", `${record.id} has no linked local transcript to preview.`);

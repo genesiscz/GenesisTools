@@ -44,6 +44,7 @@ import {
     exportMethod,
     itemsList,
     itemsRows,
+    join,
     levels,
     type lineEligibility,
     lines,
@@ -182,6 +183,12 @@ export class MeetingsToolset extends ReplToolset {
                     withMeetingsClient(async (client) =>
                         readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
                     ),
+                // The CLI's own core: tools meetings join <meeting> <other> [--dry-run].
+                join: async (input: z.input<typeof join.params>) => {
+                    const { meetings, dryRun } = join.params.parse(input);
+                    const { joinMeetings } = await import("@app/meetings/lib/join-recordings");
+                    return joinMeetings({ store, ids: [meetings[0]!, meetings[1]!], ...(dryRun ? { dryRun } : {}) });
+                },
                 // The CLI's own core: tools meetings play <meeting> <time> [--to --track] [--no-start].
                 play: async (input: z.input<typeof play.params>) => {
                     const { meeting, track, start, ...rest } = play.params.parse(input);
