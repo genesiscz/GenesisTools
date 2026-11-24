@@ -153,6 +153,18 @@ describe("audio converter", () => {
 
         expect(threw).toBe(true);
     });
+
+    test("a 60 s window that rounding puts a few ulps over 60 s is decoded, a longer one is refused", async () => {
+        // The sound clock asks for (stamp + 57) - (stamp - 3): 60.00000000000001 at a stamp of 42.733 s.
+        const stampSec = 42.733;
+        const cancelled = AbortSignal.abort(new Error("stopped before decoding"));
+        await expect(
+            toFloat32AudioWindow("unused.wav", { fromSec: stampSec - 3, toSec: stampSec + 57, signal: cancelled })
+        ).rejects.toThrow("stopped before decoding");
+        await expect(
+            toFloat32AudioWindow("unused.wav", { fromSec: 0, toSec: 60.001, signal: cancelled })
+        ).rejects.toThrow(RangeError);
+    });
 });
 
 /** The first time (seconds) a 16 kHz mono signal rises above 5 % of full scale. */

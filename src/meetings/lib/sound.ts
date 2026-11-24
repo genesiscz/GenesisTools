@@ -521,7 +521,9 @@ export async function measureSoundClock(
                     corrections.push(aligned.zeroSec - stampSec);
                 }
             } catch (err) {
-                log.warn({ err, file: row.file }, "a recorder piece could not be measured");
+                // One line names the piece; a decoder failure of one piece is not a crash of the pass.
+                const reason = err instanceof Error ? err.message : String(err);
+                log.warn(`a recorder piece could not be measured: ${row.file} (${reason})`);
             }
         }
 

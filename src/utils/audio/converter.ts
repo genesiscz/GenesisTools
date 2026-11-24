@@ -37,7 +37,9 @@ export async function toFloat32AudioWindow(
         timeoutMs?: number;
     }
 ): Promise<Float32Array> {
-    const duration = options.toSec - options.fromSec;
+    // A window built as (stamp + length) - (stamp - margin) can come out a few ulps over its cap (60.000000000000014 for
+    // a 60 s window at 7.001 s), so the length is compared and passed to ffmpeg at microsecond precision.
+    const duration = Math.round((options.toSec - options.fromSec) * 1e6) / 1e6;
     const tracks = options.tracks ?? 1;
     if (
         !Number.isFinite(options.fromSec) ||
