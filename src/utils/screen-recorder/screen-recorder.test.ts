@@ -85,6 +85,7 @@ import {
     type FrameSourceEvent,
     type LiveCapture,
     type MotionBox,
+    type ScreenshotPaceEvent,
 } from "./types";
 
 test("an unreadable live entry does not break the inventory", () => {
@@ -410,6 +411,16 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
             { source: "screenshot", displayId: 2, neverCapture: [dimmer] },
             { source: "stream", displayId: 4, neverCapture: [] },
         ]);
+    });
+
+    test("a screenshot-pace event reaches its hook with the stretch only while there is one", () => {
+        const paces: ScreenshotPaceEvent[] = [];
+        const channel = new NativeLiveCapture(() => undefined, 2, { onScreenshotPace: (event) => paces.push(event) });
+        channel.receive(SafeJSON.stringify({ event: "screenshot-pace", everySec: 8, screenshotSec: 0.812 }));
+        channel.receive(SafeJSON.stringify({ event: "screenshot-pace", screenshotSec: 0.05 }));
+        channel.receive(SafeJSON.stringify({ event: "screenshot-pace", everySec: 8 }));
+
+        expect(paces).toEqual([{ everySec: 8, screenshotSec: 0.812 }, { screenshotSec: 0.05 }]);
     });
 
     test("replacing a pending display switch clears its deadline and completes the replacement", async () => {

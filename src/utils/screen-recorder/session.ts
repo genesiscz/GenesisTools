@@ -10,6 +10,7 @@ import {
     type CaptureResult,
     type FrameSourceEvent,
     type LiveCapture,
+    type ScreenshotPaceEvent,
 } from "./types";
 
 /**
@@ -72,6 +73,7 @@ export interface PieceCapturesOptions {
         onLive?: (capture: SessionCapture, channel: LiveCapture) => void;
         /** The frame source the capture chose at its start. */
         onFrameSource?: (capture: SessionCapture, event: FrameSourceEvent) => void;
+        onScreenshotPace?: (capture: SessionCapture, event: ScreenshotPaceEvent) => void;
         /**
          * The capture returned; the piece waits for this to finish (frames kept, tracks moved). `false`: it kept none
          * of them, so they do not count in `PieceOutcome.frames`.
@@ -125,6 +127,7 @@ export class PieceCaptures {
                 this.options.hooks.onLive?.(entry, channel);
             },
             onFrameSource: (event) => this.options.hooks.onFrameSource?.(entry, event),
+            onScreenshotPace: (event) => this.options.hooks.onScreenshotPace?.(entry, event),
         };
         entry.done = this.options
             .capture(

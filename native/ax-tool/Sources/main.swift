@@ -82,7 +82,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--exclude-window-ids ID,ID] windows the movie never shows (a host's own controls)
                       [--keep-overlays] screen and region mode keep screen dimmers (HazeOver and the like), left out by default
                       [--frame-source stream|screenshot|auto] screen mode: screenshot takes one screenshot per frame with no
-                      open stream (2 fps at most; no movie, no --audio); auto does so only while a window marked
+                      open stream (2 fps at most, and 10 x a slow screenshot's time apart; no movie, no --audio); auto does so only while a window marked
                       never-capture is on the recorded display, where an open stream slows the whole screen (default stream);
                       the result then names frameSource and neverCapture
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]

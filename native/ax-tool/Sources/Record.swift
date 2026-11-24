@@ -608,7 +608,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// The `status` answer, read on the frame queue.
     func status() -> [String: Any] {
-        queue.sync {
+        let pace = stream?.pace
+        return queue.sync {
             var row: [String: Any] = ["state": paused ? "paused" : "recording", "frames": kept.count,
                                       "capturedFrames": captured, "writtenFrames": writtenFrames,
                                       "bytesWritten": policy.bytesWritten]
@@ -617,6 +618,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             }
             if let lastTimestamp {
                 row["elapsedMs"] = elapsedMs(lastTimestamp)
+            }
+            if let pace {
+                row["screenshotPace"] = pace.row
             }
             return row
         }
@@ -1249,7 +1253,9 @@ func cmdCaptureScreen() {
     // The start and a restart on another display make the same kind of feed.
     let makeFeed: (SCContentFilter) throws -> any CaptureFeed = { filter in
         if frameSource == .screenshot, #available(macOS 14.0, *) {
-            return ScreenshotFeed(filter: filter, configuration: configuration, recorder: recorder)
+            return ScreenshotFeed(filter: filter, configuration: configuration, recorder: recorder) { pace in
+                CaptureEvents.emit(["event": "screenshot-pace"].merging(pace.row) { first, _ in first })
+            }
         }
         let stream = SCStream(filter: filter, configuration: configuration, delegate: recorder)
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
@@ -1281,6 +1287,10 @@ func cmdCaptureScreen() {
         if reportsFrameSource {
             CaptureEvents.emit(["event": "frame-source", "source": frameSource.rawValue, "displayId": display.id,
                                 "neverCapture": neverCapture.map(\.row)])
+            // The first screenshot was timed before the events were on.
+            if let pace = stream.pace {
+                CaptureEvents.emit(["event": "screenshot-pace"].merging(pace.row) { first, _ in first })
+            }
         }
     }
     if options.mode == "screen" {

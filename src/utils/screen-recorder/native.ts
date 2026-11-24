@@ -380,6 +380,7 @@ const controlEvent = z.discriminatedUnion("event", [
         displayId: z.number().optional(),
         neverCapture: z.array(captureBlockerSchema).default([]),
     }),
+    z.object({ event: z.literal("screenshot-pace"), everySec: z.number().optional(), screenshotSec: z.number() }),
     z.object({ event: z.literal("error"), code: z.string().optional(), message: z.string() }),
     z.object({ event: z.literal("state") }).loose(),
     z.object({ event: z.literal("settings") }).loose(),
@@ -576,6 +577,14 @@ export class NativeLiveCapture implements LiveCapture {
                 source: event.source,
                 ...(displayId !== undefined ? { displayId } : {}),
                 neverCapture: event.neverCapture.map(captureBlockerOf),
+            });
+            return;
+        }
+
+        if (event.event === "screenshot-pace") {
+            this.hooks.onScreenshotPace?.({
+                ...(event.everySec !== undefined ? { everySec: event.everySec } : {}),
+                screenshotSec: event.screenshotSec,
             });
             return;
         }

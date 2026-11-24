@@ -192,6 +192,13 @@ export function captureBlockersStatusLines(status: CaptureBlockersStatus, relaun
     const apps = status.apps.length > 0 ? appsOnDisplays(status.apps) : "none left on the displays";
     const lines = [`Never-capture windows: ${apps}. ${frames}, ${sound}.`];
 
+    if (status.screenshotPace) {
+        const { everySec, screenshotSec } = status.screenshotPace;
+        lines.push(
+            `A screenshot takes ${screenshotSec.toFixed(1)} s here, so the recorder takes one every ${everySec} s and leaves the capture service free for other apps.`
+        );
+    }
+
     if (status.quit.length > 0) {
         const names = joinAnd(status.quit.map((app) => app.name));
         const verb = status.quit.length === 1 ? "was" : "were";

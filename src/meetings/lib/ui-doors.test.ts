@@ -921,6 +921,21 @@ describe("never-capture windows: status, cost, blockers and the setting", () => 
                 false
             )[1]
         ).toBe("Dimmer was quit for this recording.");
+        expect(
+            captureBlockersStatusLines(
+                {
+                    apps: [{ name: "Dimmer", displays: [1] }],
+                    action: "fallback",
+                    frames: "screenshot",
+                    sound: "tap",
+                    quit: [],
+                    screenshotPace: { everySec: 8, screenshotSec: 0.812 },
+                },
+                true
+            )[1]
+        ).toBe(
+            "A screenshot takes 0.8 s here, so the recorder takes one every 8 s and leaves the capture service free for other apps."
+        );
     });
 
     test("the cost block names the apps, the measured cost and the action; it tells none from cannot list", async () => {

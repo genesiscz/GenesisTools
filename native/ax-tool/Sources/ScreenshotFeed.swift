@@ -1,6 +1,7 @@
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
+import SnapshotSupport
 
 /// What a recording asks of its frame source. These are the calls ScreenCaptureKit's stream already has, so
 /// `SCStream` is a feed as it is, and `ScreenshotFeed` is the other one.
@@ -9,6 +10,12 @@ protocol CaptureFeed: AnyObject {
     func stopCapture() async throws
     func updateConfiguration(_ streamConfig: SCStreamConfiguration) async throws
     func updateContentFilter(_ contentFilter: SCContentFilter) async throws
+    /// The pace of a feed that times its screenshots (`ScreenshotPace`); nil for the stream.
+    var pace: ScreenshotPaceReport? { get }
+}
+
+extension CaptureFeed {
+    var pace: ScreenshotPaceReport? { nil }
 }
 
 extension SCStream: CaptureFeed {}
@@ -25,6 +32,9 @@ private func screenshotError(_ message: String) -> NSError {
 /// It feeds `NativeRecorder.consume` on the recorder's frame queue, like the stream: the keep policy, the rate
 /// policy, the heartbeat, the events and the PNG files stay as they are. A screenshot's sample buffer carries a host
 /// clock time (checked 2026-11-22: it is the moment the picture was made, 130 to 190 ms after the call).
+///
+/// It times each screenshot and stretches its interval while they are slow (`ScreenshotPace`), so it never keeps the
+/// capture service busy for more than a tenth of the time; `onPace` hears the pace when it changes.
 @available(macOS 14.0, *)
 final class ScreenshotFeed: CaptureFeed {
     /// A screenshot takes 130 to 280 ms to arrive, and each one is a full draw of the display.
@@ -38,7 +48,16 @@ final class ScreenshotFeed: CaptureFeed {
     private let queue = DispatchQueue(label: "ax-tool.record.screenshots")
     private var filter: SCContentFilter
     private var shot: SCStreamConfiguration
+    /// The interval the frame rate asks for.
     private var interval: TimeInterval
+    /// The interval the timer runs at: `interval`, stretched while screenshots are slow.
+    private var paced: TimeInterval
+    /// How long the newest screenshot took, from the call to its picture.
+    private var took: TimeInterval?
+    /// What `onPace` heard last; nil until the first screenshot was timed.
+    private var reported: ScreenshotPaceReport?
+    /// Hears the pace after the first screenshot and when its whole seconds change, on `queue`.
+    private let onPace: (ScreenshotPaceReport) -> Void
     private var timer: DispatchSourceTimer?
     private var takingSince: Date?
     /// Which screenshot is on its way, so one that a tick gave up on cannot end a later one's turn.
@@ -47,11 +66,18 @@ final class ScreenshotFeed: CaptureFeed {
     /// Counts filter and size changes: a screenshot asked for before one and arriving after it shows the old display.
     private var generation = 0
 
-    init(filter: SCContentFilter, configuration: SCStreamConfiguration, recorder: NativeRecorder) {
+    init(filter: SCContentFilter, configuration: SCStreamConfiguration, recorder: NativeRecorder,
+         onPace: @escaping (ScreenshotPaceReport) -> Void) {
         self.filter = filter
         self.recorder = recorder
+        self.onPace = onPace
         self.shot = Self.shotConfiguration(configuration)
         self.interval = Self.interval(configuration)
+        self.paced = interval
+    }
+
+    var pace: ScreenshotPaceReport? {
+        queue.sync { took.map { ScreenshotPace.report(interval: paced, asked: interval, took: $0) } }
     }
 
     /// The parts of the stream's configuration a screenshot takes: its size, its pixels and what it shows.
@@ -77,8 +103,13 @@ final class ScreenshotFeed: CaptureFeed {
     /// fails as a stream's start does.
     func startCapture() async throws {
         let first = queue.sync { (filter, shot, generation) }
+        let started = Date()
         try await take(filter: first.0, shot: first.1, generation: first.2)
-        queue.sync { schedule() }
+        queue.sync {
+            took = Date().timeIntervalSince(started)
+            repace(sinceLast: nil)
+            schedule()
+        }
     }
 
     func stopCapture() async throws {
@@ -97,9 +128,7 @@ final class ScreenshotFeed: CaptureFeed {
             let next = Self.interval(streamConfig)
             guard next != interval else { return }
             interval = next
-            if timer != nil {
-                schedule()
-            }
+            repace(sinceLast: nil)
         }
     }
 
@@ -110,11 +139,11 @@ final class ScreenshotFeed: CaptureFeed {
         }
     }
 
-    /// On `queue`.
-    private func schedule() {
+    /// On `queue`. The timer runs at `paced`; its first tick comes after `delay` (default: one interval from now).
+    private func schedule(after delay: TimeInterval? = nil) {
         timer?.cancel()
         let next = DispatchSource.makeTimerSource(queue: queue)
-        next.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(20))
+        next.schedule(deadline: .now() + (delay ?? paced), repeating: paced, leeway: .milliseconds(20))
         next.setEventHandler { [weak self] in self?.tick() }
         next.resume()
         timer = next
@@ -123,10 +152,14 @@ final class ScreenshotFeed: CaptureFeed {
     /// On `queue`. One screenshot at a time: a tick that finds one still on its way waits for the next tick.
     private func tick() {
         if let takingSince {
-            guard Date().timeIntervalSince(takingSince) > Self.stallSeconds else { return }
+            let waited = Date().timeIntervalSince(takingSince)
+            guard waited > Self.stallSeconds else { return }
             // Give up on it: its picture is dropped if it ever comes, because the generation moves on.
             self.takingSince = nil
             generation += 1
+            // The service is that slow: the pace stretches as after a screenshot of that length.
+            took = waited
+            repace(sinceLast: waited)
             failed(screenshotError("a screenshot did not arrive within \(Int(Self.stallSeconds)) s"))
             return
         }
@@ -145,14 +178,34 @@ final class ScreenshotFeed: CaptureFeed {
             }
             queue.async { [self] in
                 // A later tick gave up on this screenshot and counted it as failed.
-                guard number == shotNumber, takingSince != nil else { return }
+                guard number == shotNumber, let since = takingSince else { return }
                 takingSince = nil
                 if let failure {
                     failed(failure)
                 } else {
                     failures = 0
+                    took = Date().timeIntervalSince(since)
+                    repace(sinceLast: took)
                 }
             }
+        }
+    }
+
+    /// On `queue`. Sets the timer to the asked interval stretched by the newest screenshot's time, so the next
+    /// screenshot starts one paced interval after the newest one started (`sinceLast` ago; nil: from now).
+    private func repace(sinceLast: TimeInterval?) {
+        let next = ScreenshotPace.interval(asked: interval, took: took)
+        if let took {
+            let report = ScreenshotPace.report(interval: next, asked: interval, took: took)
+            if reported == nil || reported?.everySec != report.everySec {
+                reported = report
+                onPace(report)
+            }
+        }
+        guard next != paced else { return }
+        paced = next
+        if timer != nil {
+            schedule(after: sinceLast.map { max(0, next - $0) })
         }
     }
 
