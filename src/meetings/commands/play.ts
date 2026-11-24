@@ -15,13 +15,12 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
-import { OpenedMeeting } from "../lib/opened-meeting";
-import { choosePlayer, PLAYERS, pickPlayer } from "../lib/players";
+import { PLAYERS, pickPlayer } from "../lib/players";
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { TRACK_KINDS, type TrackKind } from "../lib/sound";
-import { playbackRange, playbackRun, slicePlaybackPlan, startPlaybackPlan } from "../lib/sound-playback";
+import { playMeetingSound } from "../lib/sound-playback";
 import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
@@ -380,41 +379,29 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             return;
         }
 
-        const atSec = "atSec" in what ? what.atSec : what.target.kind === "range" ? what.target.fromSec : 0;
-        const playback = (await new MeetingsConfigStore().read()).global.playback;
-        const chosen = choosePlayer({ requested: opts.player, configured: playback.player, all: MEETING_PLAYERS });
-
-        if ("error" in chosen) {
-            fail(chosen.error);
-            return;
-        }
-
-        const fromSec = Math.max(0, atSec - (beforeSec ?? (track && "target" in what ? 0 : playback.beforeSec)));
-        const opened = OpenedMeeting.of(store, record);
-        // A range is the slice, or the pieces it covers; a play from a time runs on through the track's later pieces.
-        const [slice, ...next] =
-            "target" in what && what.target.kind === "range"
-                ? await playbackRange({ opened, atSec, fromSec, toSec: what.target.toSec, ...(track ? { track } : {}) })
-                : await playbackRun({ opened, atSec, fromSec, ...(track ? { track } : {}) });
-        // Open-ended from a time: the recording itself at its second; a range or one channel of a stereo source: a cut.
-        const plan = slicePlaybackPlan({
-            slice: { ...slice, meeting: record.id, fromSec },
-            next,
-            openEnded: !("target" in what),
-            player: chosen.player,
+        // Only a range reaches here as a target: a track plays it (a Moment took every other target above).
+        const range = "target" in what && what.target.kind === "range" ? what.target : undefined;
+        const played = await playMeetingSound({
+            store,
+            record,
+            atSec: "atSec" in what ? what.atSec : (range?.fromSec ?? 0),
+            ...(range ? { toSec: range.toSec } : {}),
+            ...(beforeSec === undefined ? {} : { beforeSec }),
+            ...(track ? { track } : {}),
+            ...(opts.player === undefined ? {} : { player: opts.player }),
+            start: opts.start !== false,
         });
-        const pid = opts.start === false ? undefined : await startPlaybackPlan(plan);
-        const later = plan.parts.length > 1 ? ` and ${plan.parts.length - 1} later pieces` : "";
+        const later = played.parts.length > 1 ? ` and ${played.parts.length - 1} later pieces` : "";
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ ...slice, ...plan, ...(pid === undefined ? {} : { pid }) }, null, 2));
+            out.result(SafeJSON.stringify(played, null, 2));
             return;
         }
 
         ui.ok(
-            pid === undefined
-                ? `Would play ${record.id} from ${formatClock(fromSec)} on ${slice.track} in ${plan.player}: ${plan.argv.join(" ")}`
-                : `Playing ${record.id} from ${formatClock(fromSec)} on ${slice.track} in ${plan.player}: ${basename(plan.audioPath)}${later}.`
+            played.pid === undefined
+                ? `Would play ${record.id} from ${formatClock(played.fromSec)} on ${played.track} in ${played.player}: ${played.argv.join(" ")}`
+                : `Playing ${record.id} from ${formatClock(played.fromSec)} on ${played.track} in ${played.player}: ${basename(played.audioPath)}${later}.`
         );
     } catch (err) {
         fail(new Error(momentFailure(err), { cause: err }));

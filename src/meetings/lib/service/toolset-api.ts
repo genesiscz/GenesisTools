@@ -5,7 +5,7 @@ import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
-import { EXPORT_IF_EDITED } from "@genesiscz/utils/meetings/config";
+import { EXPORT_IF_EDITED, MEETING_PLAYERS } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES } from "@genesiscz/utils/meetings/record";
 import {
     RECORDER_SET_SETTINGS_DOC,
@@ -854,6 +854,33 @@ export const lineEligibility = defineMethod({
     doc: `Return the channel, eligible people, exclusions with reasons and reviewOnly flag for a zero-based source transcript line. CLI: ${toolCommand("meetings", "evidence")} <meeting> --line-eligibility <index> --json.`,
 });
 
+export const play = defineMethod({
+    name: "play",
+    params: z
+        .object({
+            meeting: z.string().min(1),
+            /** The transcript second to play from. */
+            atSec: z.number().nonnegative(),
+            /** With track: the range from atSec to here, as one cut, instead of on from atSec. */
+            toSec: z.number().positive().optional(),
+            /** Start this many seconds earlier; default playback.beforeSec, 0 for a range. */
+            beforeSec: z.number().nonnegative().optional(),
+            /** source-mic, source-call, mic-raw or system; absent: the best track of the line's seat. */
+            track: z.string().min(1).optional(),
+            player: z.enum(MEETING_PLAYERS).optional(),
+            /** false: plan only; nothing is cut, written or started. */
+            start: z.boolean().optional(),
+        })
+        .refine((params) => params.toSec === undefined || (params.track !== undefined && params.toSec > params.atSec), {
+            message: "toSec needs track and must be after atSec; a range without a track is a Moment (play --to).",
+        }),
+    result: z.unknown(),
+    resultName:
+        "{ track, path, channel?, fileFromSec, fileToSec, clock, fromSec, audioPath, startSec, cut, cutParts?, parts, list?, player, argv, pid? }",
+    effect: "reversible",
+    doc: `Play the meeting's sound from atSec (transcript seconds) in VLC or ffplay, on through the track's later pieces, or with toSec and track that range as one cut. Returns what plays (parts with their file seconds), the player's command line and, once started, its pid; start: false plans only and cuts, writes and starts nothing. CLI twin: ${toolCommand("meetings", "play")} <meeting> <time> [--to <time> --track <kind>] --json [--no-start].`,
+});
+
 export const voiceLibraryMethods = {
     list: defineMethod({
         ...voicesList,
@@ -916,6 +943,7 @@ export const meetingsToolsetApi = defineApi({
         voiceReadiness,
         voices,
         lineEligibility,
+        play,
         ...Object.values(voiceLibraryMethods),
         list,
         levels,

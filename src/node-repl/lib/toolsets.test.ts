@@ -11,6 +11,7 @@ import { registerEvidenceCommand } from "@app/meetings/commands/evidence";
 import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
+import { PLAYERS } from "@app/meetings/lib/players";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { measureRoomCall } from "@app/meetings/lib/room-call-metrics";
 import type { MeetingsResult } from "@app/meetings/lib/service/api";
@@ -18,6 +19,7 @@ import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
 import * as libraryHandlers from "@app/meetings/lib/service/library-handlers";
 import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
+import { meetingSound } from "@app/meetings/lib/sound";
 import { deliverStartFailures } from "@app/meetings/lib/start-failures";
 import type { recordingAutostart } from "@app/meetings/lib/watcher";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -299,6 +301,14 @@ interface MeetingsHandle {
     voiceReadiness(input: unknown): Promise<unknown>;
     voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
     lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
+    play(input: {
+        meeting: string;
+        atSec: number;
+        toSec?: number;
+        beforeSec?: number;
+        track?: string;
+        start?: boolean;
+    }): Promise<Record<string, unknown>>;
     look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
     measure(input: { meeting: string }): Promise<ReturnType<typeof measureRoomCall>>;
     list(): Array<{ id: string; seconds: number | null }>;
@@ -487,6 +497,68 @@ describe("toolset method names", () => {
             expect(samples?.params.safeParse({ scope }).success).toBe(false);
         } finally {
             call.mockRestore();
+        }
+    });
+
+    test("meetings.play plans a play from a time through the CLI's own core, names its CLI twin and starts no player", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.play")).toContain("meetings play");
+        const { id } = await new MeetingStore().create(
+            { title: "Play door", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        const sound = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(
+            meetingSound({
+                folder: "/fixture",
+                timelineZeroMs: 0,
+                tracks: "best",
+                rows: [
+                    { file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] },
+                    { file: "mic2.m4a", source: "mic", at: "1970-01-01T00:00:40Z", durationMs: 30000, mutedSpans: [] },
+                ],
+            })
+        );
+        const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+            throw new Error("must not play");
+        });
+        const playback = await import("@app/meetings/lib/sound-playback");
+        const core = spyOn(playback, "playMeetingSound");
+        try {
+            const planned = await meetings.play({
+                meeting: id,
+                atSec: 15,
+                beforeSec: 0,
+                track: "mic-raw",
+                start: false,
+            });
+            expect(planned).toMatchObject({
+                track: "mic-raw",
+                fromSec: 15,
+                cut: false,
+                player: "vlc",
+                parts: [
+                    { path: "/fixture/mic.m4a", fileFromSec: 5, fileToSec: 30 },
+                    { path: "/fixture/mic2.m4a", fileFromSec: 0, fileToSec: 30 },
+                ],
+            });
+            expect(planned).not.toHaveProperty("pid");
+            expect(
+                core.mock.calls.map(([options]) => ({ ...options, store: undefined, record: options.record.id }))
+            ).toEqual([{ store: undefined, record: id, atSec: 15, beforeSec: 0, track: "mic-raw", start: false }]);
+            await expect(meetings.play({ meeting: id, atSec: 15, track: "loud", start: false })).rejects.toThrow(
+                "track needs source-mic, source-call, mic-raw, system."
+            );
+            await expect(meetings.play({ meeting: id, atSec: 15, toSec: 20, start: false })).rejects.toThrow(
+                "toSec needs track"
+            );
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            core.mockRestore();
+            spawn.mockRestore();
+            vlc.mockRestore();
+            sound.mockRestore();
         }
     });
 
