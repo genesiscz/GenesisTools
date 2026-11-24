@@ -107,7 +107,9 @@ A missing meeting names only the store that was searched. To find which store ho
      automatic seat or voice range on its line, whatever their age, and a confirmed range outranks both. One pass runs
      per meeting at a time, also across the service and the CLI: a second call waits for the running one, then runs. A
      pass that an answer overtook plans again from the saved record, so it never overwrites the answer, and a pass that
-     changes nothing leaves the record as it was.
+     changes nothing leaves the record as it was. When the voice later names someone else at or above the apply
+     threshold on a line that only the voice named, the pass renames its own range in place (same item, no question).
+     Below the threshold, or when a seat or the attendance backs the earlier name, it asks "A or B" instead.
 
 3. **Pass 2, the agent judges.**
    First run `meeting.items.byChannel({ label, dryRun: true })` with the stored seats, or `tools meetings items by-channel <meeting> --label <label> --dry-run`. Inspect the plan before applying with `dryRun: false`. The shipped `meetings-attribute-by-mic` REPL preset takes meeting, label, room, remote and dryRun parameters. When a line refers to something on the screen, read `screen --at` before attributing the idea.
