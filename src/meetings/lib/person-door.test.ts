@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { AGENT_STOP_LINE } from "@genesiscz/utils/ai/agent-instructions";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
-import type { RequestOutcome } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { noticeInputSchema, type RequestOutcome } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import type { DecisionActor, MeetingItem } from "@genesiscz/utils/meetings/record";
 import {
     confirmVoiceSample,
@@ -187,17 +187,30 @@ describe("an agent's voice sample asks the user to confirm it (D443)", () => {
             by: { kind: "request", request: id, via: "app-window", method: "click" },
             record,
         });
+        // The window is declared: who asks in the text, the context as rows, Play for exactly this range, the answers.
         const posted = gt.person.confirm.mock.calls[0]?.[0];
-        expect(posted).toMatchObject({ kind: "notice", id, title: "Confirm a voice sample of Alice Example" });
-        for (const context of [
-            "An agent (fixture, session session-1)",
-            "Meeting: Planning (2026-01-12_10-00-planning)",
-            "Time: 43:15 to 43:25",
-            "Person: Alice Example",
-            "Listen first: tools meetings play 2026-01-12_10-00-planning --at 43:15 --to 43:25",
-        ]) {
-            expect(posted?.reason).toContain(context);
-        }
+        expect(posted).toEqual({
+            kind: "notice",
+            id,
+            title: "Confirm a voice sample of Alice Example",
+            reason: "An agent (fixture, session session-1) asks whether only Alice Example speaks in this part of the meeting. Confirm sample lets the agent save it as a voice sample; Not now saves nothing.",
+            fields: [
+                { label: "Meeting", value: "Planning", help: "2026-01-12_10-00-planning" },
+                { label: "Time", value: "43:15 to 43:25" },
+                { label: "Person", value: "Alice Example" },
+            ],
+            actions: [
+                {
+                    kind: "play-meeting",
+                    label: "Play clip",
+                    meeting: "2026-01-12_10-00-planning",
+                    fromSec: 2595,
+                    toSec: 2605,
+                },
+            ],
+            buttons: { confirm: "Confirm sample", decline: "Not now" },
+        });
+        expect(noticeInputSchema.safeParse(posted).success).toBe(true);
         // The same interval asks the same request again, so a run after the answer reads it; another person does not.
         expect(voiceSampleRequestId({ ...sample })).toBe(id);
         expect(voiceSampleRequestId({ ...sample, person: "Bob Example" })).not.toBe(id);
