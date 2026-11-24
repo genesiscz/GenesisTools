@@ -66,6 +66,19 @@ struct MarkdownSettingsView: View {
                                          detail: "The list of notes opens after [[ and the list of tags after #. Off: press Esc to open it.",
                                          identifier: "markdown.settings.completeWhileTyping", isOn: $configuration.completeWhileTyping)
                     Divider()
+                    NativeSettingsSegmented("Text size", identifier: "markdown.settings.editorTextSize", options: [
+                        NativeSettingsOption(.smaller, "Smaller", detail: "Two points under the page's text."),
+                        NativeSettingsOption(.page, "Like the page",
+                                             detail: "As large as the page beside it in Split. The toolbar's reading size (⌘+ and ⌘−) sizes both."),
+                        NativeSettingsOption(.larger, "Larger", detail: "Two points over the page's text."),
+                    ], selection: $configuration.editorTextSize, minSegmentWidth: 84)
+                    Divider()
+                    NativeSettingsSegmented("Line spacing", identifier: "markdown.settings.editorLineSpacing", options: [
+                        NativeSettingsOption(.compact, "Compact", detail: "The font's own spacing: the most lines on screen."),
+                        NativeSettingsOption(.comfortable, "Comfortable", detail: "Lines 1.6 times the text size."),
+                        NativeSettingsOption(.page, "Like the page", detail: "Lines 1.75 times the text size, as on the page."),
+                    ], selection: $configuration.editorLineSpacing, minSegmentWidth: 84)
+                    Divider()
                     NativeSettingsToggle("Sync split scrolling", detail: "The editor and preview follow each other while scrolling.",
                                          identifier: "markdown.settings.splitScrollSync", isOn: $splitScrollSync)
                 }

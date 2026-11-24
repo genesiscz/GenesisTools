@@ -1314,14 +1314,20 @@ private struct MarkdownDocumentPane: View {
         }
     }
 
+    /// The source text's size: the page's code size at the window's zoom, with the reader's setting.
+    private var sourceTextSize: CGFloat {
+        MarkdownSourceEditor.textSize(zoom: model.zoom, size: configuration.editorTextSize)
+    }
+
     /// The source, editable. ⌘S writes it; the preview shows the draft too.
     private func sourceView(onTopLine: ((Int) -> Void)?, scrollToLine: MarkdownLineSync? = nil) -> some View {
         MarkdownSourceEditor(
             text: Binding(get: { doc.displayText }, set: { doc.edit($0) }),
-            font: .monospacedSystemFont(ofSize: 12 * model.zoom, weight: .regular),
+            font: .monospacedSystemFont(ofSize: sourceTextSize, weight: .regular),
             textColor: NSColor(model.theme.text),
             background: NSColor(model.theme.page),
             theme: model.theme,
+            lineHeight: configuration.editorLineSpacing.lineHeight.map { CGFloat($0) },
             restoreScroll: model.scrollOffset(for: doc.id, pane: .source),
             onScroll: { model.rememberScroll($0, for: doc.id, pane: .source) },
             selection: model.sourceSelection,
@@ -1360,7 +1366,7 @@ private struct MarkdownDocumentPane: View {
         } else {
             ScrollView {
                 Text(verbatim: revision.text)
-                    .font(.system(size: 12 * model.zoom, design: .monospaced))
+                    .font(.system(size: sourceTextSize, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)

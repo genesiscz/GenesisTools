@@ -279,6 +279,40 @@ final class SourceTextView: NSTextView {
     }
 }
 
+/// The editor's line height, like CSS `line-height`: every line is taller by the same amount, with its text in the
+/// middle. A layout manager delegate, so the text's attributes and the highlighter stay as they are.
+final class SourceLineSpacing: NSObject, NSLayoutManagerDelegate {
+    /// Points added to every line: the wanted height less the font's own.
+    private(set) var extra: CGFloat = 0
+    private var key: (multiple: CGFloat?, font: NSFont)?
+
+    /// Sets the height for `font`: `multiple` of its size, or the font's own for nil. Lays the text out again and
+    /// returns true when the height changed.
+    func set(_ multiple: CGFloat?, font: NSFont, in layout: NSLayoutManager) -> Bool {
+        if let key, key.multiple == multiple, key.font == font { return false }
+        key = (multiple, font)
+        let wanted = multiple.map { max(0, ($0 * font.pointSize - layout.defaultLineHeight(for: font)).rounded()) } ?? 0
+        guard wanted != extra else { return false }
+        extra = wanted
+        let length = layout.textStorage?.length ?? 0
+        layout.invalidateLayout(forCharacterRange: NSRange(location: 0, length: length), actualCharacterRange: nil)
+        return true
+    }
+
+    func layoutManager(_ layoutManager: NSLayoutManager,
+                       shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+                       lineFragmentUsedRect: UnsafeMutablePointer<NSRect>,
+                       baselineOffset: UnsafeMutablePointer<CGFloat>,
+                       in textContainer: NSTextContainer,
+                       forGlyphRange glyphRange: NSRange) -> Bool {
+        guard extra > 0 else { return false }
+        lineFragmentRect.pointee.size.height += extra
+        lineFragmentUsedRect.pointee.size.height += extra
+        baselineOffset.pointee += (extra / 2).rounded(.down)
+        return true
+    }
+}
+
 struct MarkdownSourceEditor: NSViewRepresentable {
     @Binding var text: String
     var font: NSFont
@@ -286,6 +320,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     var background: NSColor
     /// The palette of the markdown colours. nil: the palette whose page colour `background` is.
     var theme: MarkdownTheme? = nil
+    /// The height of a line as a multiple of the font size, like CSS `line-height`, with the text in the middle of
+    /// it. nil: the font's own line height.
+    var lineHeight: CGFloat? = nil
     /// Where this document was left, applied once when the editor appears.
     var restoreScroll: Double? = nil
     /// Reports the editor's scroll position as it changes.
@@ -352,6 +389,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             coordinator?.parent.onHunk?(hunk, rect, view)
         }
         view.gitHunks = gitHunks
+        // The layout manager holds its delegate weakly; the coordinator keeps it.
+        view.layoutManager?.delegate = context.coordinator.spacing
         view.registerForDraggedTypes(MarkdownDrop.draggedTypes)
         view.delegate = context.coordinator
         view.isRichText = false
@@ -368,7 +407,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         context.coordinator.view = view
         context.coordinator.watchScroll(scroll)
         if let storage = view.textStorage { context.coordinator.highlighter.attach(to: storage) }
-        apply(to: view, scroll: scroll, highlighter: context.coordinator.highlighter)
+        apply(to: view, scroll: scroll, coordinator: context.coordinator)
         view.string = text
         if let top = restoreScroll, top > 0 {
             // The text needs a layout pass before it can be scrolled.
@@ -384,7 +423,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
         context.coordinator.parent = self
-        apply(to: view, scroll: scroll, highlighter: context.coordinator.highlighter)
+        apply(to: view, scroll: scroll, coordinator: context.coordinator)
         if let source = view as? SourceTextView, source.gitHunks != gitHunks {
             source.gitHunks = gitHunks
         }
@@ -611,7 +650,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     /// The font and the text colour are compared with what the highlighter was
     /// given, never read back from the view: the view answers with the first
     /// character's attributes, which a heading on line 1 makes bold and coloured.
-    private func apply(to view: NSTextView, scroll: NSScrollView, highlighter: MarkdownSourceHighlighter) {
+    private func apply(to view: NSTextView, scroll: NSScrollView, coordinator: Coordinator) {
+        let highlighter = coordinator.highlighter
         let look = MarkdownSourceHighlighter.Look(font: font, textColor: textColor, theme: resolvedTheme)
         if highlighter.look != look {
             // A plain text view sets these on every character; they seed what is typed into an empty editor, and
@@ -619,6 +659,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             view.font = font
             view.textColor = textColor
             highlighter.setLook(look)
+        }
+        if let layout = view.layoutManager, coordinator.spacing.set(lineHeight, font: font, in: layout) {
+            view.needsDisplay = true
         }
         if view.insertionPointColor != textColor { view.insertionPointColor = textColor }
         if view.backgroundColor != background { view.backgroundColor = background }
@@ -635,6 +678,20 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    /// The page's body text at 100%, in points: `article{font-size:16px}` in markdown-page.css.
+    static let pageBodySize: CGFloat = 16
+    /// The page's monospaced text inside its body text: `code{font-size:.88em}` in markdown-page.css. SF Mono is wider
+    /// than the page's sans serif, so at this size the editor reads as large as the page next to it.
+    static let pageCodeScale: CGFloat = 0.88
+
+    /// The editor's text size, in half points: the page's code size with the setting's offset, times the window's
+    /// zoom (A / 100% / A), which sizes the page too. 14 at 100%; it was 12 until 2026-11-24, which read about a
+    /// quarter smaller than the page beside it in split view.
+    static func textSize(zoom: Double, size: MarkdownEditorTextSize) -> CGFloat {
+        let points = (pageBodySize * pageCodeScale + CGFloat(size.offset)) * CGFloat(zoom)
+        return max(6, (points * 2).rounded() / 2)
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MarkdownSourceEditor
         weak var view: NSTextView?
@@ -642,6 +699,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         let highlighter = MarkdownSourceHighlighter()
         /// Our own stack, so undo does not depend on the window's manager.
         let undo = UndoManager()
+        /// The line height: the layout manager's delegate, which holds it weakly.
+        let spacing = SourceLineSpacing()
         var lastSelection: MarkdownSourceSelection?
         /// True while the editor itself moves the selection (a find match, a
         /// text change from outside), so the report says it was not the reader.
