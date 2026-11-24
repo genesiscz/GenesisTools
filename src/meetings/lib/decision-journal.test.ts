@@ -1967,7 +1967,8 @@ describe("decision journal", () => {
         const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
         const agent = { kind: "agent", harness: "claude", session: null } as const;
 
-        // Not only an agent: a rule and an unrecorded actor are not a person either.
+        // Not only an agent: a rule and an unrecorded actor are not a person either. The refusal is an instruction
+        // for the agent in the one shape every instruction has (docs/adr/0049-agent-instructions.md).
         for (const actor of [agent, { kind: "rule", rule: "fixture" } as const, { kind: "unknown" } as const]) {
             await expect(
                 fx.journal.apply({
@@ -1975,7 +1976,7 @@ describe("decision journal", () => {
                     action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
                     actor,
                 })
-            ).rejects.toThrow("person");
+            ).rejects.toThrow("==== FOR AGENTS (error) ====\nOnly a person adds a word to the dictionary");
         }
         const answered = await fx.journal.apply({
             meeting: fx.meeting.id,

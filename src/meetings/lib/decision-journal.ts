@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
+import { AgentInstructionsError } from "@genesiscz/utils/ai/agent-instructions";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
@@ -1684,7 +1685,7 @@ const NO_DICTIONARY_PLAN: DictionaryPlan = { undo: [], warnings: [] };
 const DICTIONARY_ACTIONS = new Set<JournalActionKind>(["answer", "confirm", "respell", "revert"]);
 
 const AGENT_ADDS =
-    "Only a person adds a word to the dictionary; an agent, a rule or an unrecorded actor leaves the dictionary question open for them (the owner's rule).";
+    "Only a person adds a word to the dictionary (the owner's rule), so this decision was refused. An agent, a rule or an unrecorded actor leaves the dictionary question open for the user: answer the word without learn, and leave a dictionary question to the user.";
 
 function scopeName(scope: DictionaryScope): string {
     return scope.kind === "global" ? "global" : scope.project;
@@ -1720,7 +1721,7 @@ function dictionaryPlan(options: {
 
         if (yes && question?.heard && typeof fixed === "string" && fixed && fixed.toLowerCase() !== NONE_OF_THESE) {
             if (!isPersonActor(actor.kind)) {
-                throw new Error(AGENT_ADDS);
+                throw new AgentInstructionsError({ text: AGENT_ADDS, severity: "error", stop: false });
             }
 
             if (!config) {

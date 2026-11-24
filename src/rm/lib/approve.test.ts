@@ -2218,7 +2218,7 @@ describe("tools rm ask: an agent opens the person's window", () => {
         };
         const lines: string[] = [];
         const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
-            lines.push(stripAnsi(String(raw ?? "")));
+            lines.push(...stripAnsi(String(raw ?? "")).split("\n"));
         });
         const exitCode = process.exitCode;
         let code: typeof process.exitCode;
@@ -2248,6 +2248,8 @@ describe("tools rm ask: an agent opens the person's window", () => {
         expect(prompts).toEqual([]);
         expect(dialogs).toEqual([]);
         expect(code).toBe(1);
+        // The refusal is an instruction for the agent (docs/adr/0049): its block ends on the line it acts on.
+        expect(lines.at(-2)).toBe("==== FOR AGENTS (warning) ====");
         expect(lines.at(-1)).toMatch(
             new RegExp(
                 `^Request ${request.id} is [\\d.]+ (B|KB)( \\(.+\\))?, under the 10 MB set for agents: hand the user \`! ${toolCommand("rm")} approve ${request.id}\``
