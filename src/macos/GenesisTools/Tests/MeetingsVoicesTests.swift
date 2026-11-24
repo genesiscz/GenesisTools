@@ -35,6 +35,16 @@ final class MeetingsVoicesTests: XCTestCase {
         }
     }
 
+    func testTooFewSamplesNamesThePersonAndHowToAddOne() throws {
+        XCTAssertEqual(VoiceReason.words("few-samples", person: nil, next: "Dana Example"),
+                       "Too few voice samples of Dana Example. Answer one more of their lines to add a sample.")
+        let line = try decode(VoicePreviewLine.self, #"""
+        {"labeler":"voice","index":2,"seat":"mic","fromSec":5,"toSec":8,"text":"Two.","current":"Speaker 1","score":0.3,"next":{"person":"Dana Example","score":0},"reason":"few-samples"}
+        """#)
+        XCTAssertEqual(line.waitsFor, "Dana Example")
+        XCTAssertEqual(line.outcome, "Too few voice samples of Dana Example. Answer one more of their lines to add a sample.")
+    }
+
     // MARK: The service's replies
 
     func testTheVoicesRepliesOfTheProtocolFixtureDecode() throws {
