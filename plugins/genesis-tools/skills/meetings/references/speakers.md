@@ -256,7 +256,7 @@ attributes the whole sentence (E1 first).
 
 ## Shared microphones and local voice features
 
-Use `attendance <meeting> --add "Dana Example" --at-mic --from 0 --to 01:14:13` to add a room person and their stay. Use `--via "Robin Example"` for a person sharing a remote device. `--remove` removes meeting-local membership. These commands do not add somebody to the global people book. `attendance <meeting> --from teams --id <chat-id>` selects the exact attendance chat.
+Use `attendance <meeting> --add "Dana Example" --at-mic --from 0 --to 01:14:13` to add a room person and their stay. The stay also bounds their room seat: the voice and seat labelers name nobody on a line before `--from` or after `--to`, so state it when a room person comes late or leaves early (after their goodbye). Everybody else keeps their stays, remote seats included. Use `--via "Robin Example"` for a person sharing a remote device. `--remove` removes meeting-local membership. These commands do not add somebody to the global people book. `attendance <meeting> --from teams --id <chat-id>` selects the exact attendance chat.
 
 A microphone or speaking indicator identifies a device group. When several active people share it, offer all group members as candidates. Never equate high mic share with the recording user, or the indicator's owner with the voice. Presence bounds are from inclusive, to exclusive.
 

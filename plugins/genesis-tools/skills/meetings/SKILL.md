@@ -93,7 +93,12 @@ A missing meeting names only the store that was searched. To find which store ho
      use certain lines from this meeting as temporary samples. It excludes the line it is scoring. A person without
      a sample can still be proposed if they are the only such person present on that seat, the voice clearly matches
      none of the enrolled seat-mates, and the lines sound like one speaker. Check that suggestion by ear.
-     Run `tools meetings voices apply <meeting>` to save the speaker suggestions for review.
+     A line marked `[few-samples]` waits: three or more people share its seat, and one of them has fewer samples than
+     `speakerLabels.voice.minSamples` (default 2), so the voice leaves that person out. Answer or confirm one more of
+     their lines to add a sample.
+     Run `tools meetings voices apply <meeting>` to save the speaker suggestions for review. It fills only the lines
+     that nobody named: a range you add with `items add` outranks every automatic seat or voice range on its line,
+     whatever their age, and a confirmed range outranks both.
 
 3. **Pass 2, the agent judges.**
    First run `meeting.items.byChannel({ label, dryRun: true })` with the stored seats, or `tools meetings items by-channel <meeting> --label <label> --dry-run`. Inspect the plan before applying with `dryRun: false`. The shipped `meetings-attribute-by-mic` REPL preset takes meeting, label, room, remote and dryRun parameters. When a line refers to something on the screen, read `screen --at` before attributing the idea.
