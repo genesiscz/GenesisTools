@@ -71,11 +71,20 @@ function meetingEndSec(record: MeetingRecord): number | undefined {
 }
 
 /**
- * The presence a record without attendance shows, as `rosterPresence` reads it: each participant's own stays, else
- * one stay from the first time they were seen; an open stay runs to `endSec`.
+ * Who a record without attendance shows in the call: each participant's own stays, as `rosterPresence` reads them,
+ * else one stay from the first time they were seen, and each remote seat of a person who is no participant, for the
+ * seat's time. An open stay runs to `endSec`. Without the remote seats, one stay added by hand left the recording
+ * user alone in the call, and the attendance rule then gave that user every call line.
  */
 function rosterStays(record: MeetingRecord, endSec: number): AttendanceStay[] {
-    return record.participants.flatMap((person) => {
+    const remote = (record.seats?.remote ?? []).flatMap((seat): AttendanceStay[] => {
+        const fromSec = seat.fromSec ?? 0;
+        const toSec = seat.toSec ?? endSec;
+        return toSec > fromSec && !record.participants.some((person) => sameName(person.name, seat.name))
+            ? [{ name: seat.name, fromSec, toSec }]
+            : [];
+    });
+    const participants = record.participants.flatMap((person) => {
         const stays: Array<{ fromSec: number; toSec?: number }> =
             person.stays ?? (person.firstSeenSec === undefined ? [] : [{ fromSec: person.firstSeenSec }]);
         return stays.flatMap((stay): AttendanceStay[] => {
@@ -83,6 +92,7 @@ function rosterStays(record: MeetingRecord, endSec: number): AttendanceStay[] {
             return toSec > stay.fromSec ? [{ name: person.name, fromSec: stay.fromSec, toSec }] : [];
         });
     });
+    return [...participants, ...remote];
 }
 
 export async function editMeetingPerson(options: {
