@@ -6,7 +6,8 @@ import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import * as requestJournal from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { strongestRange } from "@genesiscz/utils/meetings/range-strength";
+import { type MeetingRecord, MeetingStore, meetingItemSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ChannelEmbedding } from "@genesiscz/utils/meetings/voice";
@@ -1406,6 +1407,67 @@ describe("speaker-label integration", () => {
         const second = await runSuggest({ store, record: reopened, rules: ["speakers"] });
         expect(second.fresh).toEqual([]);
         expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
+    });
+
+    async function twoLineSeatFixture() {
+        const fixture = await runnerFixture({ seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }] } });
+        fixture.meeting.transcript = [0, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        spies.push(
+            spyOn(fixture.opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec: 15, channel: "mic" }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(fixture.opened, "presence").mockResolvedValue([{ name: "Alice Example", fromSec: 0, toSec: 15 }])
+        );
+        return fixture;
+    }
+
+    test("a rerun on the same inputs leaves the record file as it was, byte for byte", async () => {
+        const { store, record } = await twoLineSeatFixture();
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const saved = readFileSync(store.path(record.id));
+        const second = await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        const third = await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect([second.fresh, third.fresh]).toEqual([[], []]);
+        expect(readFileSync(store.path(record.id))).toEqual(saved);
+    });
+
+    test("an answer saved while the pass plans makes it plan again: the answer stays and its stated range wins", async () => {
+        const { store, record } = await twoLineSeatFixture();
+        const answer = meetingItemSchema.parse({
+            id: "i90",
+            kind: "speaker-range",
+            status: "suggested",
+            rules: [MeetingRule.User],
+            suggestedAt: START,
+            label: "Speaker 1",
+            fromSec: 0,
+            toSec: 0,
+            speaker: "Bob Example",
+        });
+        const update = store.update.bind(store);
+        let answered = false;
+        // The answer lands after the pass took its snapshot and before its write takes the record's lock.
+        const saves = spyOn(store, "update").mockImplementation(async (id, change, mutate, beside) => {
+            if (!answered) {
+                answered = true;
+                await update(id, { command: "listen", change: "fixture answer" }, (current) => {
+                    current.items.push(answer);
+                });
+            }
+            return update(id, change, mutate, beside);
+        });
+        spies.push(saves);
+        const result = await runSuggest({ store, record, rules: ["speakers"] });
+        expect(saves).toHaveBeenCalledTimes(2);
+        const saved = new MeetingStore(store.storage).read(record.id)!;
+        expect(saved.items.find((item) => item.id === "i90")).toEqual(answer);
+        const firstLine = saved.items.filter(
+            (item) => item.kind === "speaker-range" && item.status !== "rejected" && item.fromSec === 0
+        );
+        expect(strongestRange(firstLine)).toMatchObject({ id: "i90", speaker: "Bob Example" });
+        expect(result.fresh.map((item) => item.kind === "speaker-range" && item.speaker)).toContain("Alice Example");
     });
 });
 

@@ -7,7 +7,13 @@ import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genes
 import { type AcousticShare, collectEcho, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
 import type { RoomDeviceOffer } from "@genesiscz/utils/meetings/people";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
-import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type DecisionActor,
+    MEETING_UNCHANGED,
+    type MeetingItem,
+    type MeetingRecord,
+    type MeetingStore,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { roomSeatNames } from "@genesiscz/utils/meetings/seats";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
@@ -30,7 +36,14 @@ import { roomDeviceOffers } from "./room-devices";
 import { errorText } from "./shared";
 import { preparePreviewLabels, proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
-import { applySuggestionChanges, planSuggestions, type SuggestInputs, type SuggestRule } from "./suggest";
+import {
+    applySuggestionChanges,
+    planSuggestions,
+    StaleSuggestionError,
+    type SuggestInputs,
+    type SuggestRule,
+    suggestionChangesEmpty,
+} from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
 import { VOICE_PASS_HISTORY } from "./voice-readiness";
 import type { WordCheckChoice } from "./word-check";
@@ -110,14 +123,10 @@ function entrySpans(entries: TranscriptEntry[]): Array<{ index: number; fromSec:
     });
 }
 
-/**
- * Runs the rules on a meeting's transcript and adds what they find as suggested items, in one save: the CLI's
- * `suggest` and the REPL's meeting.suggest(). The platform, attendance and channel layout are collected first when the
- * record lacks them. A word check that cannot run is a warning, not a failure: the term rules then skip every word
- * with a Czech letter. When the caller is an agent and its run leaves word or dictionary questions, the owner gets one
- * request per run whose click opens the Items tab (`requestMeetingQuestionReview`); a delivery failure is a warning.
- */
-export async function runSuggest(options: {
+/** Plans that lose to a newer write before the last one gives up: a writer faster than a plan otherwise starves it. */
+const SUGGEST_ATTEMPTS = 5;
+
+export interface RunSuggestOptions {
     store: MeetingStore;
     record: MeetingRecord;
     rules: SuggestRule[];
@@ -131,7 +140,23 @@ export async function runSuggest(options: {
     actor?: DecisionActor;
     /** The person area; tests pass a fake. */
     gt?: MeetingReviewDoor;
-}): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[]; deviceOffers?: RoomDeviceOffer[] }> {
+}
+
+/**
+ * Runs the rules on a meeting's transcript and adds what they find as suggested items, in one save: the CLI's
+ * `suggest` and the REPL's meeting.suggest(). The platform, attendance and channel layout are collected first when the
+ * record lacks them. A word check that cannot run is a warning, not a failure: the term rules then skip every word
+ * with a Czech letter. When the caller is an agent and its run leaves word or dictionary questions, the owner gets one
+ * request per run whose click opens the Items tab (`requestMeetingQuestionReview`); a delivery failure is a warning.
+ *
+ * Each attempt plans from one snapshot of the record and writes under the record's lock only while the record is still
+ * that snapshot. A write that landed meanwhile (an answer, an Undo, another pass) is never overwritten: the attempt
+ * writes nothing and the next one plans again from the record as it is now, up to `SUGGEST_ATTEMPTS` times
+ * (`StaleSuggestionError` after the last).
+ */
+export async function runSuggest(
+    options: RunSuggestOptions
+): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[]; deviceOffers?: RoomDeviceOffer[] }> {
     const { store, record } = options;
     using _run = prof.section("run");
     const warnings: string[] = [];
@@ -144,9 +169,60 @@ export async function runSuggest(options: {
             options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
         )
     );
-    const snapshot = store.read(record.id) ?? collected;
-    // If another writer changed seats or decisions during collection, derive every input from the new snapshot.
-    const opened = Bun.deepEquals(snapshot, source.record) ? source : OpenedMeeting.of(store, snapshot);
+
+    for (let attempt = 1; ; attempt++) {
+        options.signal?.throwIfAborted();
+        const snapshot = store.read(record.id) ?? collected;
+        // If another writer changed seats or decisions during collection, derive every input from the new snapshot.
+        const opened = Bun.deepEquals(snapshot, source.record) ? source : OpenedMeeting.of(store, snapshot);
+        let saved: Awaited<ReturnType<typeof suggestFromSnapshot>>;
+
+        try {
+            saved = await suggestFromSnapshot(options, opened, snapshot);
+        } catch (error) {
+            if (!(error instanceof StaleSuggestionError) || attempt >= SUGGEST_ATTEMPTS) {
+                throw error;
+            }
+
+            log.info(
+                { meeting: record.id, attempt },
+                "the record changed while suggestions were planned; planning again"
+            );
+            continue;
+        }
+
+        warnings.push(...saved.warnings);
+
+        if (options.actor) {
+            using _review = prof.section("review-request");
+            const warning = await requestMeetingQuestionReview({
+                actor: options.actor,
+                runId: randomUUID(),
+                record: store.read(record.id) ?? record,
+                ...(options.gt ? { gt: options.gt } : {}),
+            });
+            if (warning) {
+                warnings.push(warning);
+            }
+        }
+
+        return {
+            fresh: saved.fresh,
+            retired: saved.retired,
+            warnings,
+            ...suggestDeviceOffers(opened, options.rules, saved.config),
+        };
+    }
+}
+
+/**
+ * One attempt of `runSuggest`: the inputs and the plan come from `snapshot`, and the write checks under the record's
+ * lock that the record still is that snapshot (`applySuggestionChanges` throws `StaleSuggestionError` otherwise). A
+ * plan that changes nothing writes nothing once the record holds this run's history line, so a rerun on the same
+ * inputs leaves the file as it was, byte for byte.
+ */
+async function suggestFromSnapshot(options: RunSuggestOptions, opened: OpenedMeeting, snapshot: MeetingRecord) {
+    const warnings: string[] = [];
     const config = await prof.measureAsync("config", () => opened.config());
     let ranVoicePass = false;
     if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
@@ -175,7 +251,7 @@ export async function runSuggest(options: {
             change: ranVoicePass ? VOICE_PASS_HISTORY : "suggest findings and questions",
         };
         const changes = configuredPlan(inputs, config, features);
-        await store.update(record.id, history, (current) => {
+        await options.store.update(options.record.id, history, (current) => {
             options.signal?.throwIfAborted();
             using _mutate = prof.section("save.compute");
             applySuggestionChanges(current, changes);
@@ -184,25 +260,17 @@ export async function runSuggest(options: {
             retired = changes.updated
                 .filter(({ before, after }) => before.status === "suggested" && after.status === "rejected")
                 .map(({ id }) => id);
+            // The history line says a pass ran (voice readiness reads it), so the first empty run still writes it.
+            const said = current.history.some(
+                (event) => event.command === history.command && event.change === history.change
+            );
+            return suggestionChangesEmpty(changes) && said ? MEETING_UNCHANGED : undefined;
         });
     } finally {
         inputs.wordCheck?.dispose();
     }
 
-    if (options.actor) {
-        using _review = prof.section("review-request");
-        const warning = await requestMeetingQuestionReview({
-            actor: options.actor,
-            runId: randomUUID(),
-            record: store.read(record.id) ?? record,
-            ...(options.gt ? { gt: options.gt } : {}),
-        });
-        if (warning) {
-            warnings.push(warning);
-        }
-    }
-
-    return { fresh, retired, warnings, ...suggestDeviceOffers(opened, options.rules, config) };
+    return { fresh, retired, warnings, config };
 }
 
 function suggestDeviceOffers(opened: OpenedMeeting, rules: SuggestRule[], config: MeetingsConfig) {
