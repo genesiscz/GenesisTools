@@ -433,6 +433,80 @@ describe("a label that tracks no one person", () => {
 
         expect(result.entries.map((entry) => entry.speaker)).toEqual(mixed.map((entry) => entry.speaker));
     });
+
+    test("a line a range, a suggestion or an assignment names counts for that person even when the name is its label", () => {
+        // A platform that labels lines with real names, where both labels hold several voices: only a correction names
+        // a line, and the name it gives is often the label's own.
+        const labelled = [
+            line("Alice Example", 0, "Začneme, Viky je hotová."),
+            line("Alice Example", 10, "Já jsem to upravil."),
+            line("Bob Example", 20, "Dobře, další bod."),
+            line("Bob Example", 30, "Ještě jedna věc."),
+            line("Bob Example", 90, "Konec."),
+        ];
+        const record = meetingRecordSchema.parse({
+            ...base,
+            dictionary: { entries: [{ type: "fix", value: "Viky", substitution: "wiki" }] },
+            speakers: {
+                labels: {},
+                assignments: [
+                    {
+                        id: "a1",
+                        label: "Bob Example",
+                        fromSec: 30,
+                        toSec: 30,
+                        person: "Bob Example",
+                        at: "2026-11-02T15:10:00.000Z",
+                    },
+                ],
+            },
+            items: [
+                { ...label, label: "Alice Example", toSec: 60 },
+                { ...label, id: "i2", label: "Bob Example", toSec: 60 },
+                item({
+                    id: "i3",
+                    kind: "speaker-range",
+                    label: "Alice Example",
+                    fromSec: 0,
+                    toSec: 0,
+                    speaker: "Alice Example",
+                }),
+                item({
+                    id: "i4",
+                    kind: "speaker-range",
+                    label: "Bob Example",
+                    fromSec: 20,
+                    toSec: 20,
+                    speaker: "Alice Example",
+                    status: "suggested",
+                    confidence: 0.9,
+                }),
+            ],
+        });
+        const result = correctTranscript({
+            record,
+            transcript: labelled,
+            config,
+            format: "md",
+            withSuggested: true,
+            applyAbove: 0.7,
+        });
+
+        expect(result.entries.map((entry) => entry.speaker)).toEqual([
+            "Alice Example",
+            '[nejasné: "Alice Example"]',
+            "Alice Example",
+            "Bob Example",
+            "Bob Example",
+        ]);
+        expect(result.entries[0]?.text).toBe("Začneme, wiki je hotová.");
+        expect(result.speakers).toEqual([
+            { name: "Alice Example", lines: 2 },
+            { name: "Bob Example", lines: 1 },
+        ]);
+        // The last line is past the label's stretch and no correction named it: it keeps the source's label.
+        expect(result.unattributed).toEqual([{ name: "Bob Example", lines: 1 }]);
+    });
 });
 
 test("later ranges shadow earlier outcomes", () => {

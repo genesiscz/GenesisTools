@@ -319,10 +319,13 @@ export function correctionsOf(
 }
 
 /** What the transcript of a meeting is after its corrections, and what became of each item it applied. */
-export interface CorrectedTranscript extends CorrectionsApplied {
+export interface CorrectedTranscript extends Omit<CorrectionsApplied, "named"> {
     /** The people the lines are attributed to after the corrections, with their line counts, most lines first. */
     speakers: Array<{ name: string; lines: number }>;
-    /** Source labels no correction named a person for (`Speaker 5`), with their line counts. */
+    /**
+     * Source labels no correction named a person for (`Speaker 5`), with the count of lines that keep them. A name can
+     * be in both lists: a correction named some lines of its label, and the source labelled the rest.
+     */
     unattributed: Array<{ name: string; lines: number }>;
 }
 
@@ -344,7 +347,7 @@ export function correctTranscript(options: {
 }): CorrectedTranscript {
     const { record, transcript, config } = options;
     const corrections = correctionsOf(record, config, options);
-    const corrected = applyCorrections(transcript, corrections);
+    const { named, ...corrected } = applyCorrections(transcript, corrections);
     // A record written before the CLI composed its arguments keeps decomposed names from the window's answers: one
     // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
     // The source lookups and the speaker ranges are built once: rescanning the transcript and the items for every
@@ -367,6 +370,8 @@ export function correctTranscript(options: {
     // does not.
     const speakerQuestions = openQuestions(record).filter((question) => question.about === "speaker");
     const unclearLabel = languageSettings(config).render.unclearLabel;
+    // The corrected lines whose speaker a correction or an answer gave, whatever the name.
+    const attributed = new Set<TranscriptEntry>();
     const applied = {
         ...corrected,
         entries: corrected.entries.flatMap((rawEntry): TranscriptEntry[] => {
@@ -383,7 +388,12 @@ export function correctTranscript(options: {
             if (finding?.voices) {
                 // The segments count the words of the one line the answer split, the line the range starts on.
                 if (finding.segments?.length && atSec === finding.fromSec) {
-                    return splitEntry(entry, finding.segments);
+                    const pieces = splitEntry(entry, finding.segments);
+                    for (const piece of pieces) {
+                        attributed.add(piece);
+                    }
+
+                    return pieces;
                 }
 
                 const speaker = `[${unclearLabel}: ${finding.voices.join(" + ")}]`;
@@ -423,29 +433,32 @@ export function correctTranscript(options: {
                 band = entry.guess ? "guess" : "applied";
             }
 
-            return [
-                {
-                    ...entry,
-                    speaker: entry.speaker.normalize("NFC"),
-                    ...(atSec !== undefined &&
-                    speakerQuestions.some((question) => atSec >= question.fromSec && atSec <= question.toSec)
-                        ? { questioned: true }
-                        : {}),
-                    ...(proposal
-                        ? {
-                              ...(confidence === undefined ? {} : { confidence }),
-                              ...(proposal.speaker ? { suggestedSpeaker: proposal.speaker } : {}),
-                              ...(voiceName
-                                  ? {
-                                        nameSource: "voice" as const,
-                                        ...(score === undefined ? {} : { nameScore: score }),
-                                    }
-                                  : {}),
-                          }
-                        : {}),
-                    ...(band ? { band, guess: band === "guess" } : {}),
-                },
-            ];
+            const line: TranscriptEntry = {
+                ...entry,
+                speaker: entry.speaker.normalize("NFC"),
+                ...(atSec !== undefined &&
+                speakerQuestions.some((question) => atSec >= question.fromSec && atSec <= question.toSec)
+                    ? { questioned: true }
+                    : {}),
+                ...(proposal
+                    ? {
+                          ...(confidence === undefined ? {} : { confidence }),
+                          ...(proposal.speaker ? { suggestedSpeaker: proposal.speaker } : {}),
+                          ...(voiceName
+                              ? {
+                                    nameSource: "voice" as const,
+                                    ...(score === undefined ? {} : { nameScore: score }),
+                                }
+                              : {}),
+                      }
+                    : {}),
+                ...(band ? { band, guess: band === "guess" } : {}),
+            };
+            if (named.has(rawEntry)) {
+                attributed.add(line);
+            }
+
+            return [line];
         }),
     };
     const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
@@ -468,24 +481,30 @@ export function correctTranscript(options: {
             ...Object.values(record.speakers.labels),
         ].map((name) => name.normalize("NFC"))
     );
-    const counts = new Map<string, number>();
+    const counts = { speakers: new Map<string, number>(), unattributed: new Map<string, number>() };
 
+    // Each line is judged on its own: a name a correction gave counts for that person even when a source label reads
+    // the same, and a line that keeps a label no rename, participant or attendance names counts as the source's.
     for (const entry of applied.entries) {
-        if (!entry.speaker.startsWith(unclear)) {
-            counts.set(entry.speaker, (counts.get(entry.speaker) ?? 0) + 1);
+        if (entry.speaker.startsWith(unclear)) {
+            continue;
         }
+
+        const isPerson = attributed.has(entry) || !sourceLabels.has(entry.speaker) || people.has(entry.speaker);
+        const tally = isPerson ? counts.speakers : counts.unattributed;
+        tally.set(entry.speaker, (tally.get(entry.speaker) ?? 0) + 1);
     }
 
-    const ranked = [...counts.entries()]
-        .map(([name, lines]) => ({ name, lines }))
-        .sort((a, b) => b.lines - a.lines || a.name.localeCompare(b.name));
-    const isPerson = (name: string) => !sourceLabels.has(name) || people.has(name);
+    const ranked = (tally: Map<string, number>) =>
+        [...tally.entries()]
+            .map(([name, lines]) => ({ name, lines }))
+            .sort((a, b) => b.lines - a.lines || a.name.localeCompare(b.name));
 
     return {
         ...applied,
         outcomes,
-        speakers: ranked.filter((speaker) => isPerson(speaker.name)),
-        unattributed: ranked.filter((speaker) => !isPerson(speaker.name)),
+        speakers: ranked(counts.speakers),
+        unattributed: ranked(counts.unattributed),
     };
 }
 
