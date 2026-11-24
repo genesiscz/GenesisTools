@@ -343,9 +343,14 @@ export function correctionsOf(
 }
 
 /** What the transcript of a meeting is after its corrections, and what became of each item it applied. */
-export interface CorrectedTranscript extends Omit<CorrectionsApplied, "named"> {
+export interface CorrectedTranscript extends Omit<CorrectionsApplied, "named" | "guessed"> {
     /** The people the lines are attributed to after the corrections, with their line counts, most lines first. */
     speakers: Array<{ name: string; lines: number }>;
+    /**
+     * The people an open speaker question's range guesses (`[Name: 60 %]` with `withSuggested`), with the count of
+     * lines shown as that guess. A guess is not a named person: a person can be in both lists.
+     */
+    guesses: Array<{ name: string; lines: number }>;
     /**
      * Source labels no correction named a person for (`Speaker 5`), with the count of lines that keep them. A name can
      * be in both lists: a correction named some lines of its label, and the source labelled the rest.
@@ -371,7 +376,7 @@ export function correctTranscript(options: {
 }): CorrectedTranscript {
     const { record, transcript, config } = options;
     const corrections = correctionsOf(record, config, options);
-    const { named, ...corrected } = applyCorrections(transcript, corrections);
+    const { named, guessed, ...corrected } = applyCorrections(transcript, corrections);
     // A record written before the CLI composed its arguments keeps decomposed names from the window's answers: one
     // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
     // The source lookups and the speaker ranges are built once: rescanning the transcript and the items for every
@@ -396,6 +401,8 @@ export function correctTranscript(options: {
     const unclearLabel = languageSettings(config).render.unclearLabel;
     // The corrected lines whose speaker a correction or an answer gave, whatever the name.
     const attributed = new Set<TranscriptEntry>();
+    // The corrected lines shown as a guess, with the person guessed.
+    const guessedAs = new Map<TranscriptEntry, string>();
     const applied = {
         ...corrected,
         entries: corrected.entries.flatMap((rawEntry): TranscriptEntry[] => {
@@ -482,6 +489,11 @@ export function correctTranscript(options: {
                 attributed.add(line);
             }
 
+            const guess = guessed.get(rawEntry);
+            if (guess !== undefined) {
+                guessedAs.set(line, guess.normalize("NFC"));
+            }
+
             return [line];
         }),
     };
@@ -505,12 +517,23 @@ export function correctTranscript(options: {
             ...Object.values(record.speakers.labels),
         ].map((name) => name.normalize("NFC"))
     );
-    const counts = { speakers: new Map<string, number>(), unattributed: new Map<string, number>() };
+    const counts = {
+        speakers: new Map<string, number>(),
+        guesses: new Map<string, number>(),
+        unattributed: new Map<string, number>(),
+    };
 
     // Each line is judged on its own: a name a correction gave counts for that person even when a source label reads
-    // the same, and a line that keeps a label no rename, participant or attendance names counts as the source's.
+    // the same, and a line that keeps a label no rename, participant or attendance names counts as the source's. A
+    // guess mark (`[Name: 60 %]`) counts for the person guessed, apart from the people.
     for (const entry of applied.entries) {
         if (entry.speaker.startsWith(unclear)) {
+            continue;
+        }
+
+        const guess = guessedAs.get(entry);
+        if (guess !== undefined) {
+            counts.guesses.set(guess, (counts.guesses.get(guess) ?? 0) + 1);
             continue;
         }
 
@@ -528,6 +551,7 @@ export function correctTranscript(options: {
         ...applied,
         outcomes,
         speakers: ranked(counts.speakers),
+        guesses: ranked(counts.guesses),
         unattributed: ranked(counts.unattributed),
     };
 }

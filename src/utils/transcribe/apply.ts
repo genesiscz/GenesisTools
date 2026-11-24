@@ -125,6 +125,11 @@ export interface CorrectionsApplied {
      * name is also a source label, so a reader never counts them as lines the source labelled.
      */
     named: ReadonlySet<TranscriptEntry>;
+    /**
+     * The lines of `entries` shown as a guess while their question is open (`[Name: 60 %]`), with the person guessed.
+     * Their speaker is a mark, not a decided name, so a reader keeps them apart from the people.
+     */
+    guessed: ReadonlyMap<TranscriptEntry, string>;
     /** Local speech lines a confirmed removal hid. */
     removed: number;
     /** One per correction that names its item, in the order the corrections were given. */
@@ -448,6 +453,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     // An open speaker question replaces the source label it is about, before renames could hide it. A line a range or
     // a join already gave a voice is decided, whatever it is called now, and a line is marked once: the first passage wins.
     const speakerMarked = new Set<TranscriptEntry>();
+    let guessed = new Map<TranscriptEntry, string>();
 
     for (const passage of corrections.unclear?.passages ?? []) {
         for (const line of lines) {
@@ -465,6 +471,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
                 line.speaker = passageMarker(unclearLabel, passage.speaker!, passage);
                 if (passage.guess) {
                     line.guess = true;
+                    guessed.set(line, passage.guess.name);
                 } else {
                     // The window draws the question from these, never from the mark's text.
                     const readings = passage.readings.filter((reading) => !isUnclearMarker(reading, unclearLabel));
@@ -618,6 +625,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     if (corrections.dictionary) {
         const applied = applyDictionary(lines, corrections.dictionary, { notes: corrections.notes });
         named = new Set(applied.entries.filter((_, index) => named.has(lines[index]!)));
+        guessed = new Map(
+            applied.entries.flatMap((entry, index): Array<[TranscriptEntry, string]> => {
+                const name = guessed.get(lines[index]!);
+                return name === undefined ? [] : [[entry, name]];
+            })
+        );
         lines = applied.entries;
         counts.fixes = applied.fixes;
         counts.spoken = applied.spoken;
@@ -657,7 +670,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
-    return { entries: lines, named, outcomes, ...counts };
+    return { entries: lines, named, guessed, outcomes, ...counts };
 }
 
 /** The source line a removal names: its address when that line still holds the heard text, else the one in its range. */

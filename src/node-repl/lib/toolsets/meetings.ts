@@ -524,6 +524,7 @@ export class MeetingsToolset extends ReplToolset {
                               }),
                     })),
                     speakers: applied.speakers,
+                    guesses: applied.guesses,
                     unattributed: applied.unattributed,
                     notApplied: applied.outcomes.map(outcomeText).filter((text): text is string => Boolean(text)),
                 };

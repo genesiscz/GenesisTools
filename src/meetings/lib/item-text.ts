@@ -78,7 +78,7 @@ function termAnswer(item: Extract<MeetingItem, { kind: "term" }>, room?: number)
     return "?";
 }
 
-type AppliedCounts = Omit<CorrectionsApplied, "entries" | "outcomes" | "named">;
+type AppliedCounts = Omit<CorrectionsApplied, "entries" | "outcomes" | "named" | "guessed">;
 
 /** Each counter of `transcript`'s summary with its words for one and for more, in the order the corrections apply. */
 const APPLIED_PARTS: Array<[keyof AppliedCounts, string, string]> = [
