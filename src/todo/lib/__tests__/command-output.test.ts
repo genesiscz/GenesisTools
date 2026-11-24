@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, type Mock, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createAddCommand } from "@app/todo/commands/add";
 import { createEditCommand } from "@app/todo/commands/edit";
 import { createSyncCommand } from "@app/todo/commands/sync";
@@ -10,6 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import { MacReminders } from "@genesiscz/utils/macos/apple-reminders";
+import { fakeDarwinKitPath } from "@genesiscz/utils/macos/testing/fake-darwinkit";
 import type { Todo } from "../types";
 
 /**
@@ -154,5 +155,53 @@ describe("`sync --all` output contract", () => {
 
         expect(stdout.filter((line) => line.startsWith("SYNC_SUMMARY"))).toHaveLength(1);
         expect(stdout.at(-1)).toBe("SYNC_SUMMARY calendar ok=1 failed=1 of 2");
+    });
+});
+
+/**
+ * Run as the real CLI, because the defect lived in the process, not in a function: DarwinKit's helper
+ * is unref'd and its connect step had no timer, so with nothing else open Bun ended `tools todo add
+ * --sync-to calendar` in the middle of the sync. Exit code 0, empty stdout, no `SYNC_FAILED`, and the
+ * sync lock file left behind (2026-11-24). The fake helper never touches EventKit or a privacy dialog.
+ */
+describe("a sync whose darwinkit helper reports no grant", () => {
+    it("prints the record, one SYNC_FAILED line per target, and exits 1", async () => {
+        const proc = Bun.spawn(
+            [
+                process.execPath,
+                join(import.meta.dir, "..", "..", "index.ts"),
+                "add",
+                "slot",
+                "--at",
+                "2026-11-27T12:00:00.000Z",
+                "--sync-to",
+                "both",
+                "--project",
+                TEST_DIR,
+                "-f",
+                "json",
+            ],
+            {
+                env: {
+                    ...process.env,
+                    GENESIS_TOOLS_HOME: SANDBOX,
+                    PATH: [dirname(fakeDarwinKitPath()), dirname(process.execPath), "/usr/bin", "/bin"].join(":"),
+                },
+                stdout: "pipe",
+                stderr: "pipe",
+            }
+        );
+        const [out, err, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        const record = SafeJSON.parse(out) as Todo;
+
+        expect(exitCode).toBe(1);
+        expect(record.title).toBe("slot");
+        expect(err).toContain(`SYNC_FAILED calendar ${record.id}: `);
+        expect(err).toContain("macos calendar doctor --request-access");
+        expect(err).toContain(`SYNC_FAILED reminders ${record.id}: `);
     });
 });
