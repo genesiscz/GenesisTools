@@ -20,6 +20,10 @@ export function displayTarget(display: DisplayInfo): PieceTarget {
 /** A capture that runs this piece: what it records, and the display its frames belong to when the frame says none. */
 export interface PieceTarget {
     target: CaptureTarget;
+    /**
+     * For a follow-focus capture, the main display's id, which only keys the capture: ax-tool starts it on the display
+     * under the pointer, and its frames name that one (`DisplayBook.start`).
+     */
     displayId: number;
     label: string;
 }

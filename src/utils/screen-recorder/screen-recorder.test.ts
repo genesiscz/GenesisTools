@@ -173,6 +173,47 @@ describe("displays", () => {
         expect(book.recorded).toEqual([{ id: 4, name: "right" }]);
         expect(book.sync(running)).toBe(false);
     });
+
+    test("a follow-focus capture names no display and opens no span until its first frame names one", () => {
+        const book = new DisplayBook({
+            names: [
+                [1, "left"],
+                [4, "right"],
+            ],
+        });
+        const capture = (target: SessionCapture["target"]): SessionCapture => ({
+            target,
+            startDisplayId: target.displayId,
+            controller: new AbortController(),
+            streamed: 0,
+            audio: false,
+            audioSources: [],
+            outDir: join(tmpdir(), "d1-0"),
+            done: Promise.resolve(),
+        });
+        const focus = capture({ target: { kind: "follow-focus" }, displayId: 1, label: "the focused display" });
+
+        expect(book.start(focus)).toBe(false);
+        expect(book.sync(new Map([[1, focus]]))).toBe(false);
+        expect(book.recorded).toBeUndefined();
+        expect(book.intervals).toEqual([]);
+
+        // ax-tool started it under the pointer, on display 4: the first frame says so.
+        expect(book.open(focus, 4)).toBe(true);
+        expect(book.sync(new Map([[1, focus]]))).toBe(true);
+        expect(book.recorded).toEqual([{ id: 4, name: "right" }]);
+        expect(book.intervals.map((one) => one.displayId)).toEqual([4]);
+
+        // The next piece's capture keeps the recorded display until its own first frame.
+        const next = capture({ target: { kind: "follow-focus" }, displayId: 1, label: "the focused display" });
+        book.start(next);
+        expect(book.sync(new Map([[1, next]]))).toBe(false);
+        expect(book.recorded).toEqual([{ id: 4, name: "right" }]);
+
+        const fixed = capture({ target: { kind: "display", displayId: 1 }, displayId: 1, label: "left (1)" });
+        expect(book.start(fixed)).toBe(true);
+        expect(book.intervals.map((one) => one.displayId)).toEqual([4, 1]);
+    });
 });
 
 describe("native capture argv", () => {

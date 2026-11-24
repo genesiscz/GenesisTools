@@ -469,7 +469,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 // The displays first: opening the interval saves the kind's state, which then names every display.
                 onStart: (capture) => {
                     this.syncDisplays();
-                    this.openDisplay(capture, capture.target.displayId);
+
+                    if (this.displayBook.start(capture)) {
+                        this.config.hooks.onDisplays?.();
+                    }
+
                     // The interval ends when the capture is told to stop, not when its post-processing ends.
                     capture.controller.signal.addEventListener("abort", () => this.closeDisplay(capture), {
                         once: true,
