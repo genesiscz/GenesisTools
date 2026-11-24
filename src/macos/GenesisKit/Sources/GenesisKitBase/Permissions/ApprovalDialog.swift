@@ -53,12 +53,18 @@ public struct ApprovalLink: Identifiable {
     public let title: String
     public let symbol: String
     public let action: () -> Void
+    /// False shows the link dimmed and unclickable, with `help` saying why.
+    public let enabled: Bool
+    /// The tooltip: why a disabled link cannot run, or what it does.
+    public let help: String?
 
     public var id: String { title }
 
-    public init(title: String, symbol: String, action: @escaping () -> Void) {
+    public init(title: String, symbol: String, enabled: Bool = true, help: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
+        self.enabled = enabled
+        self.help = help
         self.action = action
     }
 }
@@ -87,7 +93,8 @@ public final class ApprovalDialogModel: ObservableObject {
     public let command: String?
     public let symbol: String
     public let facts: [ApprovalFact]
-    public let details: [ApprovalFact]
+    /// Folded under Details; `refresh(details:)` adds what a link learnt later (why a clip cannot play).
+    @Published public private(set) var details: [ApprovalFact]
     public let warning: String?
     public let footnote: String
     public let rememberChoices: [ApprovalRemember]
@@ -192,6 +199,11 @@ public final class ApprovalDialogModel: ObservableObject {
     /// The same links with their current words and actions; a click on a link never answers the request.
     public func refresh(links: [ApprovalLink]) {
         self.links = links
+    }
+
+    /// The rows folded under Details, with what changed since the window opened.
+    public func refresh(details: [ApprovalFact]) {
+        self.details = details
     }
 
     /// The same rows with newer facts (a size measured after the window opened); the ticks stay as the person left them.
@@ -444,10 +456,12 @@ public struct ApprovalDialogView: View {
                 Button(action: link.action) {
                     Label(link.title, systemImage: link.symbol)
                         .font(.system(size: 11))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(link.enabled ? Color.accentColor : Color.secondary)
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
+                .disabled(!link.enabled)
+                .help(link.help ?? "")
                 .accessibilityIdentifier("\(model.identifier)-link-\(link.title.lowercased().replacingOccurrences(of: " ", with: "-"))")
             }
         }

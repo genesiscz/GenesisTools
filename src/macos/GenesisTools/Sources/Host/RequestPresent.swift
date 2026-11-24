@@ -141,11 +141,17 @@ final class RequestPresenter {
         active = params.id
         let actions = RequestActions.buttons(for: params, context: actionContext)
         let model = RequestWindowContent.build(params, deadline: entry.deadline, actions: actions)
+        let requestRow = model.details
         for action in actions {
+            // A button that cannot run says why in one sentence under the rows; the CLI's own words fold under Details.
             action.changed = { [weak model] in
                 model?.refresh(links: actions.map(\.link))
-                model?.refresh(items: [], summary: actions.compactMap(\.note).first)
+                model?.refresh(items: [], summary: actions.compactMap(\.problem?.sentence).first)
+                model?.refresh(details: requestRow + actions.compactMap { action in
+                    action.problem.map { ApprovalFact(action.link.title, $0.detail, monospaced: true) }
+                })
             }
+            action.prepare()
         }
         var answered = false
         let finish: (RequestPresentResultStatus, String?) -> Void = { [weak self] status, reason in

@@ -1029,14 +1029,16 @@ public struct PersonAskParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonAskParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonAskParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -1044,6 +1046,7 @@ public struct PersonAskParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1052,6 +1055,7 @@ public struct PersonAskParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -1478,14 +1482,16 @@ public struct PersonConfirmParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonConfirmParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonConfirmParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonConfirmParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -1493,6 +1499,7 @@ public struct PersonConfirmParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -1501,6 +1508,7 @@ public struct PersonConfirmParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -2191,14 +2199,16 @@ public struct PersonWindowNoticeParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonWindowNoticeParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonWindowNoticeParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonWindowNoticeParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -2206,6 +2216,7 @@ public struct PersonWindowNoticeParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -2214,6 +2225,7 @@ public struct PersonWindowNoticeParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -2636,14 +2648,16 @@ public struct PersonShowWindowParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonShowWindowParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonShowWindowParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonShowWindowParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -2651,6 +2665,7 @@ public struct PersonShowWindowParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -2659,6 +2674,7 @@ public struct PersonShowWindowParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -3097,14 +3113,16 @@ public struct PersonNotifyThenAskParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonNotifyThenAskParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonNotifyThenAskParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonNotifyThenAskParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -3112,6 +3130,7 @@ public struct PersonNotifyThenAskParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -3120,6 +3139,7 @@ public struct PersonNotifyThenAskParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -3558,14 +3578,16 @@ public struct PersonAskNowParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonAskNowParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonAskNowParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskNowParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -3573,6 +3595,7 @@ public struct PersonAskNowParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -3581,6 +3604,7 @@ public struct PersonAskNowParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -4019,14 +4043,16 @@ public struct PersonAskElseNotifyParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: PersonAskElseNotifyParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: PersonAskElseNotifyParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(PersonAskElseNotifyParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -4034,6 +4060,7 @@ public struct PersonAskElseNotifyParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -4042,6 +4069,7 @@ public struct PersonAskElseNotifyParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -4480,14 +4508,16 @@ public struct TerminalPromptParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: TerminalPromptParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: TerminalPromptParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(TerminalPromptParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -4495,6 +4525,7 @@ public struct TerminalPromptParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -4503,6 +4534,7 @@ public struct TerminalPromptParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -18976,14 +19008,16 @@ public struct RequestsPostParamsInputActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsPostParamsInputActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsPostParamsInputActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostParamsInputActionsItemOption0Kind.self, forKey: .`kind`)
@@ -18991,6 +19025,7 @@ public struct RequestsPostParamsInputActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -18999,6 +19034,7 @@ public struct RequestsPostParamsInputActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -19201,14 +19237,16 @@ public struct RequestsPostResultRequestActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsPostResultRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsPostResultRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostResultRequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -19216,6 +19254,7 @@ public struct RequestsPostResultRequestActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19224,6 +19263,7 @@ public struct RequestsPostResultRequestActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -19434,14 +19474,16 @@ public struct RequestsPostResultEventsItemOption0RequestActionsItemOption0: Coda
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsPostResultEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsPostResultEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsPostResultEventsItemOption0RequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -19449,6 +19491,7 @@ public struct RequestsPostResultEventsItemOption0RequestActionsItemOption0: Coda
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19457,6 +19500,7 @@ public struct RequestsPostResultEventsItemOption0RequestActionsItemOption0: Coda
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -20111,14 +20155,16 @@ public struct RequestsGetResultRequestActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsGetResultRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsGetResultRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsGetResultRequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -20126,6 +20172,7 @@ public struct RequestsGetResultRequestActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20134,6 +20181,7 @@ public struct RequestsGetResultRequestActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -20344,14 +20392,16 @@ public struct RequestsGetResultEventsItemOption0RequestActionsItemOption0: Codab
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsGetResultEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsGetResultEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsGetResultEventsItemOption0RequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -20359,6 +20409,7 @@ public struct RequestsGetResultEventsItemOption0RequestActionsItemOption0: Codab
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20367,6 +20418,7 @@ public struct RequestsGetResultEventsItemOption0RequestActionsItemOption0: Codab
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -21021,14 +21073,16 @@ public struct RequestsListResultItemRequestActionsItemOption0: Codable, Sendable
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsListResultItemRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsListResultItemRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsListResultItemRequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -21036,6 +21090,7 @@ public struct RequestsListResultItemRequestActionsItemOption0: Codable, Sendable
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -21044,6 +21099,7 @@ public struct RequestsListResultItemRequestActionsItemOption0: Codable, Sendable
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -21254,14 +21310,16 @@ public struct RequestsListResultItemEventsItemOption0RequestActionsItemOption0: 
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestsListResultItemEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestsListResultItemEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestsListResultItemEventsItemOption0RequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -21269,6 +21327,7 @@ public struct RequestsListResultItemEventsItemOption0RequestActionsItemOption0: 
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -21277,6 +21336,7 @@ public struct RequestsListResultItemEventsItemOption0RequestActionsItemOption0: 
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -22095,14 +22155,16 @@ public struct RequestPresentParamsActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestPresentParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestPresentParamsActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestPresentParamsActionsItemOption0Kind.self, forKey: .`kind`)
@@ -22110,6 +22172,7 @@ public struct RequestPresentParamsActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -22118,6 +22181,7 @@ public struct RequestPresentParamsActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -22424,14 +22488,16 @@ public struct RequestChangedEventRequestActionsItemOption0: Codable, Sendable {
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestChangedEventRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestChangedEventRequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestChangedEventRequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -22439,6 +22505,7 @@ public struct RequestChangedEventRequestActionsItemOption0: Codable, Sendable {
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -22447,6 +22514,7 @@ public struct RequestChangedEventRequestActionsItemOption0: Codable, Sendable {
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 
@@ -22657,14 +22725,16 @@ public struct RequestChangedEventEventsItemOption0RequestActionsItemOption0: Cod
     public var `meeting`: String
     public var `fromSec`: Double
     public var `toSec`: Double
-    public init(`kind`: RequestChangedEventEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double) {
+    public var `track`: String?
+    public init(`kind`: RequestChangedEventEventsItemOption0RequestActionsItemOption0Kind, `label`: String, `meeting`: String, `fromSec`: Double, `toSec`: Double, `track`: String? = nil) {
         self.`kind` = `kind`
         self.`label` = `label`
         self.`meeting` = `meeting`
         self.`fromSec` = `fromSec`
         self.`toSec` = `toSec`
+        self.`track` = `track`
     }
-    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec` }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `label`; case `meeting`; case `fromSec`; case `toSec`; case `track` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`kind` = try box.decode(RequestChangedEventEventsItemOption0RequestActionsItemOption0Kind.self, forKey: .`kind`)
@@ -22672,6 +22742,7 @@ public struct RequestChangedEventEventsItemOption0RequestActionsItemOption0: Cod
         self.`meeting` = try box.decode(String.self, forKey: .`meeting`)
         self.`fromSec` = try box.decode(Double.self, forKey: .`fromSec`)
         self.`toSec` = try box.decode(Double.self, forKey: .`toSec`)
+        self.`track` = try box.decodeIfPresent(String.self, forKey: .`track`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -22680,6 +22751,7 @@ public struct RequestChangedEventEventsItemOption0RequestActionsItemOption0: Cod
         try box.encode(`meeting`, forKey: .`meeting`)
         try box.encode(`fromSec`, forKey: .`fromSec`)
         try box.encode(`toSec`, forKey: .`toSec`)
+        try box.encodeIfPresent(`track`, forKey: .`track`)
     }
 }
 

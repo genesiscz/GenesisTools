@@ -215,18 +215,38 @@ final class RequestPresentTests: XCTestCase {
         fake.exits[4343]?()
         XCTAssertEqual(play.link.title, "Play clip")
 
-        // A play that fails says why under the rows, and the window still answers nothing.
-        play.link.action()
-        fake.replies.removeFirst()(1, "", "error: No audio for this meeting")
-        XCTAssertEqual(play.note, "The clip could not play: error: No audio for this meeting")
-        XCTAssertEqual(play.link.title, "Play clip")
-
         // The window closes while the clip plays: the player stops with it.
         play.link.action()
         fake.replies.removeFirst()(0, #"{"pid":4444}"#, "")
         play.close()
         XCTAssertEqual(fake.stopped, [4242, 4444])
         XCTAssertGreaterThan(changes, 0)
+
+        // A play the CLI refuses: one plain sentence, the CLI's words for Details, and a dimmed button.
+        let failing = try XCTUnwrap(RequestActions.buttons(for: params, context: fake.context).first)
+        failing.link.action()
+        fake.replies.removeFirst()(1, "", "error: ffmpeg is missing")
+        XCTAssertEqual(failing.problem, RequestActionProblem(sentence: "The clip could not play.", detail: "error: ffmpeg is missing"))
+        XCTAssertFalse(failing.link.enabled)
+        XCTAssertEqual(failing.link.help, "The clip could not play.")
+    }
+
+    func testARangeWithNoSoundShowsADimmedPlayBeforeAnyClick() throws {
+        let fake = FakeActions()
+        let params = try Self.declared(actions: #"{"kind":"play-meeting","label":"Play clip","meeting":"m","fromSec":1,"toSec":2,"track":"mic-raw"}"#)
+        let play = try XCTUnwrap(RequestActions.buttons(for: params, context: fake.context).first)
+        play.prepare()
+        XCTAssertEqual(fake.runs, [["meetings", "play", "m", "--at", "1", "--to", "2", "--track", "mic-raw", "--json", "--no-start"]],
+                       "the check plans the same play and starts no player")
+        let refusal = #"{"error":{"code":-32000,"data":{"code":"no-transcript-source"},"message":"[no-transcript-source] m has no source with a transcript. Link one: tools meetings link m 'wisprflow:<id>'"}}"#
+        fake.replies.removeFirst()(1, "", refusal + "\n✗ [no-transcript-source] m has no source with a transcript.\n")
+        XCTAssertEqual(play.problem?.sentence, "This meeting has no sound to play yet.")
+        XCTAssertEqual(play.problem?.detail, "[no-transcript-source] m has no source with a transcript. Link one: tools meetings link m 'wisprflow:<id>'")
+        XCTAssertFalse(play.link.enabled)
+        XCTAssertEqual(play.link.help, "This meeting has no sound to play yet.")
+        play.link.action()
+        XCTAssertEqual(fake.runs.count, 1, "a dimmed Play runs nothing")
+        XCTAssertEqual(PlayMeetingButton.problem(status: 1, stderr: "✗ boom\n").detail, "boom", "the CLI glyph never reaches Details")
     }
 
     func testOpenLinkOpensOnlyAWebPage() throws {
@@ -248,6 +268,8 @@ final class RequestPresentTests: XCTestCase {
         presenter.enqueue(params) { results.append($0) }
         let model = try XCTUnwrap(panel.shown.last)
         XCTAssertEqual(model.links.map(\.title), ["Play clip"])
+        XCTAssertEqual(fake.runs.last?.last, "--no-start", "the window checks the play when it opens")
+        fake.replies.removeFirst()(0, "{}", "")
         model.links.first?.action()
         fake.replies.removeFirst()(0, #"{"pid":5151}"#, "")
         XCTAssertEqual(model.links.map(\.title), ["Stop"], "the window shows the button's new words")
@@ -255,6 +277,21 @@ final class RequestPresentTests: XCTestCase {
         model.allow()
         XCTAssertEqual(results.map(\.status), [.value0])
         XCTAssertEqual(fake.stopped, [5151], "the answer stops the clip")
+    }
+
+    func testAPlayThatCannotRunPutsItsSentenceUnderTheRowsAndItsDetailUnderDetails() throws {
+        let fake = FakeActions()
+        let panel = FakeRequestPanel()
+        let clock = ManualClock()
+        let presenter = RequestPresenter(panel: panel, clock: clock.clock, activate: {}, actionContext: fake.context)
+        let params = try Self.declared(actions: #"{"kind":"play-meeting","label":"Play clip","meeting":"m","fromSec":1,"toSec":2}"#)
+        presenter.enqueue(params) { _ in }
+        let model = try XCTUnwrap(panel.shown.last)
+        fake.replies.removeFirst()(1, "", #"{"error":{"data":{"code":"no-transcript-source"},"message":"m has no source with a transcript."}}"#)
+        XCTAssertEqual(model.summary, "This meeting has no sound to play yet.")
+        XCTAssertEqual(model.details.map(\.label), ["Request", "Play clip"])
+        XCTAssertEqual(model.details.last?.value, "m has no source with a transcript.")
+        XCTAssertEqual(model.links.first?.enabled, false)
     }
 }
 
