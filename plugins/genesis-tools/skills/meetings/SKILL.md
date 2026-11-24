@@ -86,7 +86,8 @@ A missing meeting names only the store that was searched. To find which store ho
      people in the room or on the call can stay unnamed.
    - Run `tools meetings voices backfill --project <p>` or `await meetings.backfillVoices({ project })` to recover samples from earlier speaker answers and names
      proposed by voice that a person confirmed individually. An answer an agent relayed with `listen --answer` is not a
-     person's answer, so backfill skips it ("no human speaker decisions"). To select meetings directly, pass their IDs in place of
+     person's answer, so backfill skips it ("no human speaker decisions") until the user confirms it with `--confirm-relayed`
+     (below). To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
      to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
    - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
@@ -166,9 +167,12 @@ A missing meeting names only the store that was searched. To find which store ho
    person's answer when it covers every line, including answers on the source meeting of a copy. It asks about
    conflicting answers, partial coverage and lines the user has yet to decide. Use `--ask-known` to hear known
    questions again. Spot-check results report the reused and newly asked answers separately. To relay an answer the
-   user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. A relayed answer names the
-   lines but teaches no voice: the decision journal records it as your answer, and voice learning and `voices backfill`
-   take only a person's answers. To have that person's voice learned, give the user a stretch where only that person
+   user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. A relayed answer (`listen --answer`, or
+   `items confirm|reject --relayed`) is saved as your answer, opens a window that asks the user whether the answer is
+   theirs, and prints a FOR AGENTS STOP block. After the user answers that window, run `tools meetings listen <meeting>
+   --confirm-relayed <items...>` (REPL: `meetings.confirmRelayed({ meeting, items })`); several of your answers go into
+   one window. Only the rows the user leaves ticked become the user's decisions and feed voice learning and `voices
+   backfill`. To have a person's voice learned from a stretch that no question covers, give the user a stretch where only that person
    speaks and ask the user to listen to it (`tools meetings play <meeting> --at <start> --to <end>`). When the user says
    only that person speaks, run `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`
    (REPL: `meetings.voices.add({ meeting, fromSec, toSec, person, confirmed: true })`). From an agent it saves nothing
