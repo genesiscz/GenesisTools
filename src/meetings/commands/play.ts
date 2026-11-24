@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -16,12 +16,12 @@ import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
 import { OpenedMeeting } from "../lib/opened-meeting";
-import { PLAYERS, pickPlayer } from "../lib/players";
+import { choosePlayer, PLAYERS, pickPlayer } from "../lib/players";
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { TRACK_KINDS, type TrackKind } from "../lib/sound";
-import { playbackSlice, playSoundSlice } from "../lib/sound-playback";
+import { playbackSlice, slicePlaybackPlan, startPlaybackPlan } from "../lib/sound-playback";
 import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
@@ -382,34 +382,39 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
         const atSec = "atSec" in what ? what.atSec : what.target.kind === "range" ? what.target.fromSec : 0;
         const playback = (await new MeetingsConfigStore().read()).global.playback;
+        const chosen = choosePlayer({ requested: opts.player, configured: playback.player, all: MEETING_PLAYERS });
+
+        if ("error" in chosen) {
+            fail(chosen.error);
+            return;
+        }
+
+        const fromSec = Math.max(0, atSec - (beforeSec ?? (track && "target" in what ? 0 : playback.beforeSec)));
         const slice = await playbackSlice({
             opened: OpenedMeeting.of(store, record),
             atSec,
-            fromSec: Math.max(0, atSec - (beforeSec ?? (track && "target" in what ? 0 : playback.beforeSec))),
+            fromSec,
             ...("target" in what && what.target.kind === "range" ? { toSec: what.target.toSec } : {}),
             ...(track ? { track } : {}),
         });
-        const selectedPlayer = opts.player ?? pickPlayer(playback.player, MEETING_PLAYERS)?.id;
-        let started: Awaited<ReturnType<typeof playSoundSlice>> | undefined;
-        if (opts.start !== false) {
-            started = await playSoundSlice({
-                slice,
-                player: selectedPlayer,
-                detached: true,
-            });
+        // Open-ended from a time: the recording itself at its second; a range or one channel of a stereo source: a cut.
+        const plan = slicePlaybackPlan({
+            slice: { ...slice, meeting: record.id, fromSec },
+            openEnded: !("target" in what),
+            player: chosen.player,
+        });
+        const pid = opts.start === false ? undefined : await startPlaybackPlan({ plan, slice });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify({ ...slice, ...plan, ...(pid === undefined ? {} : { pid }) }, null, 2));
+            return;
         }
-        const shown = {
-            ...slice,
-            audioPath: slice.path,
-            startSec: slice.fileFromSec,
-            player: selectedPlayer,
-            ...started,
-        };
-        opts.json
-            ? out.result(SafeJSON.stringify(shown, null, 2))
-            : ui.ok(
-                  `${opts.start === false ? "Would play" : "Played"} ${record.id} on ${slice.track} from file second ${slice.fileFromSec} at source rate.`
-              );
+
+        ui.ok(
+            pid === undefined
+                ? `Would play ${record.id} from ${formatClock(fromSec)} on ${slice.track} in ${plan.player}: ${plan.argv.join(" ")}`
+                : `Playing ${record.id} from ${formatClock(fromSec)} on ${slice.track} in ${plan.player}: ${basename(plan.audioPath)}.`
+        );
     } catch (err) {
         fail(new Error(momentFailure(err), { cause: err }));
     }
@@ -476,7 +481,7 @@ export function registerPlayCommand(program: Command): void {
         )
         .option(
             "--json",
-            "print the track, path, channel and file seconds, plus audioPath/startSec/player and pid when started; for a Moment the Moment with path, player and pid when made"
+            "print the track, path, channel and file seconds, plus the opened audioPath/startSec, cut, player, argv and pid when started; for a Moment the Moment with path, player and pid when made"
         )
         .option("--no-start", "resolve and start nothing (no sound); plan without cutting, including with --clip")
         .action((meeting: string, time: string | undefined, opts: PlayOptions) => {
