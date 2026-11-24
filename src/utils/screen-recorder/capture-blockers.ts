@@ -58,12 +58,23 @@ export function parseCaptureBlockers(raw: unknown): CaptureBlocker[] {
  * What a recording reports about never-capture windows (`RecorderStatus.captureBlockers`, the meetings recorder
  * state): the apps left on the displays, the action, the path the frames and the system sound take, and the apps it quit.
  */
+/**
+ * Why the frames of a recording that may take screenshots (`auto`) stay on the stream: `no-window`, no never-capture
+ * window was on screen when the newest capture started (the apps were seen earlier, and each capture looks again);
+ * `sound`, the capture records the sound inside the screen pieces, which needs the stream; `other`, ax-tool kept the
+ * stream for a reason of its own (its warning names it).
+ */
+export const STREAM_REASONS = ["no-window", "sound", "other"] as const;
+export type StreamReason = (typeof STREAM_REASONS)[number];
+
 export const captureBlockersStatusSchema = z.object({
     apps: z.array(z.object({ name: z.string(), bundleId: z.string().optional(), displays: z.array(z.number()) })),
     action: z.enum(NEVER_CAPTURE_ACTIONS),
     frames: z.enum(["screenshot", "stream"]),
     sound: z.enum(["tap", "stream"]),
     quit: z.array(z.object({ name: z.string(), bundleId: z.string().optional(), path: z.string().optional() })),
+    /** Set while the frames are on the stream although the recording may take screenshots. */
+    streamReason: z.enum(STREAM_REASONS).optional(),
     /** While slow screenshots stretch the interval (ax-tool `ScreenshotPace`): one every `everySec`, as one takes `screenshotSec`. */
     screenshotPace: z.object({ everySec: z.number(), screenshotSec: z.number() }).optional(),
 });
@@ -265,6 +276,11 @@ function launchError(result: AxCommandResult): string {
     }
 
     return `ax-tool launch-app exited ${result.status}: ${result.stderr.trim().slice(-300) || "no output"}`;
+}
+
+/** Why a capture that may take screenshots kept the stream: the never-capture apps it saw at its start, its sound. */
+export function streamReason(options: { seen: readonly unknown[]; audio: boolean }): StreamReason {
+    return options.seen.length === 0 ? "no-window" : options.audio ? "sound" : "other";
 }
 
 /** The frame source a recording reports for its displays: screenshots when any display takes them. */

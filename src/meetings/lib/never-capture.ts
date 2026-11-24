@@ -190,7 +190,12 @@ export function captureBlockersStatusLines(status: CaptureBlockersStatus, relaun
             ? "the system sound through the audio tap"
             : "the system sound through the display stream";
     const apps = status.apps.length > 0 ? appsOnDisplays(status.apps) : "none left on the displays";
-    const lines = [`Never-capture windows: ${apps}. ${frames}, ${sound}.`];
+    // The apps are every one seen since the start; the newest capture found none of them on screen.
+    const lines = [
+        status.frames === "stream" && status.streamReason === "no-window"
+            ? `Never-capture windows seen in this recording: ${apps}. None was on screen when the newest capture started, so frames come from the capture stream, ${sound}.`
+            : `Never-capture windows: ${apps}. ${frames}, ${sound}.`,
+    ];
 
     if (status.screenshotPace) {
         const { everySec, screenshotSec } = status.screenshotPace;

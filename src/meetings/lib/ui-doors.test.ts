@@ -926,6 +926,21 @@ describe("never-capture windows: status, cost, blockers and the setting", () => 
                 {
                     apps: [{ name: "Dimmer", displays: [1] }],
                     action: "fallback",
+                    frames: "stream",
+                    sound: "tap",
+                    quit: [],
+                    streamReason: "no-window",
+                },
+                true
+            )
+        ).toEqual([
+            "Never-capture windows seen in this recording: Dimmer on display 1. None was on screen when the newest capture started, so frames come from the capture stream, the system sound through the audio tap.",
+        ]);
+        expect(
+            captureBlockersStatusLines(
+                {
+                    apps: [{ name: "Dimmer", displays: [1] }],
+                    action: "fallback",
                     frames: "screenshot",
                     sound: "tap",
                     quit: [],

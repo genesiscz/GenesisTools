@@ -12,7 +12,13 @@ import {
     type RecorderAudioOptions,
     recordsAudioSession,
 } from "./audio-session";
-import { type CaptureBlockersStatus, type NeverCaptureAction, usedFrameSource } from "./capture-blockers";
+import {
+    type CaptureBlockersStatus,
+    type NeverCaptureAction,
+    type StreamReason,
+    streamReason,
+    usedFrameSource,
+} from "./capture-blockers";
 import {
     type AudioDevices,
     type AudioSource,
@@ -404,8 +410,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     /** The never-capture handling the kind chose before the loop, read once after `beforeLoop`. */
     private neverCaptureSetup?: NeverCaptureSetup;
     private blockers?: CaptureBlockersStatus;
-    /** The frame source each display's newest capture reported. */
-    private readonly frameSources = new Map<number, UsedFrameSource>();
+    /**
+     * The frame source each capture target's newest capture reported (a follow-focus capture has one target whatever
+     * display it shows), and why it streamed.
+     */
+    private readonly frameSources = new Map<number, { frames: UsedFrameSource; reason?: StreamReason }>();
     /** The screenshot pace each display's running capture reported last. */
     private readonly screenshotPaces = new Map<number, ScreenshotPaceEvent>();
     protected readonly config: RecorderConfig<S>;
@@ -494,8 +503,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                     }
 
                     this.noteNeverCapture({
-                        displayId: event.displayId ?? capture.target.displayId,
+                        target: capture.target.displayId,
                         frames: event.source,
+                        reason: streamReason({ seen: event.neverCapture, audio: capture.audio }),
                         apps: event.neverCapture,
                     });
                 },
@@ -509,8 +519,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
                     if (result.frameSource) {
                         this.noteNeverCapture({
-                            displayId: capture.target.displayId,
+                            target: capture.target.displayId,
                             frames: result.frameSource,
+                            reason: streamReason({ seen: result.neverCapture ?? [], audio: capture.audio }),
                             apps: result.neverCapture ?? [],
                         });
                     }
@@ -693,8 +704,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
      * it saw. The status changes, and its kind hears of it, only when something in it changed.
      */
     private noteNeverCapture(change: {
-        displayId?: number;
+        /** The capture's target display (`PieceTarget.displayId`). */
+        target?: number;
         frames?: UsedFrameSource;
+        /** Why it streamed, when `frames` is the stream. */
+        reason?: StreamReason;
         apps?: readonly CaptureBlocker[];
         sound?: AudioSystemPath;
     }): void {
@@ -704,8 +718,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
-        if (change.displayId !== undefined && change.frames) {
-            this.frameSources.set(change.displayId, change.frames);
+        if (change.target !== undefined && change.frames) {
+            this.frameSources.set(change.target, {
+                frames: change.frames,
+                ...(change.frames === "stream" && change.reason ? { reason: change.reason } : {}),
+            });
         }
 
         const before = this.blockers;
@@ -730,13 +747,23 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             (slowest, one) => (one.everySec !== undefined && one.everySec > (slowest?.everySec ?? 0) ? one : slowest),
             undefined
         );
+        const sources = [...this.frameSources.values()];
+        const frames = sources.length > 0 ? usedFrameSource(sources.map((one) => one.frames)) : before?.frames;
+        // The strongest reason of the captures that streamed: a fixable one first, then "none was on screen".
+        const reasons = new Set(sources.map((one) => one.reason));
+        const why =
+            setup.frameSource !== "auto" || frames !== "stream"
+                ? undefined
+                : sources.length === 0
+                  ? before?.streamReason
+                  : (["sound", "other", "no-window"] as const).find((reason) => reasons.has(reason));
         const next: CaptureBlockersStatus = {
             apps,
             action: setup.action,
-            frames:
-                this.frameSources.size > 0 ? usedFrameSource(this.frameSources.values()) : (before?.frames ?? "stream"),
+            frames: frames ?? "stream",
             sound: change.sound ?? before?.sound ?? "stream",
             quit: before?.quit ?? [],
+            ...(why ? { streamReason: why } : {}),
             ...(paced?.everySec !== undefined
                 ? { screenshotPace: { everySec: paced.everySec, screenshotSec: paced.screenshotSec } }
                 : {}),

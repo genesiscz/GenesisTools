@@ -4037,7 +4037,13 @@ describe("the meetings recorder loop", () => {
                 /** Called as a `fail` or `timeout` step throws. */
                 onFail?: () => void;
                 /** Never-capture windows: each read takes the next list (the last one repeats); captures report the source. */
-                blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource; pace?: ScreenshotPaceEvent };
+                blockers?: {
+                    reads: CaptureBlocker[][];
+                    frameSource?: UsedFrameSource;
+                    pace?: ScreenshotPaceEvent;
+                    /** The apps a capture saw at its start (none by default). */
+                    seen?: CaptureBlocker[];
+                };
             },
             private readonly whenDone: () => void
         ) {
@@ -4114,9 +4120,10 @@ describe("the meetings recorder loop", () => {
             let switchedAtMs = 0;
             let streamed: string | undefined;
             const frameSource = this.script.blockers?.frameSource;
+            const seen = this.script.blockers?.seen ?? [];
 
             if (frameSource) {
-                request.hooks?.onFrameSource?.({ source: frameSource, displayId, neverCapture: [] });
+                request.hooks?.onFrameSource?.({ source: frameSource, displayId, neverCapture: seen });
             }
 
             if (this.script.blockers?.pace) {
@@ -4278,6 +4285,7 @@ describe("the meetings recorder loop", () => {
                 startedAtMs: Date.now() + this.piece * 1000,
                 frames: [{ path, atMs: 0, displayId, changePercent: 10, reason: "first" }],
                 ...(frameSource ? { frameSource } : {}),
+                ...(frameSource && seen.length > 0 ? { neverCapture: seen } : {}),
             };
         }
     }
@@ -4303,7 +4311,12 @@ describe("the meetings recorder loop", () => {
         parallel?: boolean;
         /** The wait after a failed piece (0 by default). */
         failurePauseMs?: number;
-        blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource; pace?: ScreenshotPaceEvent };
+        blockers?: {
+            reads: CaptureBlocker[][];
+            frameSource?: UsedFrameSource;
+            pace?: ScreenshotPaceEvent;
+            seen?: CaptureBlocker[];
+        };
         /** Overrides `capture.recorders.native.neverCapture`. */
         neverCapture?: Partial<(typeof capture)["recorders"]["native"]["neverCapture"]>;
         /** What the test does over the socket as a capture fails. */
@@ -4542,7 +4555,7 @@ describe("the meetings recorder loop", () => {
             });
         });
 
-        test("fallback whose captures stream all the same says so in a note", async () => {
+        test("a capture that saw no never-capture window at its start streams with no warning, and the status says why", async () => {
             const run = await recordWith({
                 displays: [[builtIn]],
                 steps: ["frames"],
@@ -4550,10 +4563,37 @@ describe("the meetings recorder loop", () => {
             });
 
             expect(run.recorder.requests[0]?.frameSource).toBe("auto");
-            expect(run.state.captureBlockers).toMatchObject({ action: "fallback", frames: "stream" });
-            expect(run.state.warning).toContain(
-                "Never-capture windows: Dimmer on display 1. The frames stay on the capture stream there"
+            expect(run.state.captureBlockers).toMatchObject({
+                action: "fallback",
+                frames: "stream",
+                streamReason: "no-window",
+            });
+            expect(run.state.warning ?? "").not.toContain("Never-capture");
+        });
+
+        test("a capture that kept the stream beside a never-capture window names its reason in the warning", async () => {
+            const withSound = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                audio: true,
+                blockers: { reads: [[dimmer]], frameSource: "stream", seen: [dimmer] },
+            });
+
+            expect(withSound.state.captureBlockers).toMatchObject({ frames: "stream", streamReason: "sound" });
+            expect(withSound.state.warning).toContain(
+                "Never-capture windows: Dimmer on display 1. The frames stay on the capture stream there, so the screen is slower while it records: "
             );
+            expect(withSound.state.warning).toContain("the sound is recorded inside the screen pieces");
+
+            const silent = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer]], frameSource: "stream", seen: [dimmer] },
+            });
+
+            expect(silent.state.captureBlockers).toMatchObject({ frames: "stream", streamReason: "other" });
+            expect(silent.state.warning).toContain("ax-tool kept the stream");
+            expect(silent.state.warning).not.toContain("screen pieces");
         });
 
         test("a recorder that cannot list blockers keeps the stream and says nothing", async () => {

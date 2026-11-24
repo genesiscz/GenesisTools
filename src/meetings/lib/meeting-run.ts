@@ -33,7 +33,7 @@ import {
     finishAudioHandoffs,
     salvagedAudioTiming,
 } from "@genesiscz/utils/screen-recorder/audio-session";
-import type { CaptureBlockersStatus } from "@genesiscz/utils/screen-recorder/capture-blockers";
+import type { CaptureBlockersStatus, StreamReason } from "@genesiscz/utils/screen-recorder/capture-blockers";
 import { AUDIO_SOURCES, type AudioState, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -359,15 +359,28 @@ export class MeetingRun {
     noteCaptureBlockers(status: CaptureBlockersStatus): void {
         this.state.captureBlockers = status;
 
-        // The plan was screenshots, and the captures streamed all the same: the user must hear why the screen is slow.
-        if (this.neverCaptureSetup?.frameSource === "auto" && status.apps.length > 0 && status.frames === "stream") {
+        // The plan was screenshots, and a capture streamed although it saw such a window: the user must hear why the
+        // screen is slow. A capture that saw none streams at no cost, and the status line says so.
+        const why = status.frames === "stream" && status.apps.length > 0 ? status.streamReason : undefined;
+
+        if (this.neverCaptureSetup?.frameSource === "auto" && why && why !== "no-window") {
             this.note(
-                `Never-capture windows: ${appsOnDisplays(status.apps)}. The frames stay on the capture stream there, so the screen is slower while it records. The usual reason is sound recorded inside the screen pieces (capture.recorders.native.audio.mode pieces); with session the recorder takes screenshots`
+                `Never-capture windows: ${appsOnDisplays(status.apps)}. The frames stay on the capture stream there, so the screen is slower while it records: ${this.streamText(why)}`
             );
             this.state.warning = this.notes.join("; ");
         }
 
         this.saveState();
+    }
+
+    private streamText(why: Exclude<StreamReason, "no-window">): string {
+        if (why === "other") {
+            return "ax-tool kept the stream (its warning in the day log names why)";
+        }
+
+        return this.audioMode === "pieces"
+            ? "the sound is recorded inside the screen pieces (capture.recorders.native.audio.mode pieces), which needs the stream; with session the recorder takes screenshots"
+            : "the continuous sound session is not running, so the sound is recorded inside the screen pieces, which needs the stream";
     }
 
     /** Starts the apps this run quit again, when the setting says so; an app that does not start is a note. */
