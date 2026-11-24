@@ -1,5 +1,6 @@
 import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import { MacReminders, todoPriorityToApple } from "@genesiscz/utils/macos/apple-reminders";
+import { alertsForStart } from "./reminders";
 import type { TodoStore } from "./store";
 import type { Todo, TodoLink, TodoReminder } from "./types";
 
@@ -185,15 +186,7 @@ function computeAlertOffsets(eventStartMs: number, reminders: TodoReminder[]): n
  * at its start time, and the sync id has a home.
  */
 function materializeReminders(todo: Todo): TodoReminder[] {
-    if (todo.reminders.length > 0) {
-        return [...todo.reminders];
-    }
-
-    if (!todo.at) {
-        return [];
-    }
-
-    return [{ at: todo.at, label: "event start", synced: null }];
+    return alertsForStart({ reminders: [...todo.reminders], at: todo.at });
 }
 
 /**

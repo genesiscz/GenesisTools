@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseReminders, parseReminderTime } from "../reminders";
+import { alertsForStart, parseReminders, parseReminderTime } from "../reminders";
 
 const FIXED_NOW = new Date("2026-04-01T12:00:00.000Z");
 
@@ -62,5 +62,40 @@ describe("parseReminders", () => {
 
     it("returns empty array for empty input", () => {
         expect(parseReminders([])).toEqual([]);
+    });
+});
+
+describe("alertsForStart", () => {
+    const START = "2026-11-27T12:00:00.000Z";
+    const MOVED = "2026-11-28T09:00:00.000Z";
+
+    it("gives a todo with a start and no alert one alert at the start", () => {
+        expect(alertsForStart({ reminders: [], at: START })).toEqual([
+            { at: START, label: "event start", synced: null },
+        ]);
+    });
+
+    it("leaves a todo with no start alone", () => {
+        expect(alertsForStart({ reminders: [] })).toEqual([]);
+    });
+
+    it("keeps the alerts a user gave", () => {
+        const given = [{ at: "2026-11-27T11:00:00.000Z", synced: null }];
+
+        expect(alertsForStart({ reminders: given, previousAt: START, at: START })).toEqual(given);
+    });
+
+    it("moves the automatic alert with the start while no platform owns it", () => {
+        const automatic = alertsForStart({ reminders: [], at: START });
+
+        expect(alertsForStart({ reminders: automatic, previousAt: START, at: MOVED })).toEqual([
+            { at: MOVED, label: "event start", synced: null },
+        ]);
+    });
+
+    it("negative control: an alert an event already carries stays where the event has it", () => {
+        const owned = [{ at: START, label: "event start", synced: "calendar" as const, syncId: "EVT-1" }];
+
+        expect(alertsForStart({ reminders: owned, previousAt: START, at: MOVED })).toEqual(owned);
     });
 });
