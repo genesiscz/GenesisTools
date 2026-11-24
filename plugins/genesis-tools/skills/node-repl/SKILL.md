@@ -20,6 +20,7 @@ in a fresh process). Bindings survive between `js` calls of the MCP server, neve
 | `meetings.applySeats({ meeting, room, remote, replace })` | `tools meetings seats <meeting> --apply` (use `--replace` for saved seats) |
 | `meetings.backfillVoices({ project, dryRun: true })` or `meetings.backfillVoices({ meetings: [meeting], dryRun: true })` | `tools meetings voices backfill --project <p> --dry-run` or `tools meetings voices backfill <meeting> --dry-run` |
 | `meetings.seats({ meeting })` | `tools meetings seats <meeting> --json` |
+| `meetings.play({ meeting, atSec, toSec?, beforeSec?, track?, player?, start? })` (`start: false` plans only) | `tools meetings play <meeting> <time> --json` (`--no-start`) |
 | `meetings.thresholds({ meeting, set: { "term.applyAbove": 0.8 }, preview: true })` | `tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview --json` |
 | `meetings.voiceReadiness({ meeting })` | The `voice` field of `tools meetings show <meeting> --json` |
 | `meetings.voices({ scope: "project", project })` | `tools meetings voices --project <p> --json` |
