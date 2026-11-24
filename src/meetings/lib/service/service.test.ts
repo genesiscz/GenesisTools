@@ -3921,9 +3921,16 @@ function normalized(examples: Example[]): unknown {
     };
     const recordingKey = (key: string) => `fixture${ordinal(`audio:${key}`)}`;
     const now = NOW.toISOString();
+    const temp = tmpdir();
 
+    // A stack names the checkout and a path names the temp folder, and either can hold a UUID (a worktree or a TMPDIR
+    // under a session folder). Erase both before the UUID pass numbers anything, or that UUID takes a number and every
+    // later stand-in moves by one with the folder the test ran in.
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
+            .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
+            .replaceAll(realpathSync(temp), "/<tmp>")
+            .replaceAll(temp, "/<tmp>")
             .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
             .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
             .replace(
@@ -3963,7 +3970,6 @@ function normalized(examples: Example[]): unknown {
                 /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
                 '"$1":"<meetings>/$2"'
             )
-            .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
             // The built-in sounds are host-dependent; keep the fixture's wire type a boolean.
             .replace(/("file":"\/System\/Library\/Sounds\/[^"]+","available":)(?:true|false)/g, "$1true"),
         { strict: true }
