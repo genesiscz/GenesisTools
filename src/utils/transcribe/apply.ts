@@ -116,6 +116,11 @@ export type CorrectionOutcome = { item: string } & (
 
 export interface CorrectionsApplied {
     entries: TranscriptEntry[];
+    /**
+     * The lines of `entries` a range, an assignment or a join's voice named. Their speaker is decided even where the
+     * name is also a source label, so a reader never counts them as lines the source labelled.
+     */
+    named: ReadonlySet<TranscriptEntry>;
     /** Local speech lines a confirmed removal hid. */
     removed: number;
     /** One per correction that names its item, in the order the corrections were given. */
@@ -595,8 +600,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         );
     }
 
+    // The dictionary writes a changed line anew, line for line, so the named lines are followed through it.
+    let named = new Set<TranscriptEntry>([...ranged, ...voiced.keys()]);
+
     if (corrections.dictionary) {
         const applied = applyDictionary(lines, corrections.dictionary, { notes: corrections.notes });
+        named = new Set(applied.entries.filter((_, index) => named.has(lines[index]!)));
         lines = applied.entries;
         counts.fixes = applied.fixes;
         counts.spoken = applied.spoken;
@@ -636,7 +645,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
-    return { entries: lines, outcomes, ...counts };
+    return { entries: lines, named, outcomes, ...counts };
 }
 
 /** The source line a removal names: its address when that line still holds the heard text, else the one in its range. */
