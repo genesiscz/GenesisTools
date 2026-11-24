@@ -578,10 +578,15 @@ test("two spellings of one name key without an address stay two owners until a p
         ["Example Alice (QT)", 2],
     ]);
 
-    const merge = await new PeopleBook().merge({
-        people: [{ name: "alice.example" }, { name: "Example Alice (QT)" }],
+    const request = {
+        people: [{ name: "alice.example" }, { name: "Example Alice (QT)" }] as [VoiceOwner, VoiceOwner],
         name: "Example Alice (QT)",
-    });
+        token: "spelling-merge",
+    };
+    const merge = await new PeopleBook().merge(request);
+    // A retried request with the same token answers its merge and writes no second one.
+    expect(await new PeopleBook().merge(request)).toEqual(merge);
+    expect(new PeopleBook().read().merges).toEqual([merge]);
     expect(rows()).toEqual([["Example Alice (QT)", 3]]);
     await new PeopleBook().unmerge(merge.token);
     expect(rows()).toHaveLength(2);
