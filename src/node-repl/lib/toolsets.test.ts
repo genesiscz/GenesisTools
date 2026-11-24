@@ -23,6 +23,7 @@ import type { recordingAutostart } from "@app/meetings/lib/watcher";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
+import { WorkToolset } from "@app/node-repl/lib/toolsets/work";
 import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
 import { defaultExportName, editProject, inItsFolder, transcriptWords, undoDepth } from "@app/recorder/lib/edit";
 import { withEditSession } from "@app/recorder/lib/edit-session";
@@ -61,6 +62,8 @@ import {
     withLength,
 } from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
+import * as workActor from "@app/work/adapters/actor";
+import * as workSession from "@app/work/session";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import * as converter from "@genesiscz/utils/audio/converter";
@@ -130,6 +133,9 @@ import {
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
+import { type Actor, asItemId } from "@genesiscz/utils/work/model/item";
+import { applyChange } from "@genesiscz/utils/work/store/apply";
+import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import type { z } from "zod";
@@ -346,6 +352,79 @@ describe("browser toolset", () => {
             url: "https://example.com/",
             title: "",
         });
+    });
+});
+
+/** The `work` global as the test calls it: a params object in, the reply object out. */
+interface WorkGlobal {
+    finish(params: Record<string, unknown>): Promise<{ ok: boolean; diagnostics: Array<{ code: string }> }>;
+}
+
+describe("work toolset", () => {
+    test("a write takes the MCP call options, and an override of a refused finish reaches the journal", async () => {
+        const db = openWorkDb(":memory:");
+        const poster: Actor = {
+            kind: "agent",
+            harness: "claude",
+            sessionId: "finder",
+            sessionTitle: null,
+            model: null,
+            host: null,
+            subagentId: null,
+            project: "App",
+            repoRoot: null,
+            branch: null,
+            commitSha: null,
+        };
+        const id = asItemId("w_repl0001");
+        applyChange(db, {
+            v: 1,
+            ts: "2026-11-24T08:00:00.000Z",
+            item: id,
+            actor: poster,
+            origin: { via: "local" },
+            kind: "created",
+            payload: { type: "idea", state: "spotted", project: "App", title: "an idea", tags: [], fields: {} },
+        });
+        // The real door and session on this store and caller; the notify pass and the sync stay out of the test.
+        const realOpen = workSession.openSession;
+        const here = spyOn(workActor, "actorHere").mockReturnValue({ actor: poster, project: "App" });
+        const open = spyOn(workSession, "openSession").mockImplementation(async (call, options) => ({
+            ...(await realOpen(call, { ...options, db })),
+            afterWrite: async () => {},
+        }));
+        const stamps = () =>
+            db
+                .query<{ stamp: string | null }, [string]>(
+                    "SELECT stamp FROM changes WHERE item = ? AND kind = 'moved'"
+                )
+                .all(id);
+
+        try {
+            const { work } = (await new WorkToolset().load(ctx)) as { work: WorkGlobal };
+            const finish = { ref: id, proof: "merged" };
+            expect((await work.finish(finish)).diagnostics[0].code).toBe("ROLE_REFUSED");
+
+            const why = "the owner asked to close it";
+            expect((await work.finish({ ...finish, override: why, dryRun: true })).ok).toBe(true);
+            expect(open.mock.calls.at(-1)?.[0]).toEqual({ dryRun: true, override: why });
+            expect(stamps()).toEqual([]);
+
+            expect(
+                (await work.finish({ ...finish, override: why, ownerSaid: "yes, finish it", requestId: "r-1" })).ok
+            ).toBe(true);
+            expect(open.mock.calls.at(-1)?.[0]).toEqual({ request: "r-1", ownerSaid: "yes, finish it", override: why });
+            const stamp = stamps()[0]?.stamp ?? "";
+            expect(stamp).toContain('"role-override"');
+            expect(stamp).toContain(why);
+            expect(stamp).toContain("yes, finish it");
+        } finally {
+            open.mockRestore();
+            here.mockRestore();
+            db.close();
+        }
+
+        expect(describeMethod([new WorkToolset().api], "work.finish")).toContain("override?: string");
     });
 });
 

@@ -54,7 +54,8 @@ commands `dump`, `migrate backfill`, `doctor --parity`.
 
 Every write takes `--request-id <id>` (a repeat returns the stored reply), `--dry-run` (writes nothing),
 `--owner-said "<words>"` (records the words in the journal) and `--override "<why>"` (does a write that a role rule
-refuses, see below). Every command takes
+refuses, see below). The MCP tools and the node REPL take the same options beside the params, as `requestId`,
+`dryRun`, `ownerSaid` and `override`: `await work.finish({ ref, proof, override: "<why>" })`. Every command takes
 `--json` (the whole reply object), `--json-compact`, `--toon`, `--md` or `--format <f>`. Warnings and next actions go
 to stderr.
 
@@ -64,9 +65,9 @@ Each write checks a role rule of the item's type. By default anyone may spot, co
 Finish, edit and drop of an epic or a note (idea, risk, limit) need a lead or the owner, and nobody may claim a note.
 Accept needs the poster, a lead or the owner, and an idea needs the owner. A handoff has its own rules.
 
-A refused write answers `ROLE_REFUSED`. When an override is allowed, repeat it with `--override "<why>"` (MCP:
-`override`). By default anyone may override a refused `finish` or `drop`, and nobody may override any other verb.
-A rule that names nobody is never overridden, and neither is an item held in a handoff slot.
+A refused write answers `ROLE_REFUSED`. When an override is allowed, repeat it with `--override "<why>"` (MCP and
+the node REPL: `override`). By default anyone may override a refused `finish` or `drop`, and nobody may override
+any other verb. A rule that names nobody is never overridden, and neither is an item held in a handoff slot.
 
 ```bash
 tools work finish w_ab12cd34 --proof "merged in owner/repo#42" --override "the owner asked me to close it"

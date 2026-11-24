@@ -9,6 +9,7 @@ import type { LoadedToolGroup } from "@genesiscz/utils/mcp/tool-group";
 import type { Door, Formatter } from "@genesiscz/utils/output/formatter";
 import { replyToToolAnswer } from "@genesiscz/utils/output/mcp";
 import { type WorkMethodName, workMethods } from "@genesiscz/utils/work/api";
+import { callOptionsOf, withoutCallOptions, workCallEnvelope } from "@genesiscz/utils/work/door";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
 import type { CallOptions } from "@genesiscz/utils/work/handlers";
 import { callWorkHere } from "../doors/service";
@@ -20,15 +21,7 @@ const WRITE_METHODS = (Object.keys(workMethods) as WorkMethodName[]).filter(
     (name) => workMethods[name].effect !== "read" && !(OWN_TOOLS as readonly string[]).includes(name)
 );
 
-const ENVELOPE = {
-    requestId: { type: "string", description: "a repeat with the same id answers the stored reply and writes nothing" },
-    dryRun: { type: "boolean", description: "answer the changes, write nothing" },
-    ownerSaid: { type: "string", description: "the owner's words when you act on them" },
-    override: {
-        type: "string",
-        description: "why this session does a write that a role rule refuses; the journal keeps who did it and why",
-    },
-};
+const ENVELOPE = jsonSchemaOf(workCallEnvelope).properties ?? {};
 
 /** An MCP next action is the tool call that runs it. */
 const mcpDoor: Door = {
@@ -39,20 +32,6 @@ const mcpDoor: Door = {
             : `work_write ${SafeJSON.stringify({ method: call.method, params: call.params })}`;
     },
 };
-
-function envelopeOf(args: Record<string, unknown>): CallOptions {
-    return {
-        ...(typeof args.requestId === "string" ? { request: args.requestId } : {}),
-        ...(args.dryRun === true ? { dryRun: true } : {}),
-        ...(typeof args.ownerSaid === "string" ? { ownerSaid: args.ownerSaid } : {}),
-        ...(typeof args.override === "string" ? { override: args.override } : {}),
-    };
-}
-
-function withoutEnvelope(args: Record<string, unknown>): Record<string, unknown> {
-    const { requestId: _r, dryRun: _d, ownerSaid: _o, override: _v, ...rest } = args;
-    return rest;
-}
 
 async function answer(
     method: WorkMethodName,
@@ -85,7 +64,7 @@ function ownTool(method: (typeof OWN_TOOLS)[number]): ToolEntry {
         inputSchema: schemaWith(method, !read),
         annotations: read ? READ_ANNOTATIONS : WRITE_ANNOTATIONS,
         handler: async (args) =>
-            answer(method, withoutEnvelope(args), envelopeOf(args), {
+            answer(method, withoutCallOptions(args), callOptionsOf(args), {
                 ...(typeof args.section === "string" ? { section: args.section } : {}),
             }),
     };
@@ -118,7 +97,7 @@ export function toolGroup(): LoadedToolGroup {
                 return `work_write: no write method ${method}. Methods: ${WRITE_METHODS.join(", ")}.`;
             }
 
-            return answer(target, args.params ?? {}, envelopeOf(args), {});
+            return answer(target, args.params ?? {}, callOptionsOf(args), {});
         },
     };
 
