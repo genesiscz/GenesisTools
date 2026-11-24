@@ -184,8 +184,8 @@ function correctedLineOf<T extends { sourceIndex?: number; id?: string; startSec
 export async function listProjectVoices(options: VoicesAccess & Browse) {
     const scope = explicitScope(options);
     const view = readVoiceLibrary();
-    const listing = options.project && !options.scope ? { ...view, merges: [] } : view;
-    const selected = voicesIn(listing, scope).filter(
+    // A project listing groups owners by the people book's merges too: a merged name is one owner, as in every scope.
+    const selected = voicesIn(view, scope).filter(
         (row) =>
             !options.person ||
             sameName(row.owner.name, options.person) ||
@@ -212,7 +212,7 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
     const openedMeetings = new Map<string, OpenedMeeting>();
     const spokenIn = new Map<string, Promise<SpokenIndex>>();
     const people: VoicePersonRow[] = [];
-    const directory = groupedOwners(listing);
+    const directory = groupedOwners(view);
     for (const group of selected) {
         const samples: VoiceSampleRow[] = [];
         for (const [index, { sourceSha: _sha, ...sample }] of group.samples.entries()) {
