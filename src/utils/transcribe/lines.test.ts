@@ -171,3 +171,15 @@ describe("corrections on two lines in one second", () => {
         expect(applied.entries[3]!.text).toBe("ADA a zadání.");
     });
 });
+
+describe("a line that says where it ends", () => {
+    test("the last line of one recording of a joined meeting ends where it ended alone, not at the next recording", () => {
+        const entries: TranscriptEntry[] = [
+            { speaker: "Alice Example", startSec: 150, text: "First part ends", endSec: 155 },
+            { speaker: "Bob Example", startSec: 654.273, text: "Second part starts" },
+        ];
+        const lines = new TranscriptLines(entries);
+        expect(lines.end(0)).toBe(155);
+        expect(lines.end(1)).toBe(659.273);
+    });
+});

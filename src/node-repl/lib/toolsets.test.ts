@@ -302,6 +302,7 @@ interface MeetingsHandle {
     voiceReadiness(input: unknown): Promise<unknown>;
     voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
     lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
+    join(input: { meetings: string[]; dryRun?: boolean }): Promise<unknown>;
     play(input: {
         meeting: string;
         atSec: number;
@@ -501,6 +502,15 @@ describe("toolset method names", () => {
         } finally {
             call.mockRestore();
         }
+    });
+
+    test("meetings.join names its CLI twin and joins through the same core as tools meetings join", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.join")).toContain("meetings join");
+        const meetings = await loadMeetings();
+        await expect(meetings.join({ meetings: ["no-such-a", "no-such-b"], dryRun: true })).rejects.toThrow(
+            'No meeting "no-such-a".'
+        );
     });
 
     test("meetings.play plans a play from a time through the CLI's own core, names its CLI twin and starts no player", async () => {
