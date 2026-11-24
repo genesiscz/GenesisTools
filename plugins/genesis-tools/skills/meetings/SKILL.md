@@ -49,6 +49,12 @@ A missing meeting names only the store that was searched. To find which store ho
    provider unless you pass `--word-check`. The `terms.documents` field lists each passage that reads a document line aloud
    (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
+   Each unknown word, vocabulary run and spoken identifier also gets a `screen` list: the OCR lines of frames within
+   60 s that sound like it (`atSec`, `frame`, `form`, `text`, `score` 0 to 100, `via` when a candidate term or the
+   identifier matched). The top-level `screen` key names the screen record (`ocr`, `frames`, `fromSec`, `toSec`) or says
+   `recorded: false`. Read those lines before you ask the user about a word, then confirm with
+   `tools meetings screen <meeting> --at <time>`. `--screen-lines <n>` sets the lines per entry (default 3, 0 = none);
+   in the node REPL: `meetings.open(id).evidence({ raw: true, screenLines, wordCheck })`.
    Every timed line has `channel.micShare`, `null` when unknown. `meeting.labels` includes first own indicator/join
    and early-label counts; `meeting.indicatorGaps` names long missing observations. Indicator-only people have origin
    `indicator`. `--format lines` gives a compact legend and 48-character text prefixes with mic %, energy, speaking
