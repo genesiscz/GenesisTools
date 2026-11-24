@@ -289,6 +289,21 @@ final class MarkdownPageExtrasWebTests: XCTestCase {
         XCTAssertNil(MarkdownWebView.linkHover(from: ["type": "linkHover", "href": NSNull()], zoom: 1))
     }
 
+    // MARK: Raw inline HTML
+
+    /// The note of 2026-11-24: `#L<a>-<b>` in a list item left an <a> and a <b> open, and the HTML parser carried both
+    /// into every block after it, so the rest of the note was a bold link. A placeholder tag now shows as typed.
+    func testAnUnclosedInlineTagStylesNothingPastItsOwnBlock() async throws {
+        try await render("- a link at a line (?plain=1#L<a>-<b>).\n\nNext paragraph must be plain.\n\n<span title=\"t\">open\n\nLast")
+        let probe = try await eval("""
+            (function(){var a=document.getElementById('gn-article');
+            var p=Array.prototype.filter.call(a.querySelectorAll('p'),function(n){return n.textContent.indexOf('Next')===0||n.textContent==='Last';});
+            return a.querySelector('li').textContent+'|'+p.length+'|'+p.map(function(n){return n.closest('a,b,span')?n.closest('a,b,span').localName:'plain';}).join(',')+'|'+a.querySelectorAll('a,b').length;})()
+            """) as? String
+        XCTAssertEqual(probe, "a link at a line (?plain=1#L<a>-<b>).|2|plain,plain|0",
+                       "the tags show as typed, and neither the placeholders nor the open span reach a later block")
+    }
+
     // MARK: Through the app's coordinator
 
     private func coordinatorPage(_ view: MarkdownWebView, markdown: String? = nil) async throws -> (WKWebView, MarkdownWebView.Coordinator) {
