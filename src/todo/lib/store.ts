@@ -34,7 +34,7 @@ import { type ItemRow, rowToItem, selectItem } from "@genesiscz/utils/work/store
 import { nanoid } from "nanoid";
 import { captureContext } from "./context";
 import { applyFilters, defaultStorageRoot, projectHash } from "./file-store";
-import { parseReminders } from "./reminders";
+import { alertsForStart, parseReminders } from "./reminders";
 import type { AddTodoInput, ProjectMeta, Todo, TodoFilters, TodoStatus } from "./types";
 
 const log = logger.child({ component: "todo:store" });
@@ -329,7 +329,7 @@ export class TodoStore {
             context,
             sessionId: input.sessionId,
             links: input.links ?? [],
-            reminders: parseReminders(input.reminders ?? []),
+            reminders: alertsForStart({ reminders: parseReminders(input.reminders ?? []), at: input.at }),
             at: input.at,
         };
         const actor = actorHere(this.projectRoot);
