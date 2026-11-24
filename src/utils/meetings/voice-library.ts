@@ -199,7 +199,7 @@ function legacyProjects(): string[] {
 }
 
 /** Legacy prints identify a physical channel span. A question can cover many lines and is not a line ID. */
-export function meetingVoiceOwner(record: MeetingRecord, name: string): VoiceOwner {
+export function meetingVoiceOwner(record: Pick<MeetingRecord, "calendar">, name: string): VoiceOwner {
     const matches = record.calendar?.people?.filter((p) => nameKey(p.name) === nameKey(name)) ?? [];
     const addresses = new Set(matches.map((p) => p.email?.toLowerCase()));
     return addresses.size === 1 && matches[0]?.email ? { name, email: matches[0].email } : { name };
@@ -625,7 +625,11 @@ export function projectVoiceStore(project: string): VoiceStore {
     return { version: 1, model, people: Object.fromEntries(people) };
 }
 
-/** Only explicit directory merges group different owner keys. A name-only print cannot pick between two addresses. */
+/**
+ * Only explicit directory merges group different owner keys. A name-only owner joins a merge only when the merge carries
+ * its name as an alias and that name has exactly one address, which the merge holds: it cannot pick between two
+ * addresses, and a same-name owner outside any merge stays its own owner.
+ */
 export function groupedOwners(view: VoiceLibrarySnapshot) {
     type Group = { owner: VoiceOwner; keys: Set<string>; aliases: Set<string> };
     const byKey = new Map<string, Group>();
@@ -660,13 +664,43 @@ export function groupedOwners(view: VoiceLibrarySnapshot) {
             byAlias.set(alias, groups);
         }
     }
-    const binding = (owner: VoiceOwner) => byKey.get(ownerKey(owner)) ?? ownerKey(owner);
-    const names = new Map<string, Set<Group | string>>();
-    for (const owner of [
+    const everyOwner = [
         ...view.knownOwners,
         ...view.library.samples.map((s) => s.owner),
         ...view.merges.flatMap((m) => m.people),
-    ]) {
+    ];
+    // The addresses each name is known under, and the name each owner key shows.
+    const addresses = new Map<string, Map<string, VoiceOwner>>();
+    const shownNames = new Map<string, string>();
+    for (const owner of everyOwner) {
+        const key = ownerKey(owner);
+        if (!shownNames.has(key)) {
+            shownNames.set(key, owner.name);
+        }
+        const name = nameKey(owner.name);
+        if (owner.email && name) {
+            const known = addresses.get(name) ?? new Map<string, VoiceOwner>();
+            known.set(key, owner);
+            addresses.set(name, known);
+        }
+    }
+    const binding = (owner: VoiceOwner): Group | string => {
+        const key = ownerKey(owner);
+        const direct = byKey.get(key);
+        if (direct || owner.email) {
+            return direct ?? key;
+        }
+        const name = nameKey(owner.name);
+        const known = addresses.get(name);
+        const only = known?.size === 1 ? known.values().next().value : undefined;
+        const group = only && byKey.get(ownerKey(only));
+        const aliased = byAlias.get(name);
+        return group && aliased?.size === 1 && aliased.has(group) ? group : key;
+    };
+    /** The name a binding shows: a merge's name, else the first name its owner key was seen with. */
+    const shown = (bound: Group | string) => (typeof bound === "string" ? shownNames.get(bound) : bound.owner.name);
+    const names = new Map<string, Set<Group | string>>();
+    for (const owner of everyOwner) {
         const name = nameKey(owner.name);
         const candidates = names.get(name) ?? new Set<Group | string>(byAlias.get(name));
         candidates.add(binding(owner));
@@ -681,7 +715,35 @@ export function groupedOwners(view: VoiceLibrarySnapshot) {
         const candidates = names.get(name) ?? byAlias.get(name);
         return candidates?.size === 1 ? candidates.values().next().value : undefined;
     }
-    return { binding, select };
+    return { binding, select, shown };
+}
+
+/**
+ * One name per voice owner of a meeting: the names a meeting gives one person (a roster address, a seat name) all map
+ * to the owner's shown name when the meeting uses it, else to the first of them. A name with no owner keeps itself.
+ */
+export function oneNamePerVoiceOwner(
+    record: Pick<MeetingRecord, "calendar">,
+    names: readonly string[],
+    directory: ReturnType<typeof groupedOwners>
+): (name: string) => string {
+    const bindingOf = (name: string) => directory.select(meetingVoiceOwner(record, name));
+    const chosen = new Map<NonNullable<ReturnType<typeof bindingOf>>, string>();
+    for (const name of names) {
+        const bound = bindingOf(name);
+        if (bound === undefined) {
+            continue;
+        }
+        const current = chosen.get(bound);
+        const shown = directory.shown(bound);
+        if (!current || (shown && nameKey(name) === nameKey(shown) && nameKey(current) !== nameKey(shown))) {
+            chosen.set(bound, name);
+        }
+    }
+    return (name) => {
+        const bound = bindingOf(name);
+        return (bound !== undefined && chosen.get(bound)) || name;
+    };
 }
 
 export function inScope(sample: VoiceSample, scope: VoiceScope): boolean {
@@ -1283,8 +1345,14 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
             receipt.addedRefusals.push(rejection);
             if (action.kind === "move") {
                 const to = ownerSchema.parse(action.to);
+                if (sameVoiceOwner(to, first.owner)) {
+                    // A move adds a wrong-person refusal for the old owner, and that refusal would also refuse the
+                    // destination: a name-only owner and an owner with that name and an email are one voice owner.
+                    throw new Error(
+                        `Voice attachment conflict: the sample already belongs to ${to.name}; the destination is its own owner.`
+                    );
+                }
                 if (
-                    sameVoiceOwner(to, first.owner) ||
                     library.samples.some(
                         (s) => s.id !== first.id && sameLine(s.source, source) && sameVoiceOwner(s.owner, to)
                     )

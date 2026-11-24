@@ -530,3 +530,39 @@ test("a correction receipt written before receipts recorded a model reverts only
     expect(() => correctVoiceSample({ kind: "revert", correction: stale })).toThrow("another voice model");
     expect(persisted().samples).toEqual([]);
 });
+
+test("a people-book merge joins a name-only owner to the one addressed owner of its name, its alias reaches all samples, and a move between the two is refused as the same owner", async () => {
+    const alice = { name: "Alice Example", email: "alice@example.com" };
+    const alias = "alice.example@example.org";
+    legacy("one", [print(1)], alice);
+    legacy("two", [print(2), print(4)], { name: alice.name });
+    const { correctVoiceSample, groupedOwners, oneNamePerVoiceOwner, predictionPrints, readVoiceLibrary, voicesIn } =
+        await library();
+    // Without the people book's word, a same-name owner with no address may be someone else.
+    expect(voicesIn(readVoiceLibrary(), { kind: "all" }).map((r) => [r.owner, r.samples.length])).toEqual([
+        [alice, 1],
+        [{ name: alice.name }, 2],
+    ]);
+
+    await new PeopleBook().merge({ people: [{ name: alias }, alice], name: alice.name });
+    const view = readVoiceLibrary();
+    expect(voicesIn(view, { kind: "all" }).map((r) => [r.owner.name, r.samples.length])).toEqual([[alice.name, 3]]);
+    const directory = groupedOwners(view);
+    expect(directory.select({ name: alias })).toBeDefined();
+    expect(directory.select({ name: alias })).toBe(directory.select({ name: alice.name }));
+    const prints = predictionPrints({ project: "two", scope: "all", owners: [{ name: alias }], view });
+    expect(prints.samples).toHaveLength(3);
+    // The roster address and the seat name of one person are one person of the voice pass, under the merged name.
+    const shownAs = oneNamePerVoiceOwner({}, [alias, alice.name], directory);
+    expect([shownAs(alias), shownAs(alice.name), shownAs("Bob Example")]).toEqual([
+        alice.name,
+        alice.name,
+        "Bob Example",
+    ]);
+
+    const nameOnly = view.library.samples.find((s) => !s.owner.email)!;
+    expect(() => correctVoiceSample({ kind: "move", id: nameOnly.id, to: alice })).toThrow(
+        "the sample already belongs to Alice Example"
+    );
+    expect(readVoiceLibrary().library.samples).toHaveLength(3);
+});
