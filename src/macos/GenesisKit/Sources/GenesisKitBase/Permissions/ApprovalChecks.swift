@@ -65,6 +65,7 @@ struct ApprovalCheckList: View {
                     set: { on in
                         if on { selection.insert(check.id) } else { selection.remove(check.id) }
                     }))
+                    .liveRow()
             }
         }
     }
@@ -74,6 +75,9 @@ struct ApprovalCheckRow: View {
     let check: ApprovalCheck
     let identifier: String
     @Binding var selected: Bool
+    /// The link exists as a button only while the row is under the pointer; at rest it is the same label, which
+    /// VoiceOver and a click still press (`restingButton`), so 40 rows carry no 40 resting responders.
+    @Environment(\.rowLive) private var live
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -93,15 +97,20 @@ struct ApprovalCheckRow: View {
                         .foregroundStyle(selected ? .primary : .secondary)
                     Spacer(minLength: 4)
                     if let link = check.link {
-                        Button(action: link.action) {
-                            Label(link.title, systemImage: link.symbol)
-                                .font(.system(size: 11))
-                                .foregroundStyle(link.enabled ? Color.accentColor : Color.secondary)
+                        let label = Label(link.title, systemImage: link.symbol)
+                            .font(.system(size: 11))
+                            .foregroundStyle(link.enabled ? Color.accentColor : Color.secondary)
+                        Group {
+                            if live {
+                                Button(action: link.action) { label }
+                                    .buttonStyle(.plain)
+                                    .pointerCursor()
+                                    .disabled(!link.enabled)
+                                    .help(link.help ?? "\(link.title): \(check.title)")
+                            } else {
+                                label.restingButton(enabled: link.enabled, action: link.action)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                        .disabled(!link.enabled)
-                        .help(link.help ?? "\(link.title): \(check.title)")
                         .fixedSize()
                         .accessibilityIdentifier("\(identifier)-check-\(check.id)-link")
                     }
