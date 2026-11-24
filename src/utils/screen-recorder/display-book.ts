@@ -41,25 +41,46 @@ export class DisplayBook {
 
     /**
      * The recorded displays follow the running captures, each by the display it records now (its frames can move to
-     * another display without a switch call, as a follow-focus capture does); true when they changed.
+     * another display without a switch call, as a follow-focus capture does); true when they changed. A follow-focus
+     * capture whose first frame has not named its display yet is left out, and with no other capture the recorded
+     * displays stay as they were.
      */
     sync(running: ReadonlyMap<number, SessionCapture>): boolean {
-        const displayOf = (one: SessionCapture) => this.current.get(one)?.displayId ?? one.target.displayId;
-        const ids = [...running.values()]
-            .map(displayOf)
+        const known = [...running.values()].flatMap((one) => {
+            const id = this.displayOf(one);
+            return id === undefined ? [] : [{ one, id }];
+        });
+        const ids = known
+            .map((entry) => entry.id)
             .sort((a, b) => a - b)
             .join(",");
 
-        if (ids === this.lastIds || running.size === 0) {
+        if (ids === this.lastIds || known.length === 0) {
             return false;
         }
 
         this.lastIds = ids;
-        this.recorded = [...running.values()].map((one) => ({
-            id: displayOf(one),
-            name: this.names.get(displayOf(one)) ?? one.target.label,
-        }));
+        this.recorded = known.map(({ one, id }) => ({ id, name: this.names.get(id) ?? one.target.label }));
         return true;
+    }
+
+    /**
+     * A capture started: a display capture records its display from now. A follow-focus capture opens nothing: ax-tool
+     * starts it on the display under the pointer, which its first frame names (`open`). True when one opened.
+     */
+    start(capture: SessionCapture): boolean {
+        return capture.target.target.kind === "follow-focus" ? false : this.open(capture, capture.target.displayId);
+    }
+
+    /** The display a capture records now; undefined for a follow-focus capture before its first frame. */
+    private displayOf(capture: SessionCapture): number | undefined {
+        const current = this.current.get(capture)?.displayId;
+
+        if (current !== undefined || capture.target.target.kind === "follow-focus") {
+            return current;
+        }
+
+        return capture.target.displayId;
     }
 
     /** The capture records `displayId` from now; the interval it recorded before ends. True when one opened. */
