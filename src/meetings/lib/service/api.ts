@@ -403,6 +403,12 @@ const decisionApply = defineMethod({
         onDecided: z.enum(["skip", "refuse"]).optional(),
         /** Match the caller's meeting.rows visibility when returning changed rows. */
         lowPriority: z.enum(["hide", "show"]).optional(),
+        /**
+         * The confirmation request in which the user confirmed an answer an agent relayed (`confirmRelayed`): the
+         * decision is then the user's (`request` actor, `relayedBy` the agent), when the request is done with this
+         * row ticked and the action decides the agent's entry again unchanged (`replaces`). Refused otherwise.
+         */
+        confirmedBy: z.object({ request: z.string().min(1) }).optional(),
     }),
     result: decidedSchema.extend({ rows: reviewRowsPatchSchema.optional() }),
     resultName: "{ entry?, skipped, warnings?, rows? }",

@@ -1,4 +1,5 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
+import type { RequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, type VoiceFreeCores } from "@genesiscz/utils/meetings/config";
 import {
@@ -105,6 +106,8 @@ export interface MeetingsHandlerDeps {
     wordTimings?: Pick<WordTimingGenerateDeps, "cache" | "modelFiles" | "infer">;
     /** The meetings store (a test passes a scratch one). */
     store?: () => MeetingStore;
+    /** The person area's request journal a confirmed relay is checked against (tests pass one); the shared one by default. */
+    requests?: () => Pick<RequestJournal, "get">;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
     linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
     /** A source by its id, for the lists and links of `meeting.sources.near` and `meeting.link`; tests pass a fake. */

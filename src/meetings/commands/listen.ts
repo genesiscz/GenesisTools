@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { agentInstructionsResult } from "@genesiscz/utils/ai/agent-instructions";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -71,6 +72,7 @@ import {
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
 import { fail, resolveEnum, TOOL } from "../lib/shared";
+import { printRelayed, runConfirmRelayed } from "./relayed";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -531,6 +533,7 @@ interface ListenOptions {
     questions?: string;
     item?: string;
     answer?: string;
+    confirmRelayed?: string[];
     except?: string[];
     replaces?: string;
     comment?: string;
@@ -1025,6 +1028,18 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
+    if (opts.confirmRelayed) {
+        try {
+            printRelayed(await runConfirmRelayed({ store, meeting: meeting.id, items: opts.confirmRelayed }), {
+                json: opts.json,
+            });
+        } catch (error) {
+            fail(error);
+        }
+
+        return;
+    }
+
     if (opts.answer !== undefined && !opts.clipOut) {
         if (!opts.item) {
             fail("--answer needs --item <Q12>: it answers one question.");
@@ -1060,10 +1075,40 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                 },
                 ...(opts.reason ? { reason: opts.reason } : {}),
             });
+            // An agent relays what the user said: a window asks the user whether the answer is theirs (D443).
+            const relayed =
+                result.entry && callerActor().kind === "agent"
+                    ? await runConfirmRelayed({ store, meeting: meeting.id, items: [opts.item] })
+                    : undefined;
+            const lead = result.entry
+                ? `The answer is saved as the agent's answer (undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}).`
+                : undefined;
+
             if (!result.entry) {
                 fail(result.skipped[0]?.reason ?? "Nothing was answered.");
             } else if (opts.json) {
-                out.result(SafeJSON.stringify(result.entry, null, 2));
+                if (relayed) {
+                    const { instructions, ...rest } = relayed;
+                    out.result(
+                        SafeJSON.stringify(
+                            {
+                                ...result.entry,
+                                relayed: rest,
+                                ...(instructions
+                                    ? agentInstructionsResult({
+                                          ...instructions,
+                                          text: `${lead}\n${instructions.text}`,
+                                      })
+                                    : {}),
+                            },
+                            null,
+                            2
+                        )
+                    );
+                    process.exitCode = instructions?.stop ? 1 : 0;
+                } else {
+                    out.result(SafeJSON.stringify(result.entry, null, 2));
+                }
             } else {
                 const entry = result.entry;
                 const answered = (
@@ -1078,6 +1123,10 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     `${opts.item} → ${confirmed ? `${confirmed.answer}${wordOutcome(now, confirmed, entry)}` : "comment saved; still open"}\n`
                 );
                 ui.dim(`  undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}`);
+
+                if (relayed) {
+                    printRelayed(relayed, { lead });
+                }
             }
             for (const warning of result.warnings ?? []) {
                 ui.warn(warning);
@@ -1336,6 +1385,10 @@ export function registerListenCommand(program: Command): void {
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option("--except <items...>", "with --answer: leave these item ids or question numbers out")
         .option("--replaces <token>", "with --answer: replace this earlier answer in one decision")
+        .option(
+            "--confirm-relayed <items...>",
+            "ask the user in one window whether answers an agent relayed are theirs (an item of another meeting as <meeting>:<item>); run it again after the user answered to record the ticked ones as the user's"
+        )
         .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(
             "--subscribe-answers",

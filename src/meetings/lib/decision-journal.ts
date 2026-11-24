@@ -389,6 +389,36 @@ function openQuestion(record: MeetingRecord, ref: string): { question?: Question
 }
 
 /** A confirm or a reject of items, the CLI's `confirm` and `reject`. */
+/**
+ * A confirm or reject; with `replaces`, the earlier entry is undone for these items first and they are decided again
+ * in the same entry (a person adopting an agent's decision), so the entry's Undo brings the earlier one back.
+ */
+function decideAgain(
+    record: MeetingRecord,
+    status: "confirmed" | "rejected",
+    action: ActionOf<"confirm"> | ActionOf<"reject">,
+    context: ActionContext
+): ActionOutcome {
+    if (!action.replaces) {
+        return decideItems(record, status, action, context.now);
+    }
+
+    const earlier = context.entryOf(action.replaces);
+
+    if (earlier?.action.kind !== action.kind) {
+        throw new Error(`The replacement token must name an earlier ${action.kind} of these items`);
+    }
+
+    const items = action.items.map((ref) => itemIdOf(record, ref));
+    const undone = ACTIONS.revert.mutate(record, { kind: "revert", token: earlier.token, items }, context);
+    const decided = decideItems(record, status, { ...action, items }, context.now);
+    return {
+        ...decided,
+        skipped: [...(undone.skipped ?? []), ...(decided.skipped ?? [])],
+        corrections: [...(undone.corrections ?? []), ...(decided.corrections ?? [])],
+    };
+}
+
 function decideItems(
     record: MeetingRecord,
     status: "confirmed" | "rejected",
@@ -783,8 +813,8 @@ function replacementScope(options: {
 }
 
 const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
-    confirm: { mutate: (record, action, { now }) => decideItems(record, "confirmed", action, now) },
-    reject: { mutate: (record, action, { now }) => decideItems(record, "rejected", action, now) },
+    confirm: { mutate: (record, action, context) => decideAgain(record, "confirmed", action, context) },
+    reject: { mutate: (record, action, context) => decideAgain(record, "rejected", action, context) },
     respell: {
         mutate: (record, action, { now }) => {
             const id = itemIdOf(record, action.item);
@@ -1442,7 +1472,7 @@ export interface DecisionReach {
 }
 
 /** Where an item sits in the meeting: a range, or one point for a word. */
-function spanOf(item: MeetingItem): { fromSec: number; toSec: number } | undefined {
+export function spanOf(item: MeetingItem): { fromSec: number; toSec: number } | undefined {
     if (item.kind === "term" || item.kind === "join") {
         return item.atSec === undefined ? undefined : { fromSec: item.atSec, toSec: item.atSec };
     }
@@ -1451,7 +1481,7 @@ function spanOf(item: MeetingItem): { fromSec: number; toSec: number } | undefin
 }
 
 /** What a person sees an item as: a range's speaker, a word's spelling, a question's answer. */
-function shownValue(item: MeetingItem | undefined): string | undefined {
+export function shownValue(item: MeetingItem | undefined): string | undefined {
     switch (item?.kind) {
         case "speaker-range":
             return item.speaker ?? item.label;

@@ -292,6 +292,7 @@ type VoiceDoors = {
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
     dictionary: { test(input: unknown): Promise<unknown> };
+    confirmRelayed(input: unknown): Promise<unknown>;
     roomDevices(input?: unknown): Promise<unknown>;
     decideRoomDevice(input: unknown): Promise<unknown>;
     applySeats(input: unknown): Promise<unknown>;
@@ -511,6 +512,20 @@ describe("toolset method names", () => {
         const meetings = await loadMeetings();
         await expect(meetings.join({ meetings: ["no-such-a", "no-such-b"], dryRun: true })).rejects.toThrow(
             'No meeting "no-such-a".'
+        );
+    });
+
+    test("meetings.confirmRelayed names its CLI twin and, with nothing an agent relayed, stops with the reason", async () => {
+        const toolset = new MeetingsToolset();
+        expect(describeMethod([toolset.api], "meetings.confirmRelayed")).toContain("meetings listen");
+        expect(describeMethod([toolset.api], "meetings.confirmRelayed")).toContain("--confirm-relayed");
+        const record = await new MeetingStore().create(
+            { title: "Relay door", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        await expect(meetings.confirmRelayed({ meeting: record.id, items: ["i1"] })).rejects.toThrow(
+            "No answer an agent relayed is left to confirm"
         );
     });
 

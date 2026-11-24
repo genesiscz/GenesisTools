@@ -902,6 +902,25 @@ export const join = defineMethod({
     doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
 });
 
+export const confirmRelayed = defineMethod({
+    name: "confirmRelayed",
+    params: z
+        .object({
+            meeting: z.string().min(1),
+            /** Item ids (i42) or question labels (Q12) an agent answered from what the user said. */
+            items: z.array(z.string().min(1)).min(1),
+            /** Items of other meetings, shown in the same window. */
+            also: z
+                .array(z.object({ meeting: z.string().min(1), items: z.array(z.string().min(1)).min(1) }))
+                .optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ request?, adopted: [{ meeting, items, token }], left, skipped }",
+    effect: "reversible",
+    doc: `Ask the user, in one confirmation window, whether answers an agent relayed from chat are the user's own: each row is the item with its decision, the user's quoted words, a Play button for its range and its own tick. Each ticked answer becomes the user's decision (journal actor request, relayedBy the agent), so voice samples and learning use it; Undo brings the agent's back. An agent's first call posts the window and throws the FOR AGENTS block; the same call again after the user answered records the ticked rows. CLI twin: ${toolCommand("meetings listen")} <meeting> --confirm-relayed <items...> (another meeting's item as <meeting>:<item>) --json.`,
+});
+
 export const voiceLibraryMethods = {
     add: defineMethod({
         name: "voices.add",
@@ -986,6 +1005,7 @@ export const meetingsToolsetApi = defineApi({
         lineEligibility,
         play,
         join,
+        confirmRelayed,
         ...Object.values(voiceLibraryMethods),
         list,
         levels,

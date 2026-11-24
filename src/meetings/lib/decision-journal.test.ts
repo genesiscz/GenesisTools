@@ -16,10 +16,17 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
+import {
+    type NoticeInput,
+    noticeInputSchema,
+    type RequestOutcome,
+    type RequestRow,
+} from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
+    isPersonActor,
     type MeetingItem,
     type MeetingRecord,
     MeetingStore,
@@ -47,6 +54,7 @@ import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import { MutedCallLines } from "./call-mutes";
+import type { DecisionAction } from "./decision-actions";
 import {
     actorOf,
     actorText,
@@ -54,6 +62,7 @@ import {
     DecisionJournal,
     decisionActionSchema,
     decisionReach,
+    itemIdOf,
     JOURNAL_FILE,
     journalEntrySchema,
 } from "./decision-journal";
@@ -71,9 +80,17 @@ import { meetingFieldsChange } from "./meeting-fields";
 import { OpenedMeeting } from "./opened-meeting";
 import { personStays, presenceOf, rosterPresence, stayLeaveSource } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
+import {
+    adoptionAction,
+    confirmRelayed,
+    type RelayedConfirmDoor,
+    relayedActor,
+    relayedGroups,
+    relayedRowId,
+} from "./relayed";
 import { reviewRow } from "./review-rows";
 import { MEETINGS_PROTOCOL, meetingsMethod } from "./service/api";
-import { InProcessMeetingsClient, SocketMeetingsClient } from "./service/client";
+import { InProcessMeetingsClient, type MeetingsClient, SocketMeetingsClient } from "./service/client";
 import { startMeetingsService } from "./service/service";
 import type { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
@@ -4312,4 +4329,160 @@ test("the service's set adapter forwards a seating change with the other fields,
     expect(meetingFieldsChange(action)).toEqual({ seats, title: "Planning", labels: ["weekly"] });
     expect(meetingFieldsChange({ seats })).toEqual({ seats });
     expect(meetingFieldsChange({})).toEqual({});
+});
+
+describe("relayed answers: the user confirms what an agent relayed (D443)", () => {
+    const relayer = {
+        kind: "agent" as const,
+        harness: "codex",
+        session: "relay-1",
+        caller: { harness: "codex", session: "relay-1", model: "gpt-6.1-sol" },
+    };
+
+    /** A client over the fixture's journal; `decision.apply` names the user only through `relayedActor`, as the service does. */
+    function relayClient(
+        fx: Awaited<ReturnType<typeof fixture>>,
+        request: () => { id: string; rows?: RequestRow[]; status: string; picked?: string[]; via?: string } | null
+    ) {
+        const applied: unknown[] = [];
+        const call = async (method: string, params: Record<string, unknown>) => {
+            if (method === "journal.read") {
+                return { meeting: fx.meeting.id, entries: fx.journal.read(fx.meeting.id) };
+            }
+
+            applied.push(params);
+            const record = fx.store.read(fx.meeting.id)!;
+            const action = decisionActionSchema.parse(params.action);
+            const replaces = "replaces" in action ? action.replaces : undefined;
+            const earlier = fx.journal.read(fx.meeting.id).find((entry) => entry.token === replaces);
+            const items =
+                action.kind === "answer"
+                    ? [itemIdOf(record, action.question)]
+                    : "items" in action
+                      ? action.items.map((ref) => itemIdOf(record, ref))
+                      : [];
+            const actor = relayedActor({ request: request(), meeting: fx.meeting.id, items, earlier, action });
+            return fx.journal.apply({ meeting: fx.meeting.id, action, actor, reason: params.reason as string });
+        };
+        return { client: { call } as unknown as Pick<MeetingsClient, "call">, applied };
+    }
+
+    function personDoor(outcome: Partial<RequestOutcome>) {
+        const posted: NoticeInput[] = [];
+        const confirm = async (input: NoticeInput) => {
+            posted.push(input);
+            return {
+                status: "ran" as const,
+                via: "native",
+                skipped: [],
+                value: { id: input.id, status: "pending" as const, reason: null, ...outcome },
+            };
+        };
+        return { gt: { person: { confirm } } as unknown as RelayedConfirmDoor, posted };
+    }
+
+    test("one window lists each agent decision with its quote and Play; the ticked ones become the user's, in one entry each", async () => {
+        const fx = await fixture([
+            question("i3", { decides: ["i1"] }),
+            term("i1", 50, { proposed: "ADA" }),
+            speakerRange("i7", 90, { toSec: 96 }),
+        ]);
+        const answered = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADA" },
+            actor: relayer,
+            reason: 'Alice in chat 2026-11-24: "it is ADA"',
+        });
+        const confirmed = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i7"], speaker: "Bob Example" },
+            actor: relayer,
+            reason: 'Alice in chat: "that is Bob"',
+        });
+        const groups = relayedGroups(fx.meeting.id, ["i3", "i7", "i1"]);
+
+        // First run: the window is posted, nothing changes, and the agent is told to stop.
+        const pending = personDoor({});
+        const first = await confirmRelayed({
+            groups,
+            store: fx.store,
+            client: relayClient(fx, () => null).client,
+            rerun: "again",
+            gt: pending.gt,
+        });
+        expect(first.instructions?.stop).toBe(true);
+        expect(first.instructions?.text).toContain("A confirmation window asks the user now");
+        // i1 is decided by the answer to i3, so it is the same row as i3, never a second one.
+        expect(first.skipped).toEqual([]);
+        const [request] = pending.posted;
+        expect(request?.rows).toHaveLength(2);
+        expect(request?.rows?.[0]?.title).toMatch(/^Q\d+ · ADA$/);
+        expect(request?.rows?.[1]?.title).toBe("i7 · Bob Example");
+        expect(request?.rows?.map((row) => row.quote)).toEqual(["it is ADA", "that is Bob"]);
+        expect(request?.rows?.[1]?.action).toEqual({
+            kind: "play-meeting",
+            label: "Play clip",
+            meeting: fx.meeting.id,
+            fromSec: 90,
+            toSec: 96,
+        });
+        expect(request?.rows?.[0]?.detail).toContain("relayed by codex, session relay-1 · gpt-6.1-sol");
+        expect(noticeInputSchema.parse(request)).toBeTruthy();
+        expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+
+        // The user ticked only the speaker range: it becomes the user's decision, replacing the agent's.
+        const picked = [relayedRowId(fx.meeting.id, "i7", confirmed.entry!.token)];
+        const done = personDoor({ status: "done", via: "native", picked });
+        const view = () => ({ id: request!.id, rows: request!.rows, status: "done", picked, via: "native" });
+        const second = await confirmRelayed({
+            groups,
+            store: fx.store,
+            client: relayClient(fx, view).client,
+            rerun: "again",
+            gt: done.gt,
+        });
+        expect(second.adopted).toEqual([{ meeting: fx.meeting.id, items: ["i7"], token: expect.any(String) }]);
+        expect(second.left.map((row) => row.meeting)).toEqual([fx.meeting.id]);
+        expect(second.instructions?.stop).toBe(false);
+        expect(fx.item("i7")).toMatchObject({ status: "confirmed", speaker: "Bob Example" });
+        expect(fx.item("i7")?.decision?.actor).toEqual({
+            kind: "request",
+            request: request!.id,
+            via: "native",
+            relayedBy: relayer,
+        });
+        expect(fx.item("i3")?.decision?.actor).toEqual(relayer);
+        const adoption = fx.journal.read(fx.meeting.id)[0]!;
+        expect(adoption.action).toMatchObject({ kind: "confirm", items: ["i7"], replaces: confirmed.entry!.token });
+        expect(adoption.reason).toBe('Alice in chat: "that is Bob"');
+        expect(isPersonActor(adoption.actor.kind)).toBe(true);
+        expect(answered.entry).toBeDefined();
+
+        // Undo of the user's entry brings the agent's decision back.
+        await fx.journal.revert({ meeting: fx.meeting.id, token: adoption.token, actor: person });
+        expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+    });
+
+    test("the service names the user only for a done request with the row ticked and the agent's decision unchanged", async () => {
+        const fx = await fixture([speakerRange("i7", 90, { toSec: 96 })]);
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i7"], speaker: "Bob Example" },
+            actor: relayer,
+        });
+        const earlier = fx.journal.read(fx.meeting.id)[0];
+        const row = relayedRowId(fx.meeting.id, "i7", entry!.token);
+        const action = adoptionAction(earlier!, ["i7"]);
+        const request = { id: "relayed:x", rows: [{ id: row, title: "i7" }], status: "done", picked: [row] };
+        const ask = (overrides: Partial<Parameters<typeof relayedActor>[0]>) => () =>
+            relayedActor({ request, meeting: fx.meeting.id, items: ["i7"], earlier, action, ...overrides });
+
+        expect(ask({})()).toEqual({ kind: "request", request: "relayed:x", via: null, relayedBy: relayer });
+        expect(ask({ request: { ...request, status: "pending" } })).toThrow("has not confirmed");
+        expect(ask({ request: { ...request, picked: [] } })).toThrow("did not confirm i7");
+        expect(ask({ action: { ...action, speaker: "Mallory" } as DecisionAction })).toThrow(
+            "exactly what the agent decided"
+        );
+        expect(ask({ earlier: { ...earlier!, actor: person } })).toThrow("the agent's own entry");
+    });
 });
