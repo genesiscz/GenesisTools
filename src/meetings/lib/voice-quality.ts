@@ -5,6 +5,7 @@ import {
     overlapsVoiceSource,
     ownerSchema,
     type PredictionPrints,
+    sourceClockMs,
     type VoiceSample,
 } from "@genesiscz/utils/meetings/voice-library";
 import { z } from "zod";
@@ -33,7 +34,12 @@ export const learntVoiceSchema = z.object({
 export type LearntVoice = z.infer<typeof learntVoiceSchema>;
 
 function overlaps(a: VoiceSample, b: VoiceSample) {
-    return overlapsVoiceSource(a, { ...b.source, fromSec: b.fromSec, toSec: b.toSec });
+    return overlapsVoiceSource(a, {
+        ...b.source,
+        fromSec: b.fromSec,
+        toSec: b.toSec,
+        offsetMs: sourceClockMs(b.source),
+    });
 }
 
 /** One sum per compatible owner group. Leave out every overlapping recording before a sample votes. */

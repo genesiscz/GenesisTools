@@ -812,10 +812,59 @@ describe("a line of a recording a join absorbed", () => {
             source: sourceForVoicePrint(next, kept.id, nextKey),
         });
         expect(added.status).toBe("added");
+        // A pre-join answer replayed under the absorbed id is read on the joined record and saved under its own id.
+        const replayed: VoicePrint = { ...before, fromSec: 30, toSec: 32, question: "i11" };
+        const replayKey = SafeJSON.stringify(["entry-v1", "source-later-fixture", "line-11"]);
+        expect(
+            insertVoiceSample({
+                ...answer,
+                print: replayed,
+                source: sourceForVoicePrint(replayed, later, replayKey),
+                decision: { token: "answer-three", item: "i11" },
+            }).status
+        ).toBe("added");
         expect(persisted().samples.map((s) => [s.meeting, s.source.rootMeeting])).toEqual([
             [later, later],
             [kept.id, kept.id],
+            [later, later],
         ]);
+    });
+
+    test("the time-overlap check puts a print saved under the absorbed recording's id on the joined clock", async () => {
+        const { overlapsVoiceSource, readVoiceLibrary, sourceClockMs, sourceForVoicePrint } = await library();
+        const { kept, learned } = await repeatedLine();
+        const saved = readVoiceLibrary().library.samples.find((s) => s.id === learned.id)!;
+        expect(sourceClockMs(saved.source)).toBe(654273);
+        const otherKey = SafeJSON.stringify(["entry-v1", "source-later-fixture", "line-9"]);
+        const joinedLine = (fromSec: number, toSec: number) => ({
+            ...sourceForVoicePrint({ ...before, meeting: kept.id, fromSec, toSec }, kept.id, otherKey),
+            fromSec,
+            toSec,
+        });
+        // Its own seconds 10-12 are 664.273-666.273 on the joined clock; 10-12 there is another stretch of the audio.
+        expect(overlapsVoiceSource(saved, joinedLine(10, 12))).toBe(false);
+        expect(overlapsVoiceSource(saved, joinedLine(665, 667))).toBe(true);
+        // A target that is itself a print saved under the absorbed id says so with its offset, as voice quality does.
+        expect(overlapsVoiceSource(saved, { ...joinedLine(11, 13), offsetMs: 654273 })).toBe(true);
+    });
+
+    test("a refusal saved under the absorbed recording's id holds out only the stretch it covers on the joined clock", async () => {
+        const { readVoiceLibrary, refused, sourceForVoicePrint } = await library();
+        const { kept } = await repeatedLine();
+        const lineV1 = (n: number) => SafeJSON.stringify(["line-v1", "source-later-fixture", n, `hash-${n}`]);
+        const onDisk = persisted();
+        onDisk.rejected.push({
+            source: sourceForVoicePrint(before, later, lineV1(3)),
+            reason: "bad-audio",
+            token: "refusal-fixture",
+            at: "2026-11-01T10:30:00Z",
+        });
+        atomicWriteFileSync(libraryPath(), SafeJSON.stringify(onDisk));
+        const read = readVoiceLibrary().library;
+        const joinedLine = (n: number, fromSec: number, toSec: number) =>
+            sourceForVoicePrint({ ...before, meeting: kept.id, fromSec, toSec }, kept.id, lineV1(n));
+        expect(refused(read, joinedLine(4, 10, 12), owner)).toBeUndefined();
+        expect(refused(read, joinedLine(5, 665, 667), owner)).toBe("ambiguous-source");
     });
 
     test("undoing the answer removes the line's repeated row too", async () => {

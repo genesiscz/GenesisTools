@@ -11,7 +11,7 @@ import { z } from "zod";
 import { MeetingsConfigStore, meetingsConfigSchema, projectNameSchema } from "./config";
 import { nameKey } from "./people";
 import { PeopleBook, type PeopleMerge, type PersonRefValue } from "./people-book";
-import { joinedAway, type MeetingRecord, MeetingStore, voiceRootMeeting } from "./record";
+import { joinedAway, type MeetingRecord, MeetingStore, toJoinedSec, voiceRootMeeting } from "./record";
 
 export const voicePrintSchema = z
     .object({
@@ -282,7 +282,15 @@ function uncertainOverlap(a: SampleSource, b: SampleSource) {
     const address = (s: SampleSource) => physicalSpanSchema.safeParse(parseJSON(s.spanKey ?? s.lineKey));
     const left = address(a),
         right = address(b);
-    if (!left.success || !right.success || left.data[2] >= right.data[3] || right.data[2] >= left.data[3]) {
+    // A span keeps its print's own seconds: a source saved under a recording a join absorbed moves onto the
+    // joined clock.
+    const at = (source: SampleSource, sec: number) => toJoinedSec(sec, sourceClockMs(source));
+    if (
+        !left.success ||
+        !right.success ||
+        at(a, left.data[2]) >= at(b, right.data[3]) ||
+        at(b, right.data[2]) >= at(a, left.data[3])
+    ) {
         return false;
     }
     if (a.recordingKey === b.recordingKey) {
@@ -427,30 +435,66 @@ function recordedRoot(store: MeetingStore, id: string) {
 }
 
 /**
- * The voice root of the joined record that absorbed the recording `id`, for a sample saved under that recording's
- * old id before the join; `id` itself for any other id. The join half of `meetingAddress`: an id with a record
- * keeps it, and an id without one never reaches the store's prefix match, which could name another meeting.
+ * The joined record that absorbed the recording `id`, for a sample saved under that recording's old id before the
+ * join: its voice root, and the milliseconds the recording's seconds move by on the joined clock. Undefined for any
+ * other id. The join half of `meetingAddress`: an id with a record keeps it, and an id without one never reaches the
+ * store's prefix match, which could name another meeting.
  */
-function joinedVoiceRoot(store: MeetingStore, id: string): string {
+function joinedPart(store: MeetingStore, id: string): { root: string; offsetMs: number } | undefined {
     const away =
         /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id) && !existsSync(store.path(id)) ? joinedAway(store, id) : undefined;
-    return away ? voiceRootMeeting(store, away.record) : id;
+    return away ? { root: voiceRootMeeting(store, away.record), offsetMs: away.part.offsetMs } : undefined;
 }
 
-/** Sources the overlay read under a joined record, with the root each one is saved under. */
-type JoinedRoots = Map<SampleSource, { saved: string; read: string }>;
+/**
+ * The sources this process reads under a joined record: the root each one is saved under, the joined root it reads
+ * as, and the milliseconds its seconds move by on the joined clock. A saved source has no field for its clock; a
+ * source saved under a recording a join absorbed carries that recording's own seconds, so its saved root names it.
+ */
+const joinMoves = new WeakMap<SampleSource, { saved: string; read: string; offsetMs: number }>();
 
-/** Runs `write` with each source the overlay moved onto a joined record back at the root it is saved under. */
-function withSavedRoots<T>(joined: JoinedRoots, write: () => T): T {
-    const moved = [...joined].filter(([source, root]) => source.rootMeeting === root.read);
-    for (const [source, root] of moved) {
-        source.rootMeeting = root.saved;
+/** Reads `source` as a line of the joined record that absorbed its root, when `part` names one (`joinedPart`). */
+function readOnJoin(source: SampleSource, part: { root: string; offsetMs: number } | undefined): void {
+    if (part && part.root !== source.rootMeeting) {
+        joinMoves.set(source, { saved: source.rootMeeting, read: part.root, offsetMs: part.offsetMs });
+        source.rootMeeting = part.root;
+    }
+}
+
+/** The milliseconds the seconds of a print with this source move by on its root's clock: 0 unless a join moved it. */
+export function sourceClockMs(source: SampleSource): number {
+    return joinMoves.get(source)?.offsetMs ?? 0;
+}
+
+/** Every source a library holds: its samples', its refusals' and those its receipts keep. */
+function librarySources(library: LibraryV2): SampleSource[] {
+    return [
+        ...library.samples.map((sample) => sample.source),
+        ...library.rejected.map((row) => row.source),
+        ...library.receipts.flatMap((receipt) =>
+            receipt.kind === "learn"
+                ? [receipt.source]
+                : [...receipt.before, ...receipt.after, ...receipt.addedRefusals, ...receipt.removedRefusals].map(
+                      (row) => row.source
+                  )
+        ),
+    ];
+}
+
+/** Runs `write` with each source a join moved (`joinMoves`) back at the root it is saved under: joins never write. */
+function withSavedRoots<T>(library: LibraryV2, write: () => T): T {
+    const moved = [...new Set(librarySources(library))].flatMap((source) => {
+        const move = joinMoves.get(source);
+        return move && source.rootMeeting === move.read ? [{ source, move }] : [];
+    });
+    for (const { source, move } of moved) {
+        source.rootMeeting = move.saved;
     }
     try {
         return write();
     } finally {
-        for (const [source, root] of moved) {
-            source.rootMeeting = root.read;
+        for (const { source, move } of moved) {
+            source.rootMeeting = move.read;
         }
     }
 }
@@ -537,44 +581,27 @@ function reconcile(projects: string[], options: MigrationOptions) {
     // v1 and early v2 used the immediate meeting as root. Correct proven parent chains in the
     // overlay too, so browsing and predicting never have to upgrade a file to exclude a copy.
     // A recording a join absorbed reads as the joined record too, so a line saved under its old id and the same line
-    // learned after the join are one line. That rewrite stays in memory (`joined`): a join never changes the library.
+    // learned after the join are one line. That rewrite stays in memory (`joinMoves`): a join never changes the
+    // library.
     const store = new MeetingStore();
-    const roots = new Map<string, { recorded: string; joined: string }>();
-    const joined: JoinedRoots = new Map();
-    function canonical(source: SampleSource) {
+    const roots = new Map<string, string>();
+    const parts = new Map<string, ReturnType<typeof joinedPart>>();
+    for (const source of librarySources(library)) {
         const id = source.rootMeeting;
         if (!roots.has(id)) {
-            const recorded = recordedRoot(store, id);
-            roots.set(id, { recorded, joined: joinedVoiceRoot(store, recorded) });
+            roots.set(id, recordedRoot(store, id));
         }
-        const root = roots.get(id)!;
-        if (root.recorded !== id) {
-            source.rootMeeting = root.recorded;
+        const recorded = roots.get(id)!;
+        if (recorded !== id) {
+            source.rootMeeting = recorded;
             changed = true;
         }
-        if (root.joined !== root.recorded) {
-            source.rootMeeting = root.joined;
-            joined.set(source, { saved: root.recorded, read: root.joined });
+        if (!parts.has(recorded)) {
+            parts.set(recorded, joinedPart(store, recorded));
         }
+        readOnJoin(source, parts.get(recorded));
     }
-    for (const sample of [...library.samples, ...library.rejected]) {
-        canonical(sample.source);
-    }
-    for (const receipt of library.receipts) {
-        if (receipt.kind === "learn") {
-            canonical(receipt.source);
-        } else {
-            for (const row of [
-                ...receipt.before,
-                ...receipt.after,
-                ...receipt.addedRefusals,
-                ...receipt.removedRefusals,
-            ]) {
-                canonical(row.source);
-            }
-        }
-    }
-    return { library, conflicts, imported, changed, joined };
+    return { library, conflicts, imported, changed };
 }
 
 export function readVoiceLibrary(options: Pick<MigrationOptions, "idDigest"> = {}): VoiceLibrarySnapshot {
@@ -618,7 +645,7 @@ function transact<T>(
             if (changed) {
                 library.revision++;
                 voiceLibrarySchema.parse(library);
-                const bytes = withSavedRoots(pending.joined, () => SafeJSON.stringify(library));
+                const bytes = withSavedRoots(library, () => SafeJSON.stringify(library));
                 const publish: NonNullable<MigrationOptions["publish"]> =
                     options.publish ?? ((path, data) => atomicWriteFileSync(path, data, { mode: 0o600 }));
                 publish(file, bytes);
@@ -882,7 +909,12 @@ export function voicesIn(view: VoiceLibrarySnapshot, scope: VoiceScope, owner?: 
     return [...groups.values()].map((row) => ({ ...row, projects: [...row.projects].sort() }));
 }
 
-export type TargetSource = SampleSource & { fromSec?: number; toSec?: number };
+export type TargetSource = SampleSource & {
+    fromSec?: number;
+    toSec?: number;
+    /** The milliseconds the target's seconds move by on its root's clock (`sourceClockMs` of a saved print). */
+    offsetMs?: number;
+};
 export interface PredictionPrints {
     model: string;
     samples: VoiceSample[];
@@ -890,14 +922,17 @@ export interface PredictionPrints {
 }
 
 export function overlapsVoiceSource(sample: VoiceSample, target: TargetSource): boolean {
+    // Both on the root's clock: a print saved under a recording a join absorbed keeps that recording's own seconds.
+    const own = sourceClockMs(sample.source);
+    const other = target.offsetMs ?? sourceClockMs(target);
     return (
         sameLine(sample.source, target) ||
         (sample.source.rootMeeting === target.rootMeeting &&
             sample.source.recordingKey === target.recordingKey &&
             target.fromSec !== undefined &&
             target.toSec !== undefined &&
-            sample.fromSec < target.toSec &&
-            target.fromSec < sample.toSec)
+            toJoinedSec(sample.fromSec, own) < toJoinedSec(target.toSec, other) &&
+            toJoinedSec(target.fromSec, other) < toJoinedSec(sample.toSec, own))
     );
 }
 
@@ -984,7 +1019,7 @@ function insertLocked(
         source.rootMeeting = recordedRoot(store, source.rootMeeting);
     }
     // A print addressed under a recording a join absorbed is a line of the joined record, as the overlay reads it.
-    source.rootMeeting = joinedVoiceRoot(store, source.rootMeeting);
+    readOnJoin(source, joinedPart(store, source.rootMeeting));
     const model = nonblank.parse(input.model);
     if (!acceptsModel(library, model)) {
         throw new Error(
@@ -1205,7 +1240,8 @@ export function changeVoiceLearning(options: {
             const saved = owned.source ?? sourceForVoicePrint(print);
             // A journal entry from before a join names the absorbed recording; the library reads that line as a
             // line of the joined record.
-            const source = { ...saved, rootMeeting: joinedVoiceRoot(store, saved.rootMeeting) };
+            const source = { ...saved };
+            readOnJoin(source, joinedPart(store, source.rootMeeting));
             const matchingItem = byDecision.get(decisionKey(owned, print.question)) ?? [];
             const matchingId = owned.id ? (byAttachment.get(decisionKey(owned, owned.id)) ?? []) : [];
             const priorIndex = Math.max(
