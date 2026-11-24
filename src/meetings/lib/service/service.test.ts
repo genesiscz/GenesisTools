@@ -3938,6 +3938,12 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "voices.move", { id: "vs_missing", to: { name: "Reed Example" } });
     await ask(window, "voices.reject", { id: "vs_missing", reason: "bad-audio" });
     await ask(window, "voices.undo", { token: "missing" });
+    await ask(
+        window,
+        "voices.rename",
+        { from: { name: "Nobody Example" }, to: { name: "Alex Example" }, preview: true },
+        "preview: read only. A target the people list knows becomes a people merge (undo people.unmerge); a new name re-keys the samples (undo voices.undo)."
+    );
     await ask(window, "voices.quality", { project: "Atlas" });
     await window.request(SUBSCRIBE, { events: ["voices.job"], project: "Rehearsal" });
     service.emit("voices.job", {

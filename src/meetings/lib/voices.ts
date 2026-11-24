@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { IntervalIndex } from "@genesiscz/utils/array";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { samePerson } from "@genesiscz/utils/meetings/people";
+import { type KnownPerson, type PeopleDirectory, PeopleError } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -17,6 +20,7 @@ import {
     groupedOwners,
     inScope,
     meetingVoiceOwner,
+    ownerKey,
     predictionScope,
     previewVoiceCorrection,
     readVoiceLibrary,
@@ -289,7 +293,25 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
         }
     }
     const { learnt } = await voiceQuality(options, view);
-    return { people: people.sort((a, b) => a.person.localeCompare(b.person)), learnt, conflicts: view.conflicts };
+    const sorted = people.sort((a, b) => a.person.localeCompare(b.person));
+    return { people: sorted, learnt, conflicts: view.conflicts, mergeHints: voiceMergeHints(sorted) };
+}
+
+/**
+ * Two listed owners that the people list joins by its name key (`samePerson`: one of them has no address) while no
+ * people merge joins their voice samples. Samples follow an explicit merge only, so the listing names that merge.
+ */
+function voiceMergeHints(people: readonly VoicePersonRow[]) {
+    const ref = (owner: VoiceOwner) => owner.email ?? owner.name;
+    return people.flatMap((a, index) =>
+        people
+            .slice(index + 1)
+            .filter((b) => samePerson(a.owner, b.owner))
+            .map((b) => ({
+                owners: [a.owner, b.owner] as [VoiceOwner, VoiceOwner],
+                command: toolCommand("meetings people merge", ref(a.owner), ref(b.owner), "--yes"),
+            }))
+    );
 }
 
 export async function voiceQuality(options: VoicesAccess & Browse, view = readVoiceLibrary()) {
@@ -610,6 +632,23 @@ async function resolveCorrectionSource(access: VoicesAccess, sample: VoiceSample
     return sample.source;
 }
 
+/** A correction error the caller can act on (a stale preview, a refusal) as its status; anything else is thrown. */
+function correctionRefusal(error: unknown): { status: "stale" | "refused"; reason: string } {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (
+        !/^(Stale |Unknown voice correction|Voice sample refused|Voice attachment conflict|Correction token belongs)/.test(
+            reason
+        )
+    ) {
+        throw error;
+    }
+    return { status: reason.startsWith("Stale") ? "stale" : "refused", reason };
+}
+
+async function samplePredictionScope(options: VoicesAccess) {
+    return (await (options.config?.() ?? new MeetingsConfigStore().read())).global.speakerLabels.voice.sampleScope;
+}
+
 export async function editVoice(options: CorrectionOptions & { action: VoiceCorrection; person?: string }) {
     try {
         const view = readVoiceLibrary();
@@ -627,19 +666,93 @@ export async function editVoice(options: CorrectionOptions & { action: VoiceCorr
         if ("id" in action && options.person && !view.library.receipts.some((r) => r.token === action.token)) {
             select(view, { person: options.person, id: action.id }, false);
         }
-        const predictionScope = (await (options.config?.() ?? new MeetingsConfigStore().read())).global.speakerLabels
-            .voice.sampleScope;
+        const predictionScope = await samplePredictionScope(options);
         return await applyCorrection({ ...options, predictionScope }, view, action);
     } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        if (
-            !/^(Stale |Unknown voice correction|Voice sample refused|Voice attachment conflict|Correction token belongs)/.test(
-                reason
-            )
-        ) {
+        return correctionRefusal(error);
+    }
+}
+
+/**
+ * Names the owner of a group of voice samples again, never with a wrong-person refusal. A target the people list knows
+ * becomes a people merge of the two owners: the samples stay as they are, group under the target, and undo is
+ * `people unmerge`. A new name re-keys every sample of the group as one voice correction, undone by `voices undo`.
+ */
+export async function renameVoiceOwner(
+    options: CorrectionOptions & {
+        from: VoiceOwner;
+        to: VoiceOwner;
+        token?: string;
+        people: Pick<PeopleDirectory, "find" | "book">;
+    }
+) {
+    const { from, to, people } = options;
+    const view = readVoiceLibrary();
+    const directory = groupedOwners(view);
+    const fromRow = directory.select(from) ?? directory.binding(from);
+    const toRow = directory.select(to) ?? directory.binding(to);
+    // A raw owner key is exact: a roster spelling that `select` maps to the same name key is still another owner.
+    if (ownerKey(from) === ownerKey(to) || (typeof fromRow === "object" && fromRow === toRow)) {
+        return { status: "refused" as const, reason: `${from.name} and ${to.name} are one voice owner already.` };
+    }
+
+    const rowIds = (owner: VoiceOwner) =>
+        voicesIn(view, { kind: "all" }, owner).flatMap((row) => row.samples.map((s) => s.id));
+    const ids = rowIds(from);
+    let known: KnownPerson | undefined;
+    try {
+        known = await people.find(to.email ?? to.name);
+    } catch (error) {
+        if (!(error instanceof PeopleError)) {
             throw error;
         }
-        return { status: reason.startsWith("Stale") ? ("stale" as const) : ("refused" as const), reason };
+
+        if (error.code === "ambiguous-person") {
+            return { status: "refused" as const, reason: error.message };
+        }
+    }
+
+    if (known) {
+        // The target's address lets its addressed and name-only owners both join the merge.
+        const target = to.email || !known.email ? to : { name: to.name, email: known.email };
+        // The samples that change their row: a roster spelling the listing already shows in the target's row has none.
+        const shown = new Set(rowIds(target));
+        const moving = ids.filter((id) => !shown.has(id));
+        const merges = people.book.read().merges;
+        const planToken = sha256Json(["merge", from, target, moving, merges.map((merge) => merge.token)]);
+        const outcome = { mechanism: "merge" as const, planToken, ids: moving, affected: [], from, to: target };
+        if (options.planToken && options.planToken !== planToken) {
+            return { status: "stale" as const, reason: "Stale voice rename preview. Preview again." };
+        }
+
+        if (options.preview) {
+            return { status: "preview" as const, ...outcome };
+        }
+
+        const merge = await people.book.merge({ people: [from, target], name: to.name, token: options.token });
+        return {
+            status: "applied" as const,
+            ...outcome,
+            undo: { method: "people.unmerge" as const, token: merge.token },
+        };
+    }
+
+    if (!ids.length) {
+        return {
+            status: "refused" as const,
+            reason: `${from.name} has no voice samples to rename, and the people list does not know ${to.name} to join them with.`,
+        };
+    }
+
+    try {
+        const predictionScope = await samplePredictionScope(options);
+        const action: VoiceCorrection = { kind: "rename", ids, to, ...(options.token ? { token: options.token } : {}) };
+        const result = await applyCorrection({ ...options, predictionScope }, view, action);
+        const undo =
+            result.status === "applied" ? { undo: { method: "voices.undo" as const, token: result.token } } : {};
+        return { ...result, mechanism: "rekey" as const, from, to, ...undo };
+    } catch (error) {
+        return correctionRefusal(error);
     }
 }
 
