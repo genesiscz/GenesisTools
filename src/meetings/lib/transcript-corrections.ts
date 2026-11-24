@@ -179,6 +179,23 @@ function rangeAddress(item: MeetingItem): { line?: number } {
 }
 
 /**
+ * A warning per speaker range whose `line` narrows nothing: on a range wider than one second the line stays its first
+ * line's address (suggest stores a stretch that way), and the range gives a voice to every line of its label in it.
+ */
+export function rangeLineWarnings(items: readonly MeetingItem[]): string[] {
+    return items.flatMap((item) => {
+        const line = item.kind === "speaker-range" && item.fromSec !== item.toSec ? lineOf(item) : undefined;
+        if (item.kind !== "speaker-range" || line === undefined) {
+            return [];
+        }
+
+        return [
+            `${item.id}: "line": ${line} names one line only when "from" and "to" are the same second; this range applies to every "${item.label}" line from ${formatClock(item.fromSec)} to ${formatClock(item.toSec)}. To name one line, give "from" and "to" its second`,
+        ];
+    });
+}
+
+/**
  * What a transcript applies: renames, then the confirmed items, then the dictionary. With `withSuggested` a suggested
  * item is applied too when its confidence reaches `global.suggest.applyAbove` (one with no confidence, a person's
  * own, always); a lower one is marked unclear, as an open question is.

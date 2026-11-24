@@ -4,7 +4,7 @@ import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/recor
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type Finding, findingItems, findingProblems } from "./findings";
 import { diagnoseTermAddress } from "./term-address";
-import { checkAnchors, correctTranscript } from "./transcript-corrections";
+import { checkAnchors, correctTranscript, rangeLineWarnings } from "./transcript-corrections";
 
 /**
  * The items a list of findings adds, each join and line-bound term anchored to its transcript line when a transcript
@@ -120,6 +120,7 @@ export function prepareFindings(options: {
         added: accepted,
         duplicates: orderedDuplicates,
         warnings: [
+            ...rangeLineWarnings(accepted),
             ...(anchors?.warnings.filter(
                 (warning) => !diagnostics.some((entry) => warning.startsWith(`${entry.item}:`))
             ) ?? []),
