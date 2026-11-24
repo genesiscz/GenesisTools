@@ -20,6 +20,8 @@ tools wisprflow meetings show <id>
 tools wisprflow meetings transcript <id> --first-names --no-summary -o Transcript.md
 # Summary.md, Transcript.md and meeting.json in a folder per meeting
 tools wisprflow meetings export <id> --dir ~/Projects/app/meetings --timestamps
+# Only Summary.md, so a hand-edited Transcript.md stays as it is
+tools wisprflow meetings export <id> --dir ~/Projects/app/meetings --only summary --confirm
 # Calendar events in the next 8 hours
 tools wisprflow calendar upcoming --hours 8
 ```
@@ -53,7 +55,7 @@ stderr, so stdout holds only the result. `--source auto|local|mcp` picks the sou
 - `meetings transcript <meeting>`: Wispr Flow's raw transcript, grouped into speaker turns and paragraphs. The
   flags are in "Transcript output" below.
 - `meetings export <meetings...> --dir <dir>`: one sub-folder per meeting with `Summary.md`, `Transcript.md` and
-  `meeting.json`. `--dir` is required. `--confirm`, `--timestamps`, `--first-names`, `--source`.
+  `meeting.json`. `--dir` is required. `--only <files>` (a comma list of `summary`, `transcript`, `json`; default all three), `--confirm`, `--timestamps`, `--first-names`, `--source`.
 - `meetings series <meeting>`: every recorded occurrence of the recurring meeting this one belongs to. MCP only, so it
   has no `--source`. `--limit <n>` (default 25), `--format table|json`.
 - `meetings speakers <meeting>`: moved. It prints the `tools meetings speakers stats` command to use and exits 1.
@@ -154,8 +156,10 @@ letters or digits in the title becomes `-`; a meeting without a title uses the f
   From the MCP, the participants have no `speakerId` and the lines have no `startSec`, because the MCP gives neither.
   A line from the MCP has a `speakerId` only when its speaker is still called `Speaker N`.
 
-The same guard applies to each file: an existing file that differs needs `--confirm`. The two Markdown files keep
-their frontmatter; `meeting.json` is replaced whole. A meeting that fails prints `<ref>: <error>` and the export goes
+The same guard applies to each file: an existing file that differs needs `--confirm`. `--only summary,json` writes just
+those files and does not touch the others, so a re-export cannot replace a `Transcript.md` you edited by hand. An
+unknown name in `--only` prints the possible values and writes nothing. The two Markdown files keep their frontmatter;
+`meeting.json` is replaced whole. A meeting that fails prints `<ref>: <error>` and the export goes
 on with the next one.
 
 ## How it works

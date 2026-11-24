@@ -17,6 +17,8 @@ import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { Command } from "commander";
+import { registerMeetingsCommand } from "../commands/meetings";
 import { parseObservations, parseRoster, participantName } from "./evidence";
 import { completeTranscript, parseLive } from "./live";
 import * as local from "./local";
@@ -25,6 +27,7 @@ import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeRoster } from "./meeting-source";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
+import * as source from "./source";
 import { loadMeeting } from "./source";
 import { audioFilesIn, localAudioMeeting, wisprAudioAccess } from "./source-audio";
 import { fillMentions, resolveSpeakers, UNNAMED_PERSON } from "./speakers";
@@ -237,6 +240,83 @@ describe("searching the app's meetings", () => {
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("meetings export --only", () => {
+    const meeting: Meeting = {
+        id: "m1",
+        title: "Fixture sync",
+        start: "2026-11-02T09:00:00.000Z",
+        hasTranscript: true,
+        folders: [],
+        summary: "Short summary.",
+        notes: "",
+        participants: [{ speakerId: 1, name: "Alice Example" }],
+        transcript: [entry("Alice Example", 1, "Hello.")],
+    };
+
+    async function exportTo(dir: string, ...flags: string[]): Promise<void> {
+        const program = new Command().exitOverride();
+        registerMeetingsCommand(program);
+        await program.parseAsync(["meetings", "export", "m1", "--dir", dir, ...flags], { from: "user" });
+    }
+
+    function filesOf(dir: string): string[] {
+        const [folder] = readdirSync(dir);
+        return folder ? readdirSync(join(dir, folder)).sort() : [];
+    }
+
+    async function withFixture(run: (dir: string) => Promise<void>): Promise<void> {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-export-"));
+        const available = spyOn(local, "localAvailable").mockReturnValue(false);
+        const loaded = spyOn(source, "loadMeeting").mockResolvedValue({ source: "mcp", data: meeting, notes: [] });
+
+        try {
+            await run(dir);
+        } finally {
+            process.exitCode = undefined;
+            available.mockRestore();
+            loaded.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }
+
+    test("writes every file without --only, and only the named ones with it", async () => {
+        await withFixture(async (dir) => {
+            await exportTo(dir);
+            expect(filesOf(dir)).toEqual(["Summary.md", "Transcript.md", "meeting.json"]);
+        });
+
+        await withFixture(async (dir) => {
+            await exportTo(dir, "--only", "json, Summary");
+            expect(filesOf(dir)).toEqual(["Summary.md", "meeting.json"]);
+        });
+    });
+
+    test("a Transcript.md with a hand-written callout survives a re-export of the summary", async () => {
+        await withFixture(async (dir) => {
+            await exportTo(dir);
+            const [folder = ""] = readdirSync(dir);
+            const transcript = join(dir, folder, "Transcript.md");
+            const edited = `${readFileSync(transcript, "utf8")}\n> [!note] Term check: Example\n`;
+            writeFileSync(transcript, edited);
+
+            await exportTo(dir, "--only", "summary", "--confirm");
+            expect(readFileSync(transcript, "utf8")).toBe(edited);
+
+            await exportTo(dir, "--confirm");
+            expect(readFileSync(transcript, "utf8")).not.toContain("Term check");
+        });
+    });
+
+    test("a name that is not an export file stops before anything is loaded or written", async () => {
+        await withFixture(async (dir) => {
+            await exportTo(dir, "--only", "summary,notes");
+            expect(process.exitCode).toBe(1);
+            expect(readdirSync(dir)).toEqual([]);
+            expect(source.loadMeeting).not.toHaveBeenCalled();
+        });
     });
 });
 

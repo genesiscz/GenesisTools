@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { suggestCommand } from "@genesiscz/utils/cli";
+import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -24,6 +24,9 @@ import { errorText, fail, parseSource, reportSource, resolveEnum, TOOL } from ".
 
 const LIST_FORMATS = ["table", "json"] as const;
 const SHOW_FORMATS = ["md", "json", "txt"] as const;
+/** The files `export` writes, in the order it writes them. `--only` picks from these names. */
+const EXPORT_FILES = ["summary", "transcript", "json"] as const;
+type ExportFile = (typeof EXPORT_FILES)[number];
 /** Exit code when `-o` would replace a different file and `--confirm` was not given: nothing was written. */
 const EXIT_DIFFERS = 2;
 
@@ -292,11 +295,38 @@ function exportDirName(meeting: Meeting): string {
     return `${date}-${title}`;
 }
 
+/**
+ * `--only summary,json`: the export files to write, in export order; every file when the flag is absent. A name that is
+ * not an export file is reported with the possible values, and nothing is written.
+ */
+function parseOnly(value: unknown): ExportFile[] | undefined {
+    if (value === undefined) {
+        return [...EXPORT_FILES];
+    }
+
+    const given = typeof value === "string" ? value.split(",").map((name) => name.trim().toLowerCase()) : [];
+    const unknown = given.find((name) => !EXPORT_FILES.some((file) => file === name));
+
+    if (given.length === 0 || unknown !== undefined) {
+        ui.err(
+            suggestEnumFlag(TOOL, "--only", EXPORT_FILES, {
+                subcommand: ["meetings", "export"],
+                given: unknown ?? (typeof value === "string" ? value : undefined),
+            })
+        );
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return EXPORT_FILES.filter((file) => given.includes(file));
+}
+
 async function exportMeetings(refs: string[], opts: Record<string, unknown>): Promise<void> {
     const source = parseSource(opts.source, ["meetings", "export"]);
+    const only = parseOnly(opts.only);
     const dir = opts.dir as string;
 
-    if (!source) {
+    if (!source || !only) {
         return;
     }
 
@@ -314,18 +344,28 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
                 timestamps: opts.timestamps === true,
                 firstNames: opts.firstNames === true,
             };
-            const files: Array<[string, string, boolean]> = [
-                ["Summary.md", showMarkdown(meeting, loaded.source, calendarFor(meeting)), true],
-                ["Transcript.md", renderMarkdown(meeting, base), true],
-                [
-                    "meeting.json",
-                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
-                    false,
-                ],
-            ];
+            const files: Record<ExportFile, { name: string; content: () => string; keepFrontmatter: boolean }> = {
+                summary: {
+                    name: "Summary.md",
+                    content: () => showMarkdown(meeting, loaded.source, calendarFor(meeting)),
+                    keepFrontmatter: true,
+                },
+                transcript: {
+                    name: "Transcript.md",
+                    content: () => renderMarkdown(meeting, base),
+                    keepFrontmatter: true,
+                },
+                json: {
+                    name: "meeting.json",
+                    content: () =>
+                        `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
+                    keepFrontmatter: false,
+                },
+            };
 
-            for (const [name, content, keepFrontmatter] of files) {
-                deliver(content, { output: join(folder, name), confirm: opts.confirm === true, keepFrontmatter });
+            for (const key of only) {
+                const { name, content, keepFrontmatter } = files[key];
+                deliver(content(), { output: join(folder, name), confirm: opts.confirm === true, keepFrontmatter });
             }
         } catch (err) {
             fail(`${ref}: ${errorText(err)}`);
@@ -428,6 +468,10 @@ export function registerMeetingsCommand(program: Command): void {
         .argument("<meetings...>", "meeting ids, share links, or share slugs")
         .description("Write Summary.md, Transcript.md and meeting.json per meeting into a folder")
         .requiredOption("--dir <dir>", "target directory; one sub-folder per meeting")
+        .option(
+            "--only <files>",
+            `write only these files, comma separated: ${EXPORT_FILES.join(", ")} (default all three)`
+        )
         .option("--confirm", "replace existing files that differ")
         .option("--timestamps", "show paragraph start times in Transcript.md")
         .option("--first-names", "label speakers by first name")
