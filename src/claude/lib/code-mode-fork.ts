@@ -23,6 +23,7 @@ import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-tit
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 
 const { log } = logger.scoped("claude-fork");
 
@@ -219,8 +220,19 @@ export async function stopClaudeProcesses(
     { termMs = 10_000, killMs = 5_000 }: { termMs?: number; killMs?: number } = {}
 ): Promise<number[]> {
     const members = [...new Set(pids.flatMap(launchChain))];
+    // The command each member runs as this stop begins. The SIGKILL comes up to termMs later, and a pid that ended and
+    // went to another process meanwhile must not get it.
+    const commands = new Map(members.map((pid) => [pid, readProcessCommand(pid)]));
     const signal = (target: number, name: NodeJS.Signals) => {
+        const command = commands.get(target);
+
+        if (!command || classifyPid(target, command).status !== "live") {
+            log.debug({ target, signal: name }, "a Claude Code process ended or changed before the signal");
+            return;
+        }
+
         try {
+            // pid-verified: classifyPid matched the command this pid had when the stop began, read from the live table.
             process.kill(target, name);
         } catch (error) {
             log.debug({ error, target, signal: name }, "a Claude Code process ended before the signal");
