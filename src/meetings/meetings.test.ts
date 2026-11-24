@@ -6756,6 +6756,7 @@ describe("transcriptDocument", () => {
             { name: "Alice Example", lines: 2 },
             { name: "Bob Example", lines: 1 },
         ],
+        guesses: [{ name: "Carol Example", lines: 3 }],
         unattributed: [{ name: "Speaker 5", lines: 1 }],
         frontmatter: true,
         timestamps: true,
@@ -6782,6 +6783,8 @@ describe("transcriptDocument", () => {
                 "speakers:",
                 "  Alice Example: 2",
                 "  Bob Example: 1",
+                "guesses:",
+                "  Carol Example: 3",
                 "unattributed:",
                 "  Speaker 5: 1",
                 "---",
@@ -6832,6 +6835,7 @@ describe("transcriptDocument", () => {
     test("golden: a meeting with no turns ends after the title (it used to leave two blank lines)", () => {
         const md = transcriptDocument({
             ...options,
+            guesses: [],
             unattributed: [],
             record: { ...stamped, project: undefined },
             turns: [],

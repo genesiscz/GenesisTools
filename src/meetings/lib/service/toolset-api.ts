@@ -220,9 +220,9 @@ export const lines = defineMethod({
         })
         .strict(),
     result: z.unknown(),
-    resultName: "{ lines: { at, speaker, text }[], speakers, unattributed, notApplied }",
+    resultName: "{ lines: { at, speaker, text }[], speakers, guesses, unattributed, notApplied }",
     effect: "read",
-    doc: "The transcript with the speaker renames, the confirmed items and the dictionary applied, as the transcript command prints it. withSuggested: true also applies the suggested items (a preview); dictionary: false leaves the dictionary out. `notApplied` names each correction that found no line.",
+    doc: "The transcript with the speaker renames, the confirmed items and the dictionary applied, as the transcript command prints it. withSuggested: true also applies the suggested items (a preview); dictionary: false leaves the dictionary out. `speakers` counts the lines of each named person, `guesses` the lines shown as a guess `[Name: NN %]` per person guessed, `unattributed` the source labels nobody named. `notApplied` names each correction that found no line.",
 });
 export const voiceFeatures = defineMethod({
     name: "voiceFeatures",

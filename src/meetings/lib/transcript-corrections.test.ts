@@ -228,6 +228,64 @@ describe("the corrections pipeline", () => {
         ]);
     });
 
+    test("counts a guess mark for the person guessed, apart from the named people", () => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            participants: [{ name: "Carol Example" }],
+            items: [
+                item({
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 5",
+                    fromSec: 0,
+                    toSec: 0,
+                    speaker: "Bob Example",
+                    confidence: 0.5,
+                }),
+                item({
+                    id: "i2",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 2",
+                    fromSec: 30,
+                    toSec: 30,
+                    speaker: "Bob Example",
+                    confidence: 0.6,
+                }),
+                item({
+                    id: "i3",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 30,
+                    question: "Who?",
+                    choices: ["Alice Example", "Bob Example"],
+                    decides: ["i1", "i2"],
+                }),
+            ],
+        });
+        const result = correctTranscript({
+            record,
+            transcript,
+            config,
+            format: "md",
+            withSuggested: true,
+            dictionary: false,
+        });
+
+        expect(result.entries.map((entry) => entry.speaker)).toEqual([
+            "[Bob Example: 50 %]",
+            "Carol Example",
+            "Carol Example",
+            "[Bob Example: 60 %]",
+        ]);
+        expect(result.speakers).toEqual([{ name: "Carol Example", lines: 2 }]);
+        expect(result.guesses).toEqual([{ name: "Bob Example", lines: 2 }]);
+        expect(result.unattributed).toEqual([]);
+    });
+
     test("an open speaker mark matches the line's source label, not the speaker a range already gave it", () => {
         const applied = applyCorrections([line("Speaker 2", 10, "Jedna."), line("Alice Example", 12, "Dvě.")], {
             ranges: [{ label: "Speaker 2", fromSec: 0, toSec: 20, speaker: "Alice Example" }],

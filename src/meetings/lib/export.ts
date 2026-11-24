@@ -63,6 +63,7 @@ export function transcriptMarkdown(options: TranscriptMarkdownOptions): {
         record,
         turns: groupTurns(applied.entries),
         speakers: applied.speakers,
+        guesses: applied.guesses,
         unattributed: applied.unattributed,
         frontmatter: options.frontmatter,
         timestamps: options.timestamps || options.playLinks,
