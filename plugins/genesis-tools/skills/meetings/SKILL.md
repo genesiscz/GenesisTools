@@ -102,9 +102,12 @@ A missing meeting names only the store that was searched. To find which store ho
      A line marked `[few-samples]` waits: three or more people share its seat, and one of them has fewer samples than
      `speakerLabels.voice.minSamples` (default 2), so the voice leaves that person out. Answer or confirm one more of
      their lines to add a sample.
-     Run `tools meetings voices apply <meeting>` to save the speaker suggestions for review. It fills only the lines
-     that nobody named: a range you add with `items add` outranks every automatic seat or voice range on its line,
-     whatever their age, and a confirmed range outranks both.
+     Run `tools meetings voices apply <meeting>` (REPL: `meetings.voices.apply({ meeting })`) to save the speaker
+     suggestions for review. It fills only the lines that nobody named: a range you add with `items add` outranks every
+     automatic seat or voice range on its line, whatever their age, and a confirmed range outranks both. One pass runs
+     per meeting at a time, also across the service and the CLI: a second call waits for the running one, then runs. A
+     pass that an answer overtook plans again from the saved record, so it never overwrites the answer, and a pass that
+     changes nothing leaves the record as it was.
 
 3. **Pass 2, the agent judges.**
    First run `meeting.items.byChannel({ label, dryRun: true })` with the stored seats, or `tools meetings items by-channel <meeting> --label <label> --dry-run`. Inspect the plan before applying with `dryRun: false`. The shipped `meetings-attribute-by-mic` REPL preset takes meeting, label, room, remote and dryRun parameters. When a line refers to something on the screen, read `screen --at` before attributing the idea.
@@ -342,13 +345,15 @@ decision is saved. Inspect progress (`done` / `total`, current step), added and 
 | `voices jobs --project "$project" --json` | `meetings.voiceJobs({ project })` |
 | `voices jobs cancel "$jobId" --json` | `meetings.cancelVoiceJob(jobId)` |
 | `voices backfill "$meeting" --json` | `meetings.backfillVoices({ meetings: [meeting] })` |
+| `voices apply "$meeting" --json` | `meetings.voices.apply({ meeting })` |
 | `voices dedupe --dry-run --json` | `meetings.dedupeVoices({ dryRun: true })` |
 
 Use the job ID from the list to cancel queued or running work. The saved decision and already learned samples survive
 cancellation. Explicit backfill retries eligible lines and counts existing samples separately. The service also checks
-for unfinished learning when it starts. After learning a new sample, it schedules a naming pass for that meeting.
-Answers within `meetings.voices.reproposeDelaySec` (default 10 seconds) share one pass. Review the resulting speaker
-suggestions in the meeting.
+for unfinished learning when it starts. After learning a new sample, it runs a naming pass for that meeting
+`meetings.voices.reproposeDelaySec` (default 1 second) after the last new sample, so names follow the answers while
+the user is still answering. Answers within that delay share one pass, and a sample learned while a pass runs brings
+exactly one more pass. Review the resulting speaker suggestions in the meeting.
 
 ### Playback and seat evidence
 
