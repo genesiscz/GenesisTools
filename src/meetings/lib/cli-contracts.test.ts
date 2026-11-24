@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
+import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
@@ -373,6 +374,106 @@ test("voice backfill CLI accepts project, dry-run and JSON after the subcommand"
         });
     } finally {
         result.mockRestore();
+    }
+});
+
+test("each voices command gets the --person written after its own name, and -v still counts there", async () => {
+    // `voices --person` lists one person; `voices add` and `voices enroll` require their own --person. Commander gave
+    // the subcommand's --person to the parent, so the documented `voices add <m> --person X` refused (2026-11-24).
+    const journal = await import("./decision-journal");
+    const clients = await import("./service/client");
+    const voicesModule = await import("./voices");
+    const store = new MeetingStore(new Storage("voices-person-cli"));
+    const client = new InProcessMeetingsClient({ deps: { store: () => store } });
+    const calls = spyOn(client, "call");
+    const connect = spyOn(clients, "withMeetingsClient").mockImplementation(async (use) => use(client));
+    const actor = spyOn(journal, "callerActor").mockReturnValue({ kind: "cli" });
+    const add = spyOn(voicesModule, "addVoiceSample").mockResolvedValue({ samples: 1 });
+    const result = spyOn(out, "result").mockImplementation(() => undefined);
+    const parse = async (...args: string[]) => {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: args[0] });
+        addGlobalVerboseOption(program);
+        await program.parseAsync(args, { from: "user" });
+    };
+    const range = ["--from", "43:15", "--to", "43:25"];
+    try {
+        await parse(
+            "voices",
+            "add",
+            "fixture-meeting",
+            ...range,
+            "--person",
+            "Alice Example",
+            "--confirmed",
+            "--json",
+            "-v"
+        );
+        await parse("voices", "add", "fixture-meeting", ...range, "--person=Alice Example", "--confirmed", "--json");
+        await parse(
+            "voices",
+            "--person",
+            "Alice Example",
+            "add",
+            "fixture-meeting",
+            ...range,
+            "--person",
+            "Alice Example",
+            "--confirmed",
+            "--json"
+        );
+        expect(
+            add.mock.calls.map(([request]) => [request.meeting, request.fromSec, request.toSec, request.person])
+        ).toEqual(Array.from({ length: 3 }, () => ["fixture-meeting", 2595, 2605, "Alice Example"]));
+        await expect(
+            parse(
+                "voices",
+                "--person",
+                "Bob Example",
+                "add",
+                "fixture-meeting",
+                ...range,
+                "--person",
+                "Alice Example",
+                "--confirmed"
+            )
+        ).rejects.toThrow("Conflicting --person values.");
+
+        await parse("voices", "--person", "Alice Example", "--json");
+        expect(calls.mock.calls.map(([method, params]) => [method, params])).toEqual([
+            ["voices.list", { person: "Alice Example" }],
+        ]);
+
+        calls.mockRejectedValueOnce(new Error("enroll reached the service"));
+        await expect(
+            parse(
+                "voices",
+                "enroll",
+                "fixture-meeting",
+                "--from",
+                "1",
+                "--to",
+                "2",
+                "--channel",
+                "0",
+                "--person",
+                "Alice Example",
+                "--confirmed"
+            )
+        ).rejects.toThrow("enroll reached the service");
+        expect(calls.mock.calls.at(-1)?.[1]).toMatchObject({
+            person: "Alice Example",
+            fromSec: 1,
+            toSec: 2,
+            channel: 0,
+        });
+    } finally {
+        result.mockRestore();
+        add.mockRestore();
+        actor.mockRestore();
+        connect.mockRestore();
+        calls.mockRestore();
+        client.close();
     }
 });
 

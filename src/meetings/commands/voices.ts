@@ -1,3 +1,4 @@
+import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -171,6 +172,11 @@ function guarded(work: () => Promise<void>): Promise<void> {
 }
 
 export function registerVoicesCommand(program: Command): void {
+    // `voices` and its subcommands share option names (`voices --person` lists, `voices add --person` names the
+    // speaker). Commander gives a flag after a subcommand's name to that subcommand only when every command above it
+    // parses positionally. The meetings root did not, so it passed `add <meeting>` on as operands and the flags apart
+    // from them, `voices` took `--person` out of those flags, and `add` refused a missing --person (2026-11-24).
+    program.enablePositionalOptions();
     const voices = scoped(program.command("voices").alias("voice").enablePositionalOptions())
         .description("Browse confirmed voice samples and correct the library kept on this Mac")
         .option("--person <name>", "show this person's samples")
@@ -525,5 +531,10 @@ export function registerVoicesCommand(program: Command): void {
     // These four commands have always returned JSON and accepted the parent's --json after their name.
     for (const command of voices.commands.filter((c) => ["collect", "prepare", "enroll", "score"].includes(c.name()))) {
         command.option("--json", "print the structured result");
+    }
+    // With a positional root, the root's -v counts only before `voices`; each command of the tree takes it after its name.
+    const tree = (command: Command): Command[] => [command, ...command.commands.flatMap(tree)];
+    for (const command of tree(voices)) {
+        addGlobalVerboseOption(command);
     }
 }
