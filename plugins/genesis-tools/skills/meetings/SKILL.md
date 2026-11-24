@@ -156,7 +156,7 @@ A missing meeting names only the store that was searched. To find which store ho
    user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. A relayed answer names the
    lines but teaches no voice: the decision journal records it as your answer, and voice learning and `voices backfill`
    take only a person's answers. To have that person's voice learned, give the user a stretch where only that person
-   speaks and ask him to listen to it and run, in a terminal of his own:
+   speaks and ask the user to listen to it and run, in a terminal of their own:
    `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`.
    The command refuses an agent, so never run it yourself. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
