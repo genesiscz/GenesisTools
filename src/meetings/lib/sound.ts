@@ -335,6 +335,37 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
     };
 }
 
+/**
+ * A play from `fromSec` on through one track: each of its pieces from there to the track's end, in order, as a slice of
+ * its file. A piece starts where the one before it ended, so an overlap plays once, and the time between two pieces
+ * (nothing was recorded) is skipped. A muted or lost span plays as the silence the file holds: the asked second chose
+ * the track, and a later span that was not heard never switches it.
+ */
+export function soundRun(track: SoundTrack, fromSec: number): SoundSlice[] {
+    const parts: SoundSlice[] = [];
+    let playedToSec = fromSec;
+
+    for (const piece of track.pieces) {
+        const endSec = piece.zeroSec + piece.durationSec;
+
+        if (endSec <= playedToSec) {
+            continue;
+        }
+
+        parts.push({
+            track: track.kind,
+            path: piece.path,
+            ...(piece.channel !== undefined ? { channel: piece.channel } : {}),
+            fileFromSec: Math.max(playedToSec, piece.zeroSec) - piece.zeroSec,
+            fileToSec: piece.durationSec,
+            clock: track.clock,
+        });
+        playedToSec = endSec;
+    }
+
+    return parts;
+}
+
 export function readSoundClock(folder: string): SoundClock | undefined {
     const path = join(folder, SOUND_CLOCK_FILE);
 

@@ -23,7 +23,7 @@ import { MeetingRun } from "./meeting-run";
 import { runRecorder } from "./recorder";
 import { meetingLiveId } from "./recorder-shared";
 import * as soundModule from "./sound";
-import { type AudioRow, meetingSound, readAudioRows, type SoundInputs } from "./sound";
+import { type AudioRow, meetingSound, readAudioRows, type SoundInputs, soundRun } from "./sound";
 import { alignPiece, alignReferenceFromSec } from "./sound-align";
 import * as soundLoss from "./sound-loss";
 
@@ -798,6 +798,52 @@ describe("MeetingSound.slice", () => {
         expect(meetingSound(inputs).slice({ seat: "mic", fromSec: 100, toSec: 102, purpose: "listen" })).toMatchObject({
             track: "source-mic",
         });
+    });
+});
+
+describe("soundRun", () => {
+    const piece = (name: string, zeroSec: number, durationSec: number, extra: Partial<AudioRow> = {}): AudioRow => ({
+        file: `audio/${name}-mic.m4a`,
+        source: "mic",
+        at: new Date(zeroSec * 1000).toISOString(),
+        durationMs: durationSec * 1000,
+        mutedSpans: [],
+        ...extra,
+    });
+
+    test("a play from a time goes on through the track's later pieces: an overlap plays once, a gap is skipped, a muted span plays", () => {
+        const sound = meetingSound({
+            folder: "/meetings/run",
+            timelineZeroMs: 0,
+            tracks: "best",
+            rows: [
+                piece("p1", 0, 60),
+                piece("p2", 59.998, 60, { mutedSpans: [[10_000, 20_000]], lostSpans: [[30_000, 30_100]] }),
+                piece("p3", 130, 60),
+                // Inside p3's time: it was heard already.
+                piece("p4", 140, 20),
+            ],
+            source: { path: "/sources/call.ogg", source: "wisprflow", layout: "right-mic", durationSec: 3600 },
+        });
+        const run = (kind: string, fromSec: number) => {
+            const track = sound.tracks.find((one) => one.kind === kind);
+            return (track ? soundRun(track, fromSec) : []).map((part) => [
+                part.path,
+                part.channel,
+                Number(part.fileFromSec.toFixed(3)),
+                part.fileToSec,
+            ]);
+        };
+
+        expect(run("mic-raw", 45)).toEqual([
+            ["/meetings/run/audio/p1-mic.m4a", undefined, 45, 60],
+            ["/meetings/run/audio/p2-mic.m4a", undefined, 0.002, 60],
+            ["/meetings/run/audio/p3-mic.m4a", undefined, 0, 60],
+        ]);
+        // A time in a gap starts at the next piece; the source is one file with the seat's channel.
+        expect(run("mic-raw", 125)).toEqual([["/meetings/run/audio/p3-mic.m4a", undefined, 0, 60]]);
+        expect(run("source-mic", 100)).toEqual([["/sources/call.ogg", 1, 100, 3600]]);
+        expect(run("mic-raw", 200)).toEqual([]);
     });
 });
 

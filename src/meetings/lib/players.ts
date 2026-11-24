@@ -14,11 +14,42 @@ export abstract class AudioPlayer {
     abstract clipArgv(path: string): string[];
 }
 
+/** One file of a play that goes on: the player opens it at `fromSec`, a second of the file, and plays it to its end. */
+export interface RunItem {
+    path: string;
+    fromSec: number;
+}
+
+/** A list file a player reads its files from; the play writes `text` to `path` before the player starts. */
+export interface PlayerList {
+    path: string;
+    text: string;
+}
+
+/** What a player starts for files played one after another: its command line, and the list it reads when it needs one. */
+export interface RunOpening {
+    argv: string[];
+    list?: PlayerList;
+}
+
 /** A player that can start a file at a second, for `tools meetings play`. */
 export abstract class SeekingPlayer extends AudioPlayer {
     abstract override readonly id: (typeof MEETING_PLAYERS)[number];
 
     abstract fromArgv(path: string, startSec: number): string[];
+
+    /** Plays the items one after another, each from its second. A player that reads a list gets it at `listPath`. */
+    abstract runOpening(options: { items: readonly RunItem[]; listPath: string }): RunOpening;
+}
+
+/** A second as a player's argument: to the millisecond, never in exponent form ("1e-7"), which ffmpeg cannot parse. */
+function secondsArg(sec: number): string {
+    return String(Number(sec.toFixed(3)));
+}
+
+/** A path in an ffconcat list: single-quoted, with a quote in it closed, escaped and opened again. */
+function concatQuoted(path: string): string {
+    return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
 const VLC = "/Applications/VLC.app/Contents/MacOS/VLC";
@@ -47,7 +78,20 @@ class VlcPlayer extends SeekingPlayer {
     }
 
     fromArgv(path: string, startSec: number): string[] {
-        return [VLC, `--start-time=${startSec}`, path];
+        return [VLC, `--start-time=${secondsArg(startSec)}`, path];
+    }
+
+    /** A playlist: a `:start-time` after a file is that file's own (VLC's "MRL specific :options"). */
+    runOpening(options: { items: readonly RunItem[] }): RunOpening {
+        return {
+            argv: [
+                VLC,
+                ...options.items.flatMap((item) => {
+                    const at = secondsArg(item.fromSec);
+                    return at === "0" ? [item.path] : [item.path, `:start-time=${at}`];
+                }),
+            ],
+        };
     }
 }
 
@@ -63,7 +107,25 @@ class FfplayPlayer extends SeekingPlayer {
     }
 
     fromArgv(path: string, startSec: number): string[] {
-        return ["ffplay", "-ss", String(startSec), "-nodisp", "-autoexit", path];
+        return ["ffplay", "-ss", secondsArg(startSec), "-nodisp", "-autoexit", path];
+    }
+
+    /** One file from its second; several are one concat list, each file from its `inpoint` (`-safe 0`: absolute paths). */
+    runOpening(options: { items: readonly RunItem[]; listPath: string }): RunOpening {
+        const [only, ...more] = options.items;
+
+        if (only && more.length === 0) {
+            return { argv: this.fromArgv(only.path, only.fromSec) };
+        }
+
+        const lines = options.items.flatMap((item) => {
+            const at = secondsArg(item.fromSec);
+            return [`file ${concatQuoted(item.path)}`, ...(at === "0" ? [] : [`inpoint ${at}`])];
+        });
+        return {
+            argv: ["ffplay", "-nodisp", "-autoexit", "-f", "concat", "-safe", "0", options.listPath],
+            list: { path: options.listPath, text: ["ffconcat version 1.0", ...lines, ""].join("\n") },
+        };
     }
 }
 
