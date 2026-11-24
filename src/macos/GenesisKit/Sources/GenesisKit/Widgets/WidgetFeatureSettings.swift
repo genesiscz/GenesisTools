@@ -949,15 +949,26 @@ private struct WidgetModuleSettings: View {
     }
     /// The widget's own switch, first on this page: it shows or hides the top notch and every side group and keeps
     /// each choice below (Martin, 2026-11-24: "the first you check"). The same preference as General's "Show the widget".
+    /// One switch per edge (Martin, 2026-11-24: "Show the top notch" "Show the side widget"), over General's
+    /// "Show the widget" and "Visible edges": `WidgetPreferences.showEdges`.
     private var showCard: some View {
-        NativeSettingsCard("Widget") {
+        let shown = model.preferences.shownEdges
+        return NativeSettingsCard("Widget") {
             NativeSettingsToggle(
-                "Show the widget", detail: "The top notch and the side groups. Turning it off keeps every choice below.",
-                identifier: "widget.modules.showWidget",
+                "Show the top notch", detail: "The bar at the top of the screen, with the Top notch modules below.",
+                identifier: "widget.modules.showTop",
                 isOn: Binding(
-                    get: { model.preferences.showWidget },
-                    set: { shown in model.writePreferences { $0.showWidget = shown } }))
-            if !model.preferences.showWidget {
+                    get: { model.preferences.shownEdges.top },
+                    set: { top in model.writePreferences { $0.showEdges(top: top, side: $0.shownEdges.side) } }))
+            Divider()
+            NativeSettingsToggle(
+                "Show the side widget",
+                detail: "The side groups at the \(model.preferences.side) edge. Turning both off keeps every choice below.",
+                identifier: "widget.modules.showSide",
+                isOn: Binding(
+                    get: { model.preferences.shownEdges.side },
+                    set: { side in model.writePreferences { $0.showEdges(top: $0.shownEdges.top, side: side) } }))
+            if !shown.top && !shown.side {
                 Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

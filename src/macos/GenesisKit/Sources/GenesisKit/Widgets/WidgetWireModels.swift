@@ -684,6 +684,22 @@ extension WidgetPreferences {
         let required = HotkeyChord.command | HotkeyChord.option | HotkeyChord.control
         return chord.modifiers & required != 0 ? chord : .defaultOpen
     }
+
+    /// Whether the top notch and the side widget show: "Show the widget" and "Visible edges" (`placement`) together.
+    public var shownEdges: (top: Bool, side: Bool) {
+        (showWidget && placement != "side", showWidget && placement != "top")
+    }
+
+    /// Shows or hides each edge through those two preferences. Both hidden turns the widget off and keeps `placement`,
+    /// so General's "Show the widget" brings back the edges that were visible last.
+    public mutating func showEdges(top: Bool, side: Bool) {
+        guard top || side else {
+            showWidget = false
+            return
+        }
+        showWidget = true
+        placement = top && side ? "both" : top ? "top" : "side"
+    }
 }
 
 public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
