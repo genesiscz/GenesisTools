@@ -1163,6 +1163,7 @@ describe("the words a review row shows (U9, U13, U15 to U18)", () => {
                 "below-gate",
                 "no-rival-sample",
                 "unsampled-present",
+                "few-samples",
                 "not-the-seat-person",
                 "no-voice",
                 "seat-of-one",

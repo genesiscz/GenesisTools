@@ -472,6 +472,13 @@ const speakerLabelsSchema = z.object({
                 .prefault({}),
             /** A line shorter than this many seconds is not named by voice: too little sound to compare. */
             minSeconds: z.number().min(0).max(60).default(1.5),
+            /**
+             * When the voice chooses between three or more people at one seat, a person with fewer prints than this on
+             * the line's seat and track (saved samples and the lines confirmed in the meeting) takes no part: one print
+             * cannot tell their voice from the others'. Their lines wait for more samples (`few-samples`), as for a
+             * person with none.
+             */
+            minSamples: z.number().int().min(1).max(50).default(2),
             /** How the voice pass (decoding the sound and embedding each line) runs on this Mac. */
             compute: z
                 .object({

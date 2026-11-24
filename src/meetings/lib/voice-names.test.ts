@@ -22,7 +22,13 @@ import { OpenedMeeting } from "./opened-meeting";
 import { voicesPreview } from "./service/api";
 import * as soundModule from "./sound";
 import { meetingSound } from "./sound";
-import { mergeLineLabels, preparePreviewLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
+import {
+    fewSampleWarnings,
+    mergeLineLabels,
+    preparePreviewLabels,
+    proposeSpeakerLabels,
+    speakerLabelRule,
+} from "./speaker-labels";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { suggestItems } from "./suggest";
@@ -39,7 +45,8 @@ beforeEach(() => {
 });
 afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
-const settings = meetingsConfigSchema.parse({}).global.speakerLabels.voice;
+// The fixtures give each person one print; the minimum a split of three people needs has its own test.
+const settings = { ...meetingsConfigSchema.parse({}).global.speakerLabels.voice, minSamples: 1 };
 const alice = { person: "Alice Example", seat: "mic" as const, fromSec: 0, toSec: 100 };
 const bob = { person: "Bob Example", seat: "mic" as const, fromSec: 0, toSec: 100 };
 const basePrint: VoicePrint = {
@@ -91,6 +98,7 @@ function name(
         attended?: LabelContext["attended"];
         gate?: typeof settings.gate;
         minSeconds?: number;
+        minSamples?: number;
         applyAbove?: number;
     } = {}
 ) {
@@ -380,6 +388,38 @@ test("short, empty, zero, incompatible and unavailable voice stays unnamed", () 
     }
     expect(name({ store: { ...storeOf({}), model: "another-model" } })[0]?.reason).toBe("no-voice");
 });
+test("in a room of three, a person with fewer prints than minSamples takes no part and their lines wait for samples", () => {
+    const carol = { ...bob, person: "Carol Example" };
+    const attended = [alice, bob, carol];
+    // The line sounds like Carol's one print: from one print alone the voice cannot tell her from the others.
+    const input = line([0.3, 0.3, Math.sqrt(1 - 0.18)]);
+    const store = storeOf({
+        [alice.person]: [
+            [1, 0, 0],
+            [0.99, 0.14, 0],
+        ],
+        [bob.person]: [
+            [0, 1, 0],
+            [0.14, 0.99, 0],
+        ],
+        [carol.person]: [[0, 0, 1]],
+    });
+    expect(name({ lines: [input], attended, store, minSamples: 1 })[0]).toMatchObject({
+        person: carol.person,
+        reason: "named",
+    });
+    const waiting = name({ lines: [input], attended, store, minSamples: 2 });
+    expect(waiting[0]).toMatchObject({ reason: "few-samples", next: { person: carol.person, score: 0 } });
+    expect(waiting[0]?.person).toBeUndefined();
+    expect(fewSampleWarnings(waiting, 2)).toEqual([
+        "Carol Example has fewer than 2 voice samples at a seat shared with others, so the voice left them out of the choice on 1 lines; those lines wait for more samples (speakerLabels.voice.minSamples).",
+    ]);
+    // Two people at a seat keep the margin gate: one print each still names a clear match.
+    expect(name({ lines: [line([1, 0, 0])], attended: [alice, carol], store, minSamples: 2 })[0]?.person).toBe(
+        alice.person
+    );
+});
+
 test("unsampled attended people raise the configured gate, and identify who lacks a print", () => {
     const attended = [alice, bob, { ...bob, person: "Carol Example" }];
     const input = line([0.5, 0, Math.sqrt(0.75)]);

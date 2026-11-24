@@ -260,11 +260,18 @@ export class MeetingVoiceJobs {
                         if (this.options.store.read(meeting)?.project !== project) {
                             return;
                         }
-                        await (this.options.nameMeeting ?? applyVoices)({
+                        const named = await (this.options.nameMeeting ?? applyVoices)({
                             ...this.options,
                             meeting,
                             signal: run.controller.signal,
                         });
+                        log.info(
+                            { meeting, samples: ids.length, added: named.added, warnings: named.warnings },
+                            "voice naming pass after new samples"
+                        );
+                        if (named.warnings.length) {
+                            this.update(run, { warnings: named.warnings });
+                        }
                         await new DecisionJournal({ store: this.options.store }).finishNaming(meeting, project, ids);
                         this.options.named?.(meeting);
                     });

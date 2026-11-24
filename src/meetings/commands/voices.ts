@@ -332,6 +332,11 @@ export function registerVoicesCommand(program: Command): void {
                     ]);
                 }
                 out.println(rows.length ? table.toString() : "No voice jobs.");
+                for (const row of rows) {
+                    for (const warning of row.warnings ?? []) {
+                        ui.warn(`${row.id}: ${warning}`);
+                    }
+                }
             })
         );
     jobs.command("cancel <id>")

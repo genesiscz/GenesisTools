@@ -384,6 +384,7 @@ async function readSuggestInputs(
                       proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
                           applyAbove: config.global.suggest.applyAbove,
                           energyMicShare: share,
+                          warnings,
                       })
                   )
                 : undefined,
