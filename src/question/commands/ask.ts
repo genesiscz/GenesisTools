@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { agentRecordHere } from "@genesiscz/utils/agent/caller-identity";
 import { type SourceMessage, sourceMessageSchema } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -615,7 +616,8 @@ export function registerAskCommand(program: Command): void {
                         events,
                         { updates: [{ id, state: "answered", answer: opts.text, option: opts.option }] },
                         undefined,
-                        { actor: "user" }
+                        // An agent that relays the user's answer here is named on the row (`answeredBy`).
+                        { actor: "user", answeredBy: agentRecordHere }
                     );
                     out.result(SafeJSON.stringify(row, null, 2));
                     process.exit(0);
@@ -637,7 +639,7 @@ export function registerAskCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                const outcome = await answerAskForm(id, answers);
+                const outcome = await answerAskForm(id, answers, { answeredBy: agentRecordHere });
 
                 if (!outcome.ok) {
                     out.error(pc.red(outcome.error));

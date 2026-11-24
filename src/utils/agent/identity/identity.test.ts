@@ -8,6 +8,7 @@ import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readT3ThreadDetails } from "@genesiscz/utils/t3code/caller-enricher";
+import { callerRecordLine, callerRecordOf, callerRecordSchema } from "./caller-record";
 import { callerEnvKeys } from "./enrichers";
 import { type CallerSource, clearGitFactsCache, readPeerCaller, toRuntimeContext, whoIsCalling } from "./index";
 
@@ -739,5 +740,48 @@ describe("provenance: each independent observation keeps its own source", () => 
 
         expect(whoIsCalling(local(env)).sources).toMatchObject({ "host.threadId": "t3code" });
         expect(whoIsCalling(local(env)).sources["host.details"]).toBeUndefined();
+    });
+});
+
+describe("callerRecordOf: the record a decision keeps", () => {
+    it("keeps the env facts of an agent (session, terminal, host thread) and nothing it does not have", () => {
+        const identity = whoIsCalling(
+            local({ CLAUDE_CODE_SESSION_ID: "c1", CMUX_SURFACE_ID: "s-1", CMUX_WORKSPACE_ID: "w-1", TMUX_PANE: "%3" })
+        );
+        const record = callerRecordOf(identity);
+
+        expect(record).toMatchObject({
+            harness: "claude-code",
+            session: "c1",
+            terminal: {
+                cmux: { surfaceId: "s-1", workspaceId: "w-1", tabId: null },
+                tmux: { pane: "%3" },
+            },
+        });
+        expect(callerRecordSchema.parse(record)).toEqual(record);
+    });
+
+    it("adds the model, the checkout and the subagent when the identity has them, in one line for a person", () => {
+        const record = callerRecordOf({
+            agent: "codex",
+            sessionId: "1234abcd-5678",
+            subagentId: "sub-9",
+            model: "gpt-6.1-sol",
+            effort: "high",
+            project: "Fixture",
+            repoRoot: "/fixture/repo",
+            branch: "feat/x",
+            cwd: "/fixture/repo/src",
+        });
+
+        expect(record.checkout).toEqual({
+            cwd: "/fixture/repo/src",
+            project: "Fixture",
+            repoRoot: "/fixture/repo",
+            branch: "feat/x",
+        });
+        expect(callerRecordLine(record)).toBe(
+            "codex, session 1234abcd · subagent sub-9 · gpt-6.1-sol (high) · Fixture on feat/x"
+        );
     });
 });

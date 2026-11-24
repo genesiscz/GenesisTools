@@ -486,17 +486,24 @@ export class SocketMeetingsClient implements MeetingsClient {
     }
 }
 
-/** Who this process is, for its `hello`: the agent harness and session from `whoIsCalling`, without any I/O. */
+/**
+ * Who this process is, for its `hello`: the agent harness and session from `whoIsCalling`, with no I/O for a person;
+ * an agent also sends its record (`callerRecordHere`: model, checkout, terminal), which each of its decisions keeps.
+ */
 export async function callerHello(role: MeetingsRole): Promise<MeetingsHello> {
     // Loaded only when a service answers: the identity module costs about 35 ms to import.
-    const { whoIsCalling } = await import("@genesiscz/utils/agent/identity");
+    const [{ whoIsCalling }, { callerRecordHere }] = await Promise.all([
+        import("@genesiscz/utils/agent/identity"),
+        import("@genesiscz/utils/agent/caller-identity"),
+    ]);
     const identity = whoIsCalling({ origin: "local", env: env.getProcessEnv() });
+    const agent = identity.isInAgent && identity.agent !== "unknown";
     return {
         role,
         protocol: MEETINGS_PROTOCOL,
         code: meetingsCodeStamp(),
         pid: process.pid,
-        ...(identity.isInAgent && identity.agent !== "unknown" ? { harness: identity.agent } : {}),
+        ...(agent ? { harness: identity.agent, caller: callerRecordHere() } : {}),
         ...(identity.sessionId ? { session: identity.sessionId } : {}),
     };
 }

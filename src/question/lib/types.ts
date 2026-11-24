@@ -1,3 +1,4 @@
+import type { CallerRecord } from "@genesiscz/utils/agent/identity/caller-record";
 import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import type { ImageAttachment, ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
@@ -37,6 +38,8 @@ export interface QaEntry {
     source: QaSource;
     turnUuid: string | null;
     transcriptAnchor?: TranscriptAnchor;
+    /** The agent that answered a pending form for the user (question_respond, `tools question answer`); absent otherwise. */
+    answeredBy?: CallerRecord;
 }
 
 export interface RecordInput {
@@ -51,6 +54,8 @@ export interface RecordInput {
     source: QaSource;
     sessionId?: string;
     project?: string;
+    /** The agent that answered for the user, kept on the entry (`QaEntry.answeredBy`). */
+    answeredBy?: CallerRecord;
     /**
      * False records the entry without the sinks that interrupt the user (the notification banner, the sound): a
      * delivery that must stay quiet, such as a non-interrupting usage alert in quiet hours. Default true.

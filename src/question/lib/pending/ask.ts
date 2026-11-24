@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { basename } from "node:path";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import type { CallerRecord } from "@genesiscz/utils/agent/identity/caller-record";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
@@ -56,6 +57,8 @@ function publishEvent(kind: Parameters<typeof appendPendingEvent>[0], form: AskF
 const WAIT_POLL_MS = 250;
 
 export interface AskDeps {
+    /** Reads the agent that answers a form for the user (`agentRecordHere` at the doors); tests leave it out. */
+    answeredBy?: () => CallerRecord | undefined;
     /** Injected by tests; production opens the shared `qa.db`. */
     db?: Database;
     dbPath?: string;
@@ -257,6 +260,12 @@ export function checkAskAnswer(id: string, answers: AskAnswer[], deps: AskDeps =
  * not. The claim itself is a lease (`ANSWER_CLAIM_TTL_MS`), so that crash costs one stale claim
  * rather than a form nobody can ever answer.
  */
+/** The answering agent for the history entry, when the door reads one. */
+function answeredByOf(deps: AskDeps): { answeredBy?: CallerRecord } {
+    const answeredBy = deps.answeredBy?.();
+    return answeredBy ? { answeredBy } : {};
+}
+
 export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskDeps = {}): Promise<AnswerOutcome> {
     const checked = checkAskAnswer(id, answers, deps);
 
@@ -288,6 +297,7 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
                 tag: "question",
                 source: "ask",
                 sessionId: form.sessionHint,
+                ...answeredByOf(deps),
             },
             {
                 logBase: deps.logBase,

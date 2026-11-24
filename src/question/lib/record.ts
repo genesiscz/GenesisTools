@@ -78,6 +78,7 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         attachments: [],
         source: input.source,
         turnUuid: null,
+        ...(input.answeredBy ? { answeredBy: input.answeredBy } : {}),
     };
 
     if (input.attachments !== undefined) {

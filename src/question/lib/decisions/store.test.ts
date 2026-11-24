@@ -2758,14 +2758,24 @@ describe("chat answers an agent records are never sent again (F2)", () => {
             ],
         });
 
+        let reads = 0;
         const [agent] = await updateDecisions(
             file,
             events,
             { updates: [{ id: "d_1_abc", state: "answered", option: "b", answer: "drop it" }] },
             undefined,
-            { actor: "agent" }
+            {
+                actor: "agent",
+                answeredBy: () => {
+                    reads += 1;
+                    return { harness: "codex", session: "s-1", model: "gpt-6.1-sol" };
+                },
+            }
         );
         expect(agent).toMatchObject({ state: "acknowledged", option: "b", answer: "drop it", answeredVia: "agent" });
+        // The agent that stored the answer is named on the row, read once for the write.
+        expect(agent?.answeredBy).toEqual({ harness: "codex", session: "s-1", model: "gpt-6.1-sol" });
+        expect(reads).toBe(1);
         expect(agent?.comments?.at(-1)).toContain("an agent asked for answered");
         expect(awaitsDelivery(agent as DecisionRecord)).toBe(false);
 

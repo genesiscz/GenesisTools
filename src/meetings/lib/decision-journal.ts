@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { callerRecordHere, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
+import { callerRecordLine, callerRecordOf } from "@genesiscz/utils/agent/identity/caller-record";
 import { AgentInstructionsError } from "@genesiscz/utils/ai/agent-instructions";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -20,6 +21,7 @@ import {
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import {
+    type AgentActor,
     type DecisionActor,
     isPersonActor,
     MEETING_UNCHANGED,
@@ -1343,15 +1345,22 @@ function answerEventOf(entry: JournalEntry, reverted: JournalEntry | undefined):
 }
 
 /**
- * Who is calling this process, as a decision's actor: an agent with its harness and session, else a person at the
- * command line. The Meetings service takes it from a connection's hello instead; until then the CLI fills it here.
+ * Who is calling this process, as a decision's actor: an agent with its harness, its session and the record of the
+ * call (`caller`: model, account, checkout, terminal, host thread), else a person at the command line. Without an
+ * identity it reads this process (the record's facets only for an agent, so a person's command reads nothing more); a
+ * given identity is used as it is, with no read. The Meetings service takes it from a connection's hello instead.
  */
 export function callerActor(
-    identity: Pick<AgentIdentity, "agent" | "sessionId" | "isInAgent"> = whoIsCallingHere()
+    identity?: Pick<AgentIdentity, "agent" | "sessionId" | "isInAgent"> & Partial<AgentIdentity>
 ): DecisionActor {
-    return identity.isInAgent && identity.agent !== "unknown"
-        ? { kind: "agent", harness: identity.agent, session: identity.sessionId }
-        : { kind: "cli" };
+    const who = identity ?? whoIsCallingHere();
+
+    if (!who.isInAgent || who.agent === "unknown") {
+        return { kind: "cli" };
+    }
+
+    const caller = identity ? callerRecordOf(identity) : callerRecordHere();
+    return { kind: "agent", harness: who.agent, session: who.sessionId, caller };
 }
 
 /** Who decided an item last; a decision older than the journal reads as `unknown`. */
@@ -1629,6 +1638,16 @@ function harnessText(agent: string): string {
     return harness ? harnessLabel(harness) : agent;
 }
 
+/** "an agent (Claude Code, session 3f98b772)", and with the call's record its model, checkout and terminal too. */
+function agentText(actor: AgentActor): string {
+    if (actor.caller) {
+        return `an agent (${callerRecordLine(actor.caller, harnessText)})`;
+    }
+
+    const session = actor.session ? `, session ${actor.session.slice(0, 8)}` : "";
+    return `an agent (${harnessText(actor.harness)}${session})`;
+}
+
 /** A rule after "by": its sentence from the rule table, else only "a rule" for an id this build has no words for. */
 function ruleText(rule: string): string {
     const [sentence] = meetingRuleNames([rule]);
@@ -1655,10 +1674,12 @@ export function actorText(actor: DecisionActor): string {
             return "you in the terminal";
         case "cli":
             return "you at the command line";
-        case "agent": {
-            const session = actor.session ? `, session ${actor.session.slice(0, 8)}` : "";
-            return `an agent (${harnessText(actor.harness)}${session})`;
-        }
+        case "agent":
+            return agentText(actor);
+        case "request":
+            return actor.relayedBy
+                ? `you, confirming what ${agentText(actor.relayedBy)} relayed`
+                : "you, in a confirmation window";
         case "rule":
             return ruleText(actor.rule);
         case "unknown":
