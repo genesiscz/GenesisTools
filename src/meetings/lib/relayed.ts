@@ -91,6 +91,25 @@ export function relayedGroups(meeting: string, refs: readonly string[]): Relayed
     return [...groups].filter(([, items]) => items.length > 0).map(([where, items]) => ({ meeting: where, items }));
 }
 
+/**
+ * The quoted words as the user wrote them: an agent that passed the reason through a shell left a backslash before
+ * each quote mark or backslash in them, once or several times over (`\\\"Word\\\"`), and a run of backslashes at the
+ * end escaped the closing quote mark.
+ */
+function unescapedWords(words: string): string {
+    let text = words.replace(/\\+$/u, "");
+
+    for (;;) {
+        const next = text.replace(/\\(["\\\u201C\u201D])/gu, "$1");
+
+        if (next === text) {
+            return text;
+        }
+
+        text = next;
+    }
+}
+
 /** The words the user said, as the agent quoted them in the decision's reason; the whole reason when it quotes none. */
 export function relayedQuote(entry: Pick<JournalReadEntry, "reason" | "action">): string | undefined {
     const reason = entry.reason?.trim();
@@ -103,7 +122,7 @@ export function relayedQuote(entry: Pick<JournalReadEntry, "reason" | "action">)
 
     const first = text.search(/["\u201C]/u);
     const last = Math.max(text.lastIndexOf('"'), text.lastIndexOf("\u201D"));
-    return first >= 0 && last > first ? text.slice(first + 1, last).trim() || text : text;
+    return first >= 0 && last > first ? unescapedWords(text.slice(first + 1, last)).trim() || text : text;
 }
 
 /** Who relayed it, in the words a row has room for: "Claude Code, session f94af8c6 · opus · GenesisTools on feat/x". */
