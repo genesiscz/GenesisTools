@@ -9,7 +9,7 @@ import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
 import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { completeTranscript, type LiveLine, parseLive } from "./live";
-import { fillSpeakerMentions, resolveSpeakers, selfName } from "./speakers";
+import { fillMentions, resolveSpeakers, selfName } from "./speakers";
 import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
 const { log } = logger.scoped("wisprflow-local");
@@ -93,9 +93,7 @@ function toSummary(db: Database, row: MeetingRow): MeetingSummary {
         hasTranscript: existsSync(join(WISPR_DIR, "meetings", row.id, "refined.ndjson")),
         shareLink: row.shareSlug ? `${SHARE_BASE}${row.shareSlug}` : undefined,
         folders: foldersFor(db, row.id),
-        excerpt: row.summary
-            ? fillSpeakerMentions(row.summary, resolveSpeakers(row.speakerMap)).slice(0, 280)
-            : undefined,
+        excerpt: row.summary ? fillMentions(row.summary, resolveSpeakers(row.speakerMap)).slice(0, 280) : undefined,
     };
 }
 
@@ -262,8 +260,8 @@ export function getLocalMeeting(id: string): Meeting | undefined {
 
         return {
             ...toSummary(db, row),
-            summary: fillSpeakerMentions(row.summary ?? "", participants),
-            notes: fillSpeakerMentions(row.notes ?? "", participants),
+            summary: fillMentions(row.summary ?? "", participants),
+            notes: fillMentions(row.notes ?? "", participants),
             participants,
             transcript,
             speakerRenamePending: row.speakerMapPendingPush === 1,

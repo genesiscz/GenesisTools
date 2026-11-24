@@ -27,7 +27,7 @@ import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { loadMeeting } from "./source";
 import { audioFilesIn, localAudioMeeting, wisprAudioAccess } from "./source-audio";
-import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
+import { fillMentions, resolveSpeakers, UNNAMED_PERSON } from "./speakers";
 import type { Meeting } from "./types";
 
 function entry(speaker: string, startSec: number, text: string): TranscriptEntry {
@@ -55,13 +55,47 @@ describe("resolveSpeakers", () => {
     });
 });
 
-describe("fillSpeakerMentions", () => {
+describe("fillMentions", () => {
     test("replaces the app's speaker tokens, and an unnamed speaker becomes Speaker N", () => {
         const participants = [{ speakerId: 1, name: "Bob" }];
 
-        expect(fillSpeakerMentions("<@speaker:1> asked, <@speaker:2> answered.", participants)).toBe(
+        expect(fillMentions("<@speaker:1> asked, <@speaker:2> answered.", participants)).toBe(
             "Bob asked, Speaker 2 answered."
         );
+    });
+
+    test("a person token becomes its decoded name, never the speaker its index looks like", () => {
+        const participants = [{ speakerId: 3, name: "Bob" }];
+        const text =
+            "<@person3:n=Alice%20Example> complained. <@person3:n=B%C3%A1ra%20Nov%C3%A1> was asked. <@person3:n=Carol>";
+
+        expect(fillMentions(text, participants)).toBe("Alice Example complained. Bára Nová was asked. Carol");
+    });
+
+    test("the name is found whichever field comes first, and a field without a name is skipped", () => {
+        const text = "<@person2:c=0f3a-9b;n=Ale%C5%A1%20Example> and <@person4:n=Eve;c=7d1e> and <@person5:c=7d1e;x>";
+
+        expect(fillMentions(text, [])).toBe(`Aleš Example and Eve and ${UNNAMED_PERSON}`);
+    });
+
+    test("a malformed person token keeps a readable fallback and never throws", () => {
+        expect(fillMentions("<@person1> <@person2:n=> <@person3:n=%20%20> <@person4:c=9z>", [])).toBe(
+            [UNNAMED_PERSON, UNNAMED_PERSON, UNNAMED_PERSON, UNNAMED_PERSON].join(" ")
+        );
+        // A bad escape keeps its raw bytes; the valid escapes around it still decode.
+        expect(fillMentions("<@person1:n=Jo%C3%A9%ZZ> <@person2:n=Bob%E0%A4%A>", [])).toBe("Joé%ZZ Bob%E0%A4%A");
+    });
+
+    test("a decoded name is one line, and a token inside a name is not expanded a second time", () => {
+        const text = "<@person1:n=Alice%0A%20Example> <@person2:n=%3C%40speaker%3A1%3E>";
+
+        expect(fillMentions(text, [{ speakerId: 1, name: "Bob" }])).toBe("Alice Example <@speaker:1>");
+    });
+
+    test("a text without a token is returned as it is", () => {
+        const text = "Plain <b>text</b> with @person3 and <@org1:n=X>.";
+
+        expect(fillMentions(text, [])).toBe(text);
     });
 });
 

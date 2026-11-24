@@ -1,6 +1,7 @@
 import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
 import { logger } from "@genesiscz/utils/logger";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { fillMentions } from "./speakers";
 import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
 const { log } = logger.scoped("wisprflow-mcp");
@@ -97,7 +98,7 @@ function toSummary(raw: RawMeeting): MeetingSummary {
         hasTranscript: raw.has_transcript ?? false,
         shareLink: raw.share_link ?? undefined,
         folders: raw.folders ?? [],
-        excerpt: raw.content_excerpt,
+        excerpt: raw.content_excerpt === undefined ? undefined : fillMentions(raw.content_excerpt, []),
     };
 }
 
@@ -225,8 +226,8 @@ export async function getMcpMeeting(id: string, options: { transcript: boolean }
 
         return {
             ...toSummary(head),
-            summary: head.summary ?? "",
-            notes: content,
+            summary: fillMentions(head.summary ?? "", participants),
+            notes: fillMentions(content, participants),
             participants,
             transcript: parseMcpTranscript(transcript),
         };
