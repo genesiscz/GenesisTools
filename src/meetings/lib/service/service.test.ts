@@ -17,7 +17,7 @@ import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
@@ -41,6 +41,7 @@ import { registerServeCommand } from "../../commands/serve";
 import { CallTimeline } from "../call-timeline";
 import { MeetingComments } from "../comments";
 import { DecisionJournal } from "../decision-journal";
+import { findingsFileSchema } from "../findings";
 import { ocrPath } from "../frame-index";
 import { lookMeeting } from "../look";
 import { screenTextChanges } from "../look-screen";
@@ -49,6 +50,7 @@ import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
+import { correctTranscript } from "../transcript-corrections";
 import { wordTimingModelFiles } from "../word-timing-worker";
 import { generateWordTimings, type WordTimingGenerateDeps, type WordTimingInput } from "../word-timings";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -296,6 +298,68 @@ test("lowering and raising the dictionary cutoff adds and removes the same timed
     const replaced = await preview({ "fuzzy.apply": 0.74, "fuzzy.suggest": 0.9 });
     expect(replaced.changes.find((row) => row.kind === "transcript line")?.after?.description).toContain("klymport");
     client.close();
+});
+
+test("two speaker ranges in one second keep their lines through decision.apply, and look and the transcript give each line its own voice", async () => {
+    const { store, source, linkedSource } = scratchStore();
+    const original = await source.load("wf-2041");
+    const transcript = [15, 20, 20, 22].map((startSec, index) => ({
+        startSec,
+        speaker: "Speaker 1",
+        text: `Fixture line ${index}`,
+    }));
+    source.load = async () => ({ ...original, transcript });
+    source.evidence = async () => null;
+    const range = { kind: "speaker-range", from: "00:20", to: "00:20", label: "Speaker 1", reason: "invented voice" };
+    const findings = findingsFileSchema.parse([
+        { ...range, line: 1, speaker: "Alice Example", confidence: 0.5 },
+        { ...range, line: 2, speaker: "Bob Example", confidence: 0.55 },
+    ]);
+    const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(store.storage) } });
+    await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "add", findings } });
+    const record = new MeetingStore(store.storage).read(REVIEW.id)!;
+    const added = record.items.filter((item) => item.kind === "speaker-range" && item.label === "Speaker 1");
+    expect(added.map((item) => item.evidence?.transcriptLine)).toEqual([1, 2]);
+
+    const config = meetingsConfigSchema.parse({});
+    const applied = correctTranscript({
+        record,
+        transcript,
+        config,
+        format: "txt",
+        withSuggested: true,
+        applyAbove: 0.4,
+    });
+    expect(applied.entries.map((entry) => entry.speaker)).toEqual([
+        "Speaker 1",
+        "Alice Example",
+        "Bob Example",
+        "Speaker 1",
+    ]);
+    expect(applied.outcomes.filter((outcome) => added.some((item) => item.id === outcome.item))).toMatchObject([
+        { status: "applied", lines: [{ index: 1 }] },
+        { status: "applied", lines: [{ index: 2 }] },
+    ]);
+    const guessed = correctTranscript({
+        record,
+        transcript,
+        config,
+        format: "txt",
+        withSuggested: true,
+        applyAbove: 0.7,
+    });
+    expect(guessed.entries.slice(1, 3).map((entry) => entry.speaker)).toEqual([
+        "[Alice Example: 50 %]",
+        "[Bob Example: 55 %]",
+    ]);
+
+    const open = spyOn(OpenedMeeting, "of").mockReturnValue(OpenedMeeting.of(store, record, linkedSource(record)));
+    try {
+        const look = await lookMeeting(store, { meeting: record.id, from: 20, to: 21 });
+        expect(look.lines.map((line) => line.suggestedName)).toEqual(["Alice Example", "Bob Example"]);
+    } finally {
+        open.mockRestore();
+    }
 });
 
 test("look suppresses a global name where a confirmed label is meaningless", async () => {

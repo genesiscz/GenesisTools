@@ -84,6 +84,7 @@ function unclearPassages(
                           fromSec: item.fromSec,
                           toSec: item.toSec,
                           speaker: item.label,
+                          ...rangeAddress(item),
                           ...(opts.guesses && item.speaker
                               ? { guess: { name: item.speaker, confidence: item.confidence } }
                               : {}),
@@ -126,6 +127,7 @@ function unclearPassages(
                               fromSec: item.fromSec,
                               toSec: item.toSec,
                               speaker: item.label,
+                              ...rangeAddress(item),
                               readings: question.choices,
                               ...(opts.guesses && item.speaker
                                   ? {
@@ -168,6 +170,12 @@ export function questionOwnedItems(record: MeetingRecord): Set<string> {
 export function lineOf(item: MeetingItem): number | undefined {
     const line = item.evidence?.transcriptLine;
     return typeof line === "number" && Number.isInteger(line) && line >= 0 ? line : undefined;
+}
+
+/** The one line a speaker range names, as `look` reads it: only a range inside one second carries its line's index. */
+function rangeAddress(item: MeetingItem): { line?: number } {
+    const line = item.kind === "speaker-range" && item.fromSec === item.toSec ? lineOf(item) : undefined;
+    return line === undefined ? {} : { line };
 }
 
 /**
@@ -230,7 +238,16 @@ export function correctionsOf(
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
     const itemRanges = used.flatMap((item) =>
         item.kind === "speaker-range" && item.speaker
-            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker, item: item.id }]
+            ? [
+                  {
+                      label: item.label,
+                      fromSec: item.fromSec,
+                      toSec: item.toSec,
+                      speaker: item.speaker,
+                      item: item.id,
+                      ...rangeAddress(item),
+                  },
+              ]
             : []
     );
     const assignmentRanges = assignments.map((assignment) => ({
@@ -252,9 +269,14 @@ export function correctionsOf(
         })),
         ...assignmentRanges,
     ];
-    const voiceAt = (label: string, atSec: number) =>
-        voiceRanges.findLast((range) => range.label === label && range.fromSec <= atSec && atSec <= range.toSec)
-            ?.speaker;
+    const voiceAt = (label: string, atSec: number, line: number | undefined) =>
+        voiceRanges.findLast(
+            (range) =>
+                range.label === label &&
+                range.fromSec <= atSec &&
+                atSec <= range.toSec &&
+                (!("line" in range) || range.line === undefined || line === undefined || range.line === line)
+        )?.speaker;
 
     return {
         labels: record.speakers.labels,
@@ -272,7 +294,9 @@ export function correctionsOf(
                           atSec: item.atSec,
                           ...address(item),
                           item: item.id,
-                          ...(item.speaker ? { speaker: voiceAt(item.speaker, item.atSec) ?? item.speaker } : {}),
+                          ...(item.speaker
+                              ? { speaker: voiceAt(item.speaker, item.atSec, lineOf(item)) ?? item.speaker }
+                              : {}),
                           ...(item.joined ? { joined: item.joined } : {}),
                       },
                   ]
