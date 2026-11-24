@@ -11,6 +11,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
  * quoted value, so each message stays what it was.
  */
 
+/**
+ * Plays a meeting's range, `from` and `to` as transcript clock text (`43:15`), on `track` when given, for a line that
+ * offers it by hand.
+ */
+export function meetingsPlayRangeCommand(meeting: string, from: string, to: string, track?: string): string {
+    return toolCommand("meetings", "play", meeting, "--at", from, "--to", to, ...(track ? ["--track", track] : []));
+}
+
 /** The agent bus tool itself, for a line that forbids every one of its commands. */
 export function agentsCommand(): string {
     return toolCommand("agents");

@@ -1,4 +1,4 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { meetingsPlayRangeCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 
@@ -52,7 +52,7 @@ export type RequestAction = z.output<typeof requestActionSchema>;
  */
 const REQUEST_ACTION_LINES: { [K in RequestActionKind]: (action: RequestActionOf<K>) => string } = {
     "play-meeting": (action) =>
-        `${action.label}: ${toolCommand("meetings", "play", action.meeting, "--at", formatClock(action.fromSec), "--to", formatClock(Math.ceil(action.toSec)), ...(action.track ? ["--track", action.track] : []))}`,
+        `${action.label}: ${meetingsPlayRangeCommand(action.meeting, formatClock(action.fromSec), formatClock(Math.ceil(action.toSec)), action.track)}`,
     "open-link": (action) => `${action.label}: ${action.url}`,
 };
 
