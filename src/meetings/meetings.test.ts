@@ -85,6 +85,8 @@ import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { appliedLine, itemWhat } from "./lib/item-text";
+import { clockMove, joinGapAt, joinPartAt, movedValue, type PartMove, toJoinedSec, toPartSec } from "./lib/join-clock";
+import { joinedTranscript } from "./lib/joined-source";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { askProjectAtEnd } from "./lib/meeting-end";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
@@ -8718,5 +8720,84 @@ test("conflicting microphone segments and call energy open a platform label inst
         run({ micEnd: 9, energy: 0.9 }).find((item) => item.kind === "speaker-range" && item.fromSec === 0)
     ).toMatchObject({
         speaker: "Alice Example",
+    });
+});
+
+describe("meetings join: one clock for two recordings", () => {
+    test("a millisecond second moves onto the joined clock and back bit-identical", () => {
+        let checked = 0;
+        for (let ms = 0; ms < 6_000_000; ms += 997) {
+            const sec = ms / 1000;
+            expect(toPartSec(toJoinedSec(sec, 654273), 654273)).toBe(sec);
+            checked++;
+        }
+        expect(checked).toBeGreaterThan(6000);
+    });
+
+    test("a later recording's item, journal line and finding move by its offset; voice prints keep their own clock", () => {
+        const move: PartMove = { ...clockMove(654273), ids: new Map([["i3", "i99"]]), questionBase: 5 };
+        // The saved lines are read as JSON: their shape is unknown until the journal schema reads them again.
+        const saved: unknown = {
+            id: "i3",
+            fromSec: 12.5,
+            toSec: 14,
+            decides: ["i3"],
+            evidence: { endSec: 20 },
+            action: { kind: "add", findings: [{ from: 1, to: 2, at: "0:03" }], items: ["Q2"] },
+            voices: [{ after: { meeting: "2026-11-01_10-00-alice", fromSec: 12.5, toSec: 14 } }],
+        };
+        const moved = movedValue(saved, move);
+        expect(moved).toEqual({
+            id: "i99",
+            fromSec: 666.773,
+            toSec: 668.273,
+            decides: ["i99"],
+            evidence: { endSec: 674.273 },
+            action: { kind: "add", findings: [{ from: 655.273, to: 656.273, at: 657.273 }], items: ["Q7"] },
+            voices: [{ after: { meeting: "2026-11-01_10-00-alice", fromSec: 12.5, toSec: 14 } }],
+        });
+        expect(move.rounded.count).toBe(0);
+    });
+
+    test("the gap between two parts is found, and a span over it belongs to no part", () => {
+        const part = (record: string, offsetMs: number, endSec: number) => ({
+            record,
+            title: "Fixture",
+            sourceId: "wisprflow",
+            sourceMeetingId: record,
+            zeroAt: new Date(Date.UTC(2026, 10, 1, 10) + offsetMs).toISOString(),
+            offsetMs,
+            endSec,
+        });
+        const join = {
+            version: 1 as const,
+            at: "2026-11-01T12:00:00Z",
+            backup: "/backup",
+            parts: [part("a", 0, 159.7), part("b", 654273, 900)],
+        };
+        expect(joinGapAt({ join }, 400)).toMatchObject({ fromSec: 159.7, toSec: 654.273 });
+        expect(joinGapAt({ join }, 100)).toBeUndefined();
+        expect(joinPartAt({ join }, 654.273)?.index).toBe(1);
+        expect(joinPartAt({ join }, 150, 700)).toBeUndefined();
+    });
+
+    test("the last line of a joined part keeps its own end and its source meeting", () => {
+        const part = {
+            record: "a",
+            title: "A",
+            sourceId: "wisprflow",
+            sourceMeetingId: "m-a",
+            zeroAt: "2026-11-01T10:00:00Z",
+            offsetMs: 654273,
+            endSec: 700,
+        };
+        const moved = joinedTranscript(part, [
+            { speaker: "Alice Example", startSec: 1, text: "one" },
+            { speaker: "Alice Example", startSec: 3, text: "two" },
+        ]);
+        expect(moved.map((entry) => [entry.startSec, entry.endSec, entry.sourceMeetingId])).toEqual([
+            [655.273, undefined, "m-a"],
+            [657.273, 662.273, "m-a"],
+        ]);
     });
 });

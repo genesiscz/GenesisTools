@@ -19,11 +19,20 @@ import {
     FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { toJoinedSec } from "./join-clock";
 import { MeetingRun } from "./meeting-run";
 import { runRecorder } from "./recorder";
 import { meetingLiveId } from "./recorder-shared";
 import * as soundModule from "./sound";
-import { type AudioRow, meetingSound, readAudioRows, type SoundInputs, soundRun } from "./sound";
+import {
+    type AudioRow,
+    joinedSound,
+    meetingSound,
+    readAudioRows,
+    type SoundInputs,
+    soundRun,
+    soundRunOf,
+} from "./sound";
 import { alignPiece, alignReferenceFromSec } from "./sound-align";
 import * as soundLoss from "./sound-loss";
 
@@ -899,5 +908,54 @@ describe("alignPiece", () => {
 
         expect(aligned.clear).toBe(true);
         expect(aligned.zeroSec).toBeCloseTo(10.37, 2);
+    });
+});
+
+describe("joinedSound", () => {
+    const part = (path: string, durationSec: number) =>
+        meetingSound({
+            folder: "/fixture",
+            timelineZeroMs: 0,
+            tracks: "source",
+            rows: [],
+            source: { path, source: "wisprflow", layout: "left-mic", durationSec },
+        });
+    const joined = joinedSound([
+        { offsetMs: 0, fromSec: 0, untilSec: 654.273, sound: part("/fixture/a.ogg", 159.725) },
+        {
+            offsetMs: 654273,
+            fromSec: 654.273,
+            untilSec: Number.POSITIVE_INFINITY,
+            sound: part("/fixture/b.ogg", 5381.5),
+        },
+    ]);
+
+    test("a slice of the later recording is the slice it gave alone, to the bit", () => {
+        const alone = part("/fixture/b.ogg", 5381.5).slice({
+            seat: "mic",
+            fromSec: 12.345,
+            toSec: 17.5,
+            purpose: "listen",
+        });
+        const slice = joined.slice({
+            seat: "mic",
+            fromSec: toJoinedSec(12.345, 654273),
+            toSec: toJoinedSec(17.5, 654273),
+            purpose: "listen",
+        });
+        expect(slice).toEqual(alone);
+        expect(slice?.fileFromSec).toBe(12.345);
+    });
+
+    test("the gap has no sound, and a span over it has no slice", () => {
+        expect(joined.slice({ seat: "mic", fromSec: 400, toSec: 401, purpose: "listen" })).toBeUndefined();
+        expect(joined.slice({ seat: "mic", fromSec: 150, toSec: 700, purpose: "listen" })).toBeUndefined();
+    });
+
+    test("a play from the earlier recording stops at its end instead of running into the later one", () => {
+        const run = soundRunOf(joined, "source-mic", { fromSec: 100 });
+        expect(run.map((one) => [one.path, one.fileFromSec, one.fileToSec])).toEqual([
+            ["/fixture/a.ogg", 100, 159.725],
+        ]);
     });
 });
