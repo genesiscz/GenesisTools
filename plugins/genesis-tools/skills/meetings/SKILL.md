@@ -182,7 +182,10 @@ A missing meeting names only the store that was searched. To find which store ho
    theirs, and prints a FOR AGENTS STOP block. After the user answers that window, run `tools meetings listen <meeting>
    --confirm-relayed <items...>` (REPL: `meetings.confirmRelayed({ meeting, items })`); several of your answers go into
    one window. Only the rows the user leaves ticked become the user's decisions and feed voice learning and `voices
-   backfill`. To have a person's voice learned from a stretch that no question covers, give the user a stretch where only that person
+   backfill`. The same command again reads the newest request for those rows. When that request ended without the
+   user's answer (withdrawn, timed out, unreachable) or no window shows it any more, the command posts a new window with
+   the rows as the current version shows them, so do not withdraw a request yourself to ask again. After the user's Not
+   now it posts nothing; add `--ask-again` (REPL: `askAgain: true`) only when the user asks to see the window again. To have a person's voice learned from a stretch that no question covers, give the user a stretch where only that person
    speaks and ask the user to listen to it (`tools meetings play <meeting> --at <start> --to <end>`). When the user says
    only that person speaks, run `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`
    (REPL: `meetings.voices.add({ meeting, fromSec, toSec, person, confirmed: true })`). From an agent it saves nothing
