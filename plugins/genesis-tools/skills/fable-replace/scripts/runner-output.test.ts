@@ -3,15 +3,15 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { rollback } from "./backup-and-rollback";
 import { FableReplaceError } from "./internal";
 import { mergeFileEdits, run } from "./sweep-many-files";
 import type { FileEdit, RunParams, RunReport, VerifyControl } from "./types";
 
 // The runner's output levels and its new checks: "stat" prints one header line per file with +N -M, a FileEdit's own
 // level wins over the run's, absentInChange looks only at the lines the ops added or changed, mergeFileEdits keeps the
-// new fields, a gitMove stages the rename and rollback() unstages it, and the verify control's probe goes into the
-// folder of the first written file. One temp folder and one git fixture repo; git runs awaited, never spawnSync.
+// new fields, and the verify control's probe goes into the folder of the first written file. One temp folder. The
+// gitMove cases (a staged git rename, its rollback, an untracked file) live in cli-json.test.ts: run() and rollback()
+// call git through spawnSync, which runs there in the CLI child and never in this test worker (oven-sh/bun#34069).
 
 type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
 const CONSOLE_METHODS: ConsoleMethod[] = ["log", "info", "warn", "error", "debug"];
@@ -213,85 +213,6 @@ describe("mergeFileEdits", () => {
         expect(merged[0].ops).toHaveLength(3);
         const plain = mergeFileEdits([literal("o.ts", "a", "b"), literal("o.ts", "c", "d")], { cwd: dir });
         expect(Object.keys(plain[0]).filter((key) => ["absentInChange", "gitMove", "diff"].includes(key))).toEqual([]);
-    });
-});
-
-describe("gitMove", () => {
-    let repo = "";
-
-    const git = async (...args: string[]): Promise<string> => {
-        const quiet = [
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.com",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ];
-        const proc = Bun.spawn(["git", ...quiet, "-c", "commit.gpgsign=false", ...args], {
-            cwd: repo,
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: 30_000,
-        });
-        const [stdout, stderr, status] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-        ]);
-        if (status !== 0) {
-            throw new Error(`git ${args.join(" ")}: ${stdout}${stderr}`);
-        }
-
-        return stdout.trim();
-    };
-
-    beforeAll(async () => {
-        repo = path.join(dir, "repo");
-        fs.mkdirSync(path.join(repo, "src"), { recursive: true });
-        fs.writeFileSync(path.join(repo, "src", "Widget.ts"), "export const Widget = 1;\n");
-        await git("init", "-q");
-        await git("add", "src/Widget.ts");
-        await git("commit", "-q", "-m", "fixture");
-    });
-
-    test("a tracked rename is staged as a git rename (R), and rollback() leaves the status empty", async () => {
-        const backupDir = path.join(dir, "backup-git-move");
-        const { value: report } = await captured(() =>
-            run({
-                edits: [
-                    {
-                        ...literal("src/Widget.ts", "Widget = 1", "Gadget = 1"),
-                        renameTo: "src/Gadget.ts",
-                        gitMove: true,
-                    },
-                ],
-                cwd: repo,
-                backupDir,
-            })
-        );
-        expect(report.written).toEqual(["src/Widget.ts → src/Gadget.ts"]);
-        expect(await git("status", "--porcelain")).toBe("RM src/Widget.ts -> src/Gadget.ts");
-        expect(fs.readFileSync(path.join(repo, "src", "Gadget.ts"), "utf8")).toBe("export const Gadget = 1;\n");
-
-        const undone = await captured(() => rollback({ backupDir }));
-        expect(undone.value.failed).toEqual([]);
-        expect(await git("status", "--porcelain")).toBe("");
-        expect(fs.readFileSync(path.join(repo, "src", "Widget.ts"), "utf8")).toBe("export const Widget = 1;\n");
-        expect(fs.existsSync(path.join(repo, "src", "Gadget.ts"))).toBe(false);
-    });
-
-    test("an untracked file is renamed as before, with one WARNING line", async () => {
-        fs.writeFileSync(path.join(repo, "src", "loose.ts"), "export const loose = 1;\n");
-        const { value: report, lines } = await captured(() =>
-            run({ edits: [{ file: "src/loose.ts", renameTo: "src/kept.ts", gitMove: true }], cwd: repo })
-        );
-        expect(report.ok).toBe(true);
-        expect(lines.filter((line) => line.startsWith("WARNING"))).toEqual([
-            "WARNING: src/loose.ts: renamed without git mv (git does not track it).",
-        ]);
-        expect(await git("status", "--porcelain")).toBe("?? src/kept.ts");
     });
 });
 
