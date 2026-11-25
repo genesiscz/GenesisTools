@@ -591,7 +591,7 @@ const voiceEnroll = defineMethod({
     result: z.unknown(),
     resultName: "VoiceMatch",
     effect: "reversible",
-    doc: "Enrol this explicitly confirmed single-speaker interval in the meeting-local voice store. Keeps interval, physical channel and exact model identity.",
+    doc: "Enrol this explicitly confirmed single-speaker interval in the meeting-local voice store. Keeps interval, physical channel and exact model identity. An agent caller's interval saves only when the user confirmed it in the confirmation window (its request in the person area's journal); otherwise refused with wrong-actor.",
 });
 const acousticCollect = defineMethod({
     name: "acoustic.collect",

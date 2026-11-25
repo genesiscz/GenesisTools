@@ -18,13 +18,14 @@ import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from 
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
 import type { SuggestionReads } from "../project-suggestions";
-import { missingMeetingMessage } from "../shared";
+import { missingMeetingMessage, TOOL } from "../shared";
 import { recordSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
@@ -40,6 +41,7 @@ import {
     type MeetingsEvent,
     type MeetingsHello,
     type MeetingsNotification,
+    type MeetingsParsedParams,
     type MeetingsResult,
     meetingsApi,
     meetingsErrorDataSchema,
@@ -254,6 +256,51 @@ const library = () => import("./library-handlers");
 function changedPeople<T>(value: T, context: MeetingsCallContext): T {
     context.emit?.("people.changed", {});
     return value;
+}
+
+/**
+ * D443 in the service, so every client gets it (the CLI, the REPL, a script on the socket): an agent's enrolment saves
+ * only when the user confirmed this interval, person and channel in the confirmation window. A person's --confirmed
+ * (the command line, the window) stays their own word.
+ */
+async function refuseUnconfirmedEnrolment(options: {
+    params: MeetingsParsedParams<"voice.enroll">;
+    context: MeetingsCallContext;
+    store: MeetingStore;
+    deps: MeetingsHandlerDeps;
+}): Promise<void> {
+    const { params, context, store, deps } = options;
+    const actor = (await decisions()).actorOfCall(context);
+
+    if (actor.kind !== "agent") {
+        return;
+    }
+
+    const record = recordOf(store, params.meeting);
+    const requests =
+        deps.requests?.() ??
+        (await import("@genesiscz/utils/genesis-tools/areas/person/journal")).createRequestJournal();
+    const { userConfirmedVoiceSample } = await import("../person-door");
+    const { fromSec, toSec, person, channel } = params;
+    const check = userConfirmedVoiceSample({ record, fromSec, toSec, person, channel }, requests);
+    log.debug(
+        { meeting: record.id, request: check.request, confirmed: check.confirmed, harness: actor.harness },
+        "voice.enroll: the user's confirmation of an agent's sample"
+    );
+
+    if (check.confirmed) {
+        return;
+    }
+
+    const rerun = [
+        `${TOOL} voices enroll ${shellWord(record.id)} --from ${fromSec} --to ${toSec}`,
+        `--channel ${channel} --person ${shellWord(person)} --confirmed`,
+    ].join(" ");
+    throw refusal(
+        "wrong-actor",
+        `Nothing was saved: only the user can confirm an agent's voice sample, and the confirmation window has no confirmed answer for this interval (request ${check.request}). Run ${rerun}, which asks the user in that window.`,
+        { request: check.request }
+    );
 }
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
@@ -629,8 +676,11 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "voice.prepare": async () => ({
             path: await (await import("@genesiscz/utils/meetings/voice")).prepareVoiceModel(),
         }),
-        "voice.enroll": async (params) =>
-            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(params.meeting), ...params }),
+        "voice.enroll": async (params, context) => {
+            const target = acousticTarget(params.meeting);
+            await refuseUnconfirmedEnrolment({ params, context, store: target.store, deps });
+            return (await import("../acoustic")).voiceMeeting({ ...target, ...params });
+        },
         "acoustic.collect": async (params) =>
             (await import("../acoustic")).collectAcoustic({
                 ...acousticTarget(params.meeting),

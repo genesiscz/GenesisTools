@@ -110,7 +110,9 @@ cancellation cannot establish clean speech quality; a nonlinear or clock-aware A
 `voice enroll <meeting> --from <seconds> --to <seconds> --channel 1 --person "Alice Example" --confirmed` stores a
 confirmed single-speaker example. Pick the physical channel from the calibrated layout; channel 1 is not always call.
 From an agent, `voice enroll` and the REPL `voiceEnroll` first ask the user in a confirmation window, print a FOR AGENTS
-STOP block, and enrol only when the same call runs again after the user confirmed.
+STOP block, and enrol only when the same call runs again after the user confirmed. The service checks it too: its
+`voice.enroll` from an agent connection (a script on the socket included) saves only an interval the user confirmed in
+that window, and refuses anything else with `wrong-actor` and the command to run.
 `voice score` reads enrolments; `voice collect` explicitly stores per-line scores for `suggest` and Listen. Weak,
 ambiguous, short, quiet or incompatible-model samples stay unknown. A cosine score is not a probability. A `voice`
 rule records accepted model evidence and its candidate scores separately from E1. Room and Listen share the canonical
