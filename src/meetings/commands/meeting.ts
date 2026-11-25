@@ -395,6 +395,12 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         );
     }
 
+    if (result.journal) {
+        ui.ok(
+            `${result.dryRun ? "Would move" : "Moved"} ${result.journal.moved} line addresses of the later recordings in the decision journal (the items an Undo puts back, the findings an add saved)${result.journal.unplaced ? `; ${result.journal.unplaced} name no line of their item and stay` : ""}.`
+        );
+    }
+
     if (result.backup) {
         ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
     }

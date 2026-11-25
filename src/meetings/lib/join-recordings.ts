@@ -22,13 +22,17 @@ import { type MeetingSeats, seatSpan, storedMeetingSeatsSchema } from "@genesisc
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type AssignInbox, decisionInbox } from "./assign-inbox";
 import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
 import { journalEntrySchema } from "./decision-actions";
 import {
+    hasLaterJournalAddresses,
     hasLaterLineAddresses,
+    type JoinedJournal,
     type JoinedLines,
+    joinedJournalAddresses,
     joinedLineAddresses,
     joinParts,
     movedValue,
@@ -113,9 +117,15 @@ function writeNdjson(path: string, parts: unknown[][]): void {
     all.sort((a, b) =>
         atOf(a.line) < atOf(b.line) ? -1 : atOf(a.line) > atOf(b.line) ? 1 : a.part - b.part || a.index - b.index
     );
-    writeFileSync(`${path}.join-tmp`, `${all.map(({ line }) => SafeJSON.stringify(line)).join("\n")}\n`, {
-        mode: 0o600,
-    });
+    replaceNdjson(
+        path,
+        all.map(({ line }) => line)
+    );
+}
+
+/** The lines in their order, written through a temporary file, so a reader never sees half a file. */
+function replaceNdjson(path: string, lines: readonly unknown[]): void {
+    writeFileSync(`${path}.join-tmp`, `${lines.map((line) => SafeJSON.stringify(line)).join("\n")}\n`, { mode: 0o600 });
     renameSync(`${path}.join-tmp`, path);
 }
 
@@ -883,6 +893,11 @@ export interface JoinRepairResult {
      * recording's lines, moved onto the joined transcript's; `unplaced` name no line of their item either way and stay.
      */
     lines?: { moved: number; unplaced: number };
+    /**
+     * The same for the decision journal (`decisions.ndjson`): the line addresses of the item snapshots an Undo puts
+     * back, of the findings an `add` saved and of the lines an `assign` named.
+     */
+    journal?: { moved: number; unplaced: number };
     backup?: string;
 }
 
@@ -918,8 +933,8 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
     const soundDone = (record: MeetingRecord) => merged(record) && !joinedSlotProblem(record);
     const linesDone = (record: MeetingRecord) =>
         joinParts(record).every((part) => part.firstLine !== undefined) || !hasLaterLineAddresses(record);
-    const done = (record: MeetingRecord): JoinRepairResult | undefined =>
-        soundDone(record) && linesDone(record)
+    const done = (record: MeetingRecord, journal: JoinedJournal): JoinRepairResult | undefined =>
+        soundDone(record) && linesDone(record) && journal.moved === 0
             ? {
                   meeting: record.id,
                   dryRun,
@@ -931,10 +946,32 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             : undefined;
     // The joined transcript a line address is checked against: the line it names must be its item's.
     const transcriptOf = async (record: MeetingRecord) => (await OpenedMeeting.of(store, record).meeting()).transcript;
-    const linesOf = (plan: JoinedLines) => ({ moved: plan.moved, unplaced: plan.unplaced });
+    const linesOf = (plan: JoinedLines | JoinedJournal) => ({ moved: plan.moved, unplaced: plan.unplaced });
+    // An Undo puts back the item a journal entry saved, with its line address: a record repaired before the journal
+    // moved too keeps the old addresses there, so the journal is checked on every repair, line by line.
+    const journalPath = (record: MeetingRecord) => join(store.folder(record.id), JOURNAL_FILE);
+    // The transcript loads once, and only when the items' or the journal's addresses need the check.
+    const transcriptOnce = (record: MeetingRecord) => {
+        let loaded: Promise<TranscriptEntry[]> | undefined;
+        return () => {
+            loaded ??= transcriptOf(record);
+            return loaded;
+        };
+    };
+    const journalOf = async (
+        record: MeetingRecord,
+        transcript: () => Promise<TranscriptEntry[]>
+    ): Promise<JoinedJournal> => {
+        const entries = readNdjson(journalPath(record));
+        return hasLaterJournalAddresses(record, entries)
+            ? joinedJournalAddresses(record, await transcript(), entries)
+            : { entries, moved: 0, unplaced: 0 };
+    };
+    const foundTranscript = transcriptOnce(found);
+    const journal = await journalOf(found, foundTranscript);
 
-    if (done(found)) {
-        return done(found)!;
+    if (done(found, journal)) {
+        return done(found, journal)!;
     }
 
     if (dryRun) {
@@ -944,7 +981,8 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             dryRun,
             repaired: false,
             ...(soundDone(found) ? {} : slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
-            ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await transcriptOf(found))) }),
+            ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await foundTranscript())) }),
+            ...(journal.moved > 0 ? { journal: linesOf(journal) } : {}),
         };
     }
 
@@ -957,11 +995,13 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 throw new Error(`${found.id} changed before the repair acquired its lock; run it again.`);
             }
 
-            if (done(record)) {
-                return done(record)!;
+            const transcript = transcriptOnce(record);
+            const journal = await journalOf(record, transcript);
+
+            if (done(record, journal)) {
+                return done(record, journal)!;
             }
 
-            const transcript = linesDone(record) ? undefined : await transcriptOf(record);
             const at = request.now ?? new Date();
             const backup = join(
                 request.backupRoot ?? genesisToolsDir("backups", "meetings"),
@@ -1044,8 +1084,9 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 }
             }
 
-            if (transcript) {
-                const lines = linesOf(joinedLineAddresses(record, transcript));
+            if (!linesDone(record)) {
+                const joined = await transcript();
+                const lines = linesOf(joinedLineAddresses(record, joined));
                 await update(
                     record.id,
                     {
@@ -1053,7 +1094,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                         change: `repair: ${lines.moved} line addresses of the later recordings moved onto the joined transcript's lines (${lines.unplaced} name no line and stay); backup ${backup}`,
                     },
                     (next) => {
-                        const moved = joinedLineAddresses(next, transcript);
+                        const moved = joinedLineAddresses(next, joined);
                         next.items = moved.items;
 
                         if (next.join) {
@@ -1068,6 +1109,24 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                     }
                 );
                 result.lines = lines;
+            }
+
+            if (journal.moved > 0) {
+                const path = journalPath(record);
+                const written = readFileSync(path, "utf8");
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: ${journal.moved} line addresses of the later recordings in the decision journal moved onto the joined transcript's lines (${journal.unplaced} name no line and stay); backup ${backup}`,
+                    },
+                    () => undefined,
+                    {
+                        write: () => replaceNdjson(path, journal.entries),
+                        undo: () => writeFileSync(path, written, { mode: 0o600 }),
+                    }
+                );
+                result.journal = linesOf(journal);
             }
 
             return result;

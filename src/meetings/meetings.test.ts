@@ -87,7 +87,9 @@ import { findingItems, findingProblems, findingsFileSchema } from "./lib/finding
 import { appliedLine, itemWhat } from "./lib/item-text";
 import {
     clockMove,
+    hasLaterJournalAddresses,
     hasLaterLineAddresses,
+    joinedJournalAddresses,
     joinedLineAddresses,
     joinGapAt,
     joinPartAt,
@@ -8922,6 +8924,86 @@ describe("meetings join: one clock for two recordings", () => {
             expect(repaired.items.map((item) => item.evidence?.transcriptLine)).toEqual([1, 4, 5, 7, undefined]);
             expect(repaired.items[4]).toMatchObject({ reach: { lines: [{ atSec: 600, line: 3 }] } });
             expect({ moved: repaired.moved, unplaced: repaired.unplaced }).toEqual({ moved: 2, unplaced: 1 });
+        });
+
+        test("a repair moves the journal's addresses the same way: item snapshots, findings and assigned lines", () => {
+            const snapshot = (status: string, transcriptLine: number) => ({
+                id: "i2",
+                kind: "speaker-range",
+                status,
+                label: "Bob Example",
+                fromSec: 610,
+                toSec: 610,
+                speaker: "Carol Example",
+                rules: ["RA"],
+                evidence: { transcriptLine },
+            });
+            const firstRecording = {
+                token: "t2",
+                at: "2026-11-01T12:02:00.000Z",
+                action: {
+                    kind: "add",
+                    findings: [{ kind: "speaker-range", from: 10, to: 10, label: "Bob Example", line: 1 }],
+                },
+            };
+            const entries: unknown[] = [
+                // Left on the later recording's own line 1 by a join before line addresses moved.
+                {
+                    token: "t1",
+                    at: "2026-11-01T12:01:00.000Z",
+                    changes: [{ id: "i2", before: snapshot("suggested", 1), after: snapshot("rejected", 1) }],
+                },
+                firstRecording,
+                {
+                    token: "t3",
+                    at: "2026-11-01T12:03:00.000Z",
+                    action: {
+                        kind: "add",
+                        findings: [
+                            { kind: "speaker-range", from: "10:10", to: "10:10", label: "Bob Example", line: 1 },
+                        ],
+                    },
+                },
+                {
+                    token: "t4",
+                    at: "2026-11-01T12:04:00.000Z",
+                    action: { kind: "assign", person: "Dana Example", lines: [{ atSec: 620, line: 2 }] },
+                },
+                // Written on the joined record: on the joined lines already.
+                {
+                    token: "t5",
+                    at: "2026-11-01T12:05:00.000Z",
+                    changes: [
+                        {
+                            id: "i3",
+                            after: {
+                                ...snapshot("suggested", 5),
+                                id: "i3",
+                                label: "Alice Example",
+                                fromSec: 620,
+                                toSec: 620,
+                            },
+                        },
+                    ],
+                },
+            ];
+            expect(hasLaterJournalAddresses({ join }, entries)).toBe(true);
+            expect(hasLaterJournalAddresses({ join }, [firstRecording])).toBe(false);
+
+            const repaired = joinedJournalAddresses({ join }, transcript, entries);
+            expect(repaired).toMatchObject({ moved: 4, unplaced: 0 });
+            expect(repaired.entries[0]).toMatchObject({
+                changes: [{ before: { evidence: { transcriptLine: 4 } }, after: { evidence: { transcriptLine: 4 } } }],
+            });
+            expect(repaired.entries[1]).toBe(firstRecording);
+            expect(repaired.entries[2]).toMatchObject({ action: { findings: [{ from: "10:10", line: 4 }] } });
+            expect(repaired.entries[3]).toMatchObject({ action: { lines: [{ atSec: 620, line: 5 }] } });
+            expect(repaired.entries[4]).toBe(entries[4]);
+
+            // A second run finds every address on its line: it moves nothing and keeps each entry as it is.
+            const again = joinedJournalAddresses({ join }, transcript, repaired.entries);
+            expect(again.moved).toBe(0);
+            expect(again.entries.every((entry, index) => entry === repaired.entries[index])).toBe(true);
         });
 
         test("a reading of one recording counts its items' addresses from that recording's first line", () => {
