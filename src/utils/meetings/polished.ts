@@ -111,8 +111,8 @@ const unresolvedSchema = z
     });
 
 /**
- * The fixed sentences the build writes, for a meeting in another language. `{name}` is filled in. Each key's default
- * is in {@link DEFAULT_POLISHED_PHRASES}.
+ * The fixed sentences the build writes. `{name}` is filled in. A key left out comes from the meeting language's
+ * `languages.<code>.render.polished` in the meetings config ({@link POLISHED_PHRASES_BY_LANGUAGE} ships cs, sk and en).
  */
 const phrasesSchema = z
     .object({
@@ -131,7 +131,11 @@ const phrasesSchema = z
     })
     .strict();
 
-export const DEFAULT_POLISHED_PHRASES = {
+/** The phrases that belong to a language: every phrase except the source's name. */
+export type PolishedLanguagePhrases = Omit<PolishedPhrases, "sourceLabel">;
+
+/** The English phrases: the shipped `en`, and the phrases of a language whose block sets none. */
+export const DEFAULT_POLISHED_PHRASES: PolishedLanguagePhrases = {
     somethingElse: "something else",
     someoneElse: "someone else",
     screenSettled:
@@ -139,7 +143,33 @@ export const DEFAULT_POLISHED_PHRASES = {
     screenHint: "🖥️ The screen suggests **{proposed}** ({confidence}): frame {frame}, „{ocr}“. {reason}",
     screenUndecided: "The screen does not decide: {reason}",
     confirmed: "confirmed",
-} as const;
+};
+
+/**
+ * The shipped phrases per meeting language code: the defaults of `languages.<code>.render.polished` in the meetings
+ * config. A language with no entry gets the English ones.
+ */
+export const POLISHED_PHRASES_BY_LANGUAGE: Readonly<Record<string, PolishedLanguagePhrases>> = {
+    en: DEFAULT_POLISHED_PHRASES,
+    cs: {
+        somethingElse: "něco jiného",
+        someoneElse: "někdo jiný",
+        screenSettled:
+            "✅ Vyřešeno podle obrazovky: **{proposed}** ({confidence}). Snímek {frame}: „{ocr}“. Oprava je v záznamu.",
+        screenHint: "🖥️ Obrazovka naznačuje **{proposed}** ({confidence}): snímek {frame}, „{ocr}“. {reason}",
+        screenUndecided: "Obrazovka nerozhodne: {reason}",
+        confirmed: "potvrzeno",
+    },
+    sk: {
+        somethingElse: "niečo iné",
+        someoneElse: "niekto iný",
+        screenSettled:
+            "✅ Vyriešené podľa obrazovky: **{proposed}** ({confidence}). Snímka {frame}: „{ocr}“. Oprava je v zázname.",
+        screenHint: "🖥️ Obrazovka naznačuje **{proposed}** ({confidence}): snímka {frame}, „{ocr}“. {reason}",
+        screenUndecided: "Obrazovka nerozhodne: {reason}",
+        confirmed: "potvrdené",
+    },
+};
 
 export const meetingsPolishedSchema = z
     .object({
@@ -214,6 +244,11 @@ export const meetingsPolishedSchema = z
             })
             .strict()
             .default({ applyAbove: 70, withSuggested: true }),
+        /**
+         * The meeting's language code: the phrases of its `languages.<code>` block in the meetings config fill the
+         * `phrases` this file leaves out. Default: the config's `global.language`.
+         */
+        language: z.string().trim().min(1).optional(),
         phrases: phrasesSchema.optional(),
         overrides: z
             .object({

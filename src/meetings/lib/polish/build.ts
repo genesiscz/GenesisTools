@@ -12,8 +12,8 @@ import {
 import { type CheckResult, hashData, stampMarkdown } from "@genesiscz/utils/json2md/integrity";
 import { localTimestamp } from "@genesiscz/utils/json2md/value";
 import { logger } from "@genesiscz/utils/logger";
+import { type MeetingsConfig, MeetingsConfigStore, polishedPhrasesOf } from "@genesiscz/utils/meetings/config";
 import {
-    DEFAULT_POLISHED_PHRASES,
     type DefinedMeetingsPolished,
     isDefinedMeetingsPolished,
     type MeetingsPolishedConfig,
@@ -101,6 +101,8 @@ async function loadPart(input: {
     store: MeetingStore;
     config: MeetingsPolishedConfig;
     index: number;
+    /** The speaker diff's reason for a confirmed line that records none, in the meeting's language. */
+    confirmed: string;
     linked?: (record: MeetingRecord) => LinkedSource;
 }): Promise<{ part: LoadedPart; source: unknown }> {
     const { config, index } = input;
@@ -148,9 +150,7 @@ async function loadPart(input: {
             number: index + 1,
             record,
             transcriptMd,
-            speakers: speakerRows(record, meeting.transcript, {
-                confirmed: config.phrases?.confirmed ?? DEFAULT_POLISHED_PHRASES.confirmed,
-            }),
+            speakers: speakerRows(record, meeting.transcript, { confirmed: input.confirmed }),
             terms: termRows(record),
             questions: questionRows(record),
             sourceLabel: linked.source.label,
@@ -175,14 +175,21 @@ export async function buildPolished(options: {
     store?: MeetingStore;
     /** Each record's source, when the caller holds it already (a test's fake one); else its linked source. */
     linked?: (record: MeetingRecord) => LinkedSource;
+    /** The meetings config whose language block gives the phrases; default the saved one. */
+    meetingsConfig?: Pick<MeetingsConfig, "global" | "languages">;
 }): Promise<PolishBuildResult> {
     const modulePath = isAbsolute(options.file) ? options.file : resolve(process.cwd(), options.file);
     const mode = options.mode ?? "write";
     const config = await loadPolishedModule(modulePath);
     const outPath = polishedOutPath(modulePath, config);
     const store = options.store ?? new MeetingStore();
+    const language = polishedPhrasesOf(
+        options.meetingsConfig ?? (await new MeetingsConfigStore().read()),
+        config.language
+    );
+    const confirmed = config.phrases?.confirmed ?? language.phrases.confirmed;
     const loaded = await Promise.all(
-        config.parts.map((_part, index) => loadPart({ store, config, index, linked: options.linked }))
+        config.parts.map((_part, index) => loadPart({ store, config, index, confirmed, linked: options.linked }))
     );
     const parts = loaded.map((one) => one.part);
     const gate = linkGate();
@@ -200,10 +207,22 @@ export async function buildPolished(options: {
         config,
         parts,
         times,
+        phrases: language.phrases,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
+
+    if (language.from === "english" && config.language !== undefined) {
+        rendered.warnings.push(
+            `The meetings config has no block languages.${language.code}: the phrases this file leaves out are the English ones.`
+        );
+    }
+
     const { extras: _extras, ...authored } = config;
-    const sourceHash = hashData({ config: authored, records: loaded.map((one) => one.source) });
+    const sourceHash = hashData({
+        config: authored,
+        phrases: language.phrases,
+        records: loaded.map((one) => one.source),
+    });
     const build = async (generatedAt?: string) => ({
         markdown: stampMarkdown(rendered.markdown, {
             source: sourceHash,

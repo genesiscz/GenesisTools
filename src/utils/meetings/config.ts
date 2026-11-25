@@ -36,6 +36,7 @@ import {
     type UnpairResult,
     withoutSelf,
 } from "./people";
+import { DEFAULT_POLISHED_PHRASES, POLISHED_PHRASES_BY_LANGUAGE, type PolishedLanguagePhrases } from "./polished";
 import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-config");
@@ -546,11 +547,34 @@ const summarySchema = z.object({
 
 interface LanguageDefaults {
     ocr: string[];
-    render: { unclearLabel: string; readAloudLabel: string; lineLabel: string };
+    render: { unclearLabel: string; readAloudLabel: string; lineLabel: string; polished: PolishedLanguagePhrases };
     fillers: { sounds: string[]; words: string[] };
 }
 
 const label = z.string().trim().min(1);
+/** A phrase keeps its spaces: `{reason}` and the words around it are written as they are. */
+const phrase = z.string().min(1);
+
+/**
+ * The fixed sentences a polished file of a meeting in this language writes (`tools meetings polish build`); a
+ * `.polished.ts` may still set any of them in its own `phrases`. `{name}` is filled in.
+ */
+function polishedPhrasesSchema(defaults: PolishedLanguagePhrases) {
+    return z.object({
+        /** The last reading of an unclear word: `- c) something else`. */
+        somethingElse: phrase.default(defaults.somethingElse),
+        /** The last reading of a free question: `- c) someone else`. */
+        someoneElse: phrase.default(defaults.someoneElse),
+        /** {proposed} {confidence} {frame} {ocr}: an unresolved word the screen settled, stored in the record. */
+        screenSettled: phrase.default(defaults.screenSettled),
+        /** {proposed} {confidence} {frame} {ocr} {reason}: what the screen suggests for an unresolved word. */
+        screenHint: phrase.default(defaults.screenHint),
+        /** {reason}: the screen does not decide an unresolved word. */
+        screenUndecided: phrase.default(defaults.screenUndecided),
+        /** The speaker diff's reason for a confirmed line that records none. */
+        confirmed: phrase.default(defaults.confirmed),
+    });
+}
 
 /**
  * The filler words of one language, in the two levels the editor's `cutFillers` knows: `sounds` are never words
@@ -569,6 +593,11 @@ function shippedFillers(code: string): { sounds: string[]; words: string[] } {
     return { sounds: [...(list?.sounds ?? [])], words: [...(list?.words ?? [])] };
 }
 
+/** The polished-file phrases the code ships for a language, else the English ones; copied so a caller cannot change them. */
+function shippedPolishedPhrases(code: string): PolishedLanguagePhrases {
+    return { ...(POLISHED_PHRASES_BY_LANGUAGE[code] ?? DEFAULT_POLISHED_PHRASES) };
+}
+
 /** One spoken language: the Vision OCR languages for screen frames, the transcript's labels, and its word check. */
 function languageSchema(defaults: LanguageDefaults) {
     return z.object({
@@ -581,6 +610,7 @@ function languageSchema(defaults: LanguageDefaults) {
                 /** How a quote names its source: `(<readAloudLabel> WikiProposals, <lineLabel> 33)`. */
                 readAloudLabel: label.default(defaults.render.readAloudLabel),
                 lineLabel: label.default(defaults.render.lineLabel),
+                polished: polishedPhrasesSchema(defaults.render.polished).prefault({}),
             })
             .prefault({}),
         /** The spell provider of this language's word check (`hunspell`, `hunspell-cc0`, `macos`); unset is the default one. */
@@ -593,7 +623,13 @@ function languageSchema(defaults: LanguageDefaults) {
 /** A language with no block of defaults here: every key is written out. */
 const customLanguageSchema = z.object({
     ocr: z.array(label).min(1),
-    render: z.object({ unclearLabel: label, readAloudLabel: label, lineLabel: label }),
+    render: z.object({
+        unclearLabel: label,
+        readAloudLabel: label,
+        lineLabel: label,
+        /** A phrase left out is the shipped one of that code (`POLISHED_PHRASES_BY_LANGUAGE`), else the English one. */
+        polished: polishedPhrasesSchema(DEFAULT_POLISHED_PHRASES).partial().optional(),
+    }),
     wordCheck: label.optional(),
     /** A level left out is the shipped list of that code (`FILLER_WORDS`), or none for a code the editor has no list for. */
     fillers: z.object({ sounds: z.array(label).optional(), words: z.array(label).optional() }).optional(),
@@ -606,12 +642,22 @@ const languagesSchema = z
     .object({
         cs: languageSchema({
             ocr: ["cs-CZ", "en-US"],
-            render: { unclearLabel: "nejasné", readAloudLabel: "čte z", lineLabel: "ř." },
+            render: {
+                unclearLabel: "nejasné",
+                readAloudLabel: "čte z",
+                lineLabel: "ř.",
+                polished: shippedPolishedPhrases("cs"),
+            },
             fillers: shippedFillers("cs"),
         }).prefault({}),
         sk: languageSchema({
             ocr: ["sk-SK", "cs-CZ", "en-US"],
-            render: { unclearLabel: "nejasné", readAloudLabel: "číta z", lineLabel: "r." },
+            render: {
+                unclearLabel: "nejasné",
+                readAloudLabel: "číta z",
+                lineLabel: "r.",
+                polished: shippedPolishedPhrases("sk"),
+            },
             fillers: shippedFillers("sk"),
         }).prefault({}),
     })
@@ -625,6 +671,7 @@ const languagesSchema = z
             const shipped = shippedFillers(code);
             filled[code] = {
                 ...block,
+                render: { ...block.render, polished: { ...shippedPolishedPhrases(code), ...block.render.polished } },
                 fillers: {
                     sounds: block.fillers?.sounds ?? shipped.sounds,
                     words: block.fillers?.words ?? shipped.words,
@@ -1003,6 +1050,29 @@ export function languageSettings(config: Pick<StoredConfig, "global" | "language
     }
 
     return block;
+}
+
+/**
+ * The phrases a polished file of a meeting in `code` (default `global.language`) writes, and where they come from:
+ * the code's block in `languages` (`render.polished`), else the phrases the code ships for it (`en` has no block by
+ * default), else the English ones.
+ */
+export function polishedPhrasesOf(
+    config: Pick<StoredConfig, "global" | "languages">,
+    code?: string
+): { code: string; phrases: PolishedLanguagePhrases; from: "config" | "shipped" | "english" } {
+    const wanted = code ?? config.global.language;
+    const block = config.languages[wanted];
+
+    if (block) {
+        return { code: wanted, phrases: block.render.polished, from: "config" };
+    }
+
+    return {
+        code: wanted,
+        phrases: shippedPolishedPhrases(wanted),
+        from: wanted in POLISHED_PHRASES_BY_LANGUAGE ? "shipped" : "english",
+    };
 }
 
 /**

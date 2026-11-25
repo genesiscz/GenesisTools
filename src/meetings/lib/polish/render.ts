@@ -1,9 +1,9 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import {
-    DEFAULT_POLISHED_PHRASES,
     type MeetingsPolishedConfig,
     POLISHED_SECTIONS,
+    type PolishedLanguagePhrases,
     type PolishedPart,
     type PolishedPhrases,
     type PolishedSection,
@@ -38,6 +38,8 @@ export interface RenderInput {
     parts: LoadedPart[];
     /** Part token to its times. */
     times: ReadonlyMap<string, PartTimes>;
+    /** The meeting language's phrases (`languages.<code>.render.polished`); the file's own `phrases` win. */
+    phrases: PolishedLanguagePhrases;
     /** The zone the local times are in, written after the start and end in the front matter. */
     timeZone: string;
 }
@@ -79,7 +81,7 @@ export function renderPolished(input: RenderInput): RenderedPolished {
     const warnings: string[] = [];
     const unknownTokens = new Set<string>();
     const phrases: PolishedPhrases = {
-        ...DEFAULT_POLISHED_PHRASES,
+        ...input.phrases,
         sourceLabel: parts[0]!.sourceLabel,
         ...config.phrases,
     };

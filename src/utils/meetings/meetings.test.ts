@@ -19,6 +19,7 @@ import {
     matchProjects,
     meetingsConfigSchema,
     migrateMeetingsConfig,
+    polishedPhrasesOf,
     recorderSettings,
     resolveDictionary,
     sourceFolders,
@@ -27,6 +28,7 @@ import {
 } from "./config";
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
+import { DEFAULT_POLISHED_PHRASES, POLISHED_PHRASES_BY_LANGUAGE } from "./polished";
 import { RangeStrength, rangeStrength, strongestRange } from "./range-strength";
 import {
     JOIN_PART_FILE,
@@ -295,6 +297,60 @@ describe("meetings config", () => {
         expect(oneLevel.languages.de.fillers).toEqual({ sounds: ["äh"], words: [] });
     });
 
+    test("polished-file phrases per language: an old file reads its language's shipped ones, a set key is kept, a custom language falls back to its shipped or the English ones", () => {
+        const old = meetingsConfigSchema.parse({
+            version: MEETINGS_CONFIG_VERSION,
+            languages: { cs: { ocr: ["cs-CZ"] } },
+        });
+        expect(polishedPhrasesOf(old)).toEqual({
+            code: "cs",
+            phrases: POLISHED_PHRASES_BY_LANGUAGE.cs,
+            from: "config",
+        });
+        expect(polishedPhrasesOf(old, "sk").phrases.somethingElse).toBe("niečo iné");
+        expect(polishedPhrasesOf(old, "en")).toEqual({
+            code: "en",
+            phrases: DEFAULT_POLISHED_PHRASES,
+            from: "shipped",
+        });
+        expect(polishedPhrasesOf(old, "de").from).toBe("english");
+        expect(migrateMeetingsConfig({ version: MEETINGS_CONFIG_VERSION, languages: {} })).toBe(false);
+
+        const raw = {
+            languages: {
+                cs: { render: { polished: { confirmed: "potvrzeno obsahem" } } },
+                de: {
+                    ocr: ["de-DE"],
+                    render: {
+                        unclearLabel: "unklar",
+                        readAloudLabel: "liest aus",
+                        lineLabel: "Z.",
+                        polished: { somethingElse: "etwas anderes" },
+                    },
+                },
+                en: {
+                    ocr: ["en-US"],
+                    render: { unclearLabel: "unclear", readAloudLabel: "reads from", lineLabel: "l." },
+                },
+            },
+        };
+        const changed = meetingsConfigSchema.parse(raw);
+        expect(polishedPhrasesOf(changed).phrases).toEqual({
+            ...POLISHED_PHRASES_BY_LANGUAGE.cs,
+            confirmed: "potvrzeno obsahem",
+        });
+        expect(polishedPhrasesOf(changed, "de").phrases).toEqual({
+            ...DEFAULT_POLISHED_PHRASES,
+            somethingElse: "etwas anderes",
+        });
+        expect(polishedPhrasesOf(changed, "en")).toEqual({
+            code: "en",
+            phrases: DEFAULT_POLISHED_PHRASES,
+            from: "config",
+        });
+        expect(meetingsConfigSchema.parse(SafeJSON.parse(SafeJSON.stringify(raw)))).toEqual(changed);
+    });
+
     test("an empty file has the three assign timings of today, and a changed one is read", () => {
         const defaults = meetingsConfigSchema.parse({}).global.assign;
         expect(defaults).toMatchObject({ calendarLookbehindHours: 3, folderWaitDays: 14, retryFailedMin: 10 });
@@ -449,6 +505,7 @@ describe("meetings config", () => {
             unclearLabel: "unclear",
             readAloudLabel: "čte z",
             lineLabel: "ř.",
+            polished: POLISHED_PHRASES_BY_LANGUAGE.cs,
         });
         expect(config.global.suggest.questionCap).toBe(7);
         expect(sourceFolders(config, "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);

@@ -253,7 +253,7 @@ describe("buildPolished", () => {
         expect(markdown).toContain("| Bob Example | 1 | 0 | 1 |");
         expect(markdown).toContain("- 00:10 apí\n+ 00:10 API\n// a developer word 90 %");
         expect(markdown).toContain("**U1** `00:10`");
-        expect(markdown).toContain("- b) something else");
+        expect(markdown).toContain("- b) něco jiného");
         expect(markdown).toContain(`### Open (1, record ${record.id})`);
         expect(markdown).toContain("- **Q1** `00:10`");
         expect(markdown).toContain("json2md:stamp");
@@ -268,5 +268,22 @@ describe("buildPolished", () => {
 
         expect(statSync(file).mtimeMs).toBe(moduleBefore);
         expect(readFileSync(store.path(record.id), "utf8")).toBe(recordBefore);
+
+        // The phrases follow the file's language; a language with no block in the config writes English and says so.
+        for (const [language, expected, warns] of [
+            ["en", "- b) something else", false],
+            ["de", "- b) something else", true],
+        ] as const) {
+            // A folder of its own: Bun's resolver keeps the file list of a folder it already imported from.
+            const other = join(mkdtempSync(join(tmpdir(), "meetings-polish-")), "Planning.polished.ts");
+            writeFileSync(
+                other,
+                `import { defineMeetingsPolished } from ${SafeJSON.stringify(POLISHED_MODULE)};\nexport default defineMeetingsPolished(${SafeJSON.stringify({ ...config, language })});\n`
+            );
+            const built = await buildPolished({ file: other, store, linked });
+
+            expect(readFileSync(built.outPath, "utf8")).toContain(expected);
+            expect(built.warnings.some((warning) => warning.includes(`languages.${language}`))).toBe(warns);
+        }
     });
 });
