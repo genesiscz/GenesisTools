@@ -188,7 +188,12 @@ A missing meeting names only the store that was searched. To find which store ho
    backfill`. The same command again reads the newest request for those rows. When that request ended without the
    user's answer (withdrawn, timed out, unreachable) or no window shows it any more, the command posts a new window with
    the rows as the current version shows them, so do not withdraw a request yourself to ask again. After the user's Not
-   now it posts nothing; add `--ask-again` (REPL: `askAgain: true`) only when the user asks to see the window again. To have a person's voice learned from a stretch that no question covers, give the user a stretch where only that person
+   now it posts nothing; add `--ask-again` (REPL: `askAgain: true`) only when the user asks to see the window again.
+   A finding the user names in chat (who speaks in a range, how a word is spelled) is the user's decision, not only a
+   suggestion: add it with `tools meetings items add`, then run `tools meetings confirm <meeting> <id> --reason
+   "<the user's words>" --relayed` (REPL: `meeting.items.add({ findings })`, `meeting.items.confirm({ ids, reason })`,
+   then `meetings.confirmRelayed({ meeting, items })`). `items add` has no `--relayed`: an added item is a
+   suggestion, and the confirm is the decision the window makes the user's. To have a person's voice learned from a stretch that no question covers, give the user a stretch where only that person
    speaks and ask the user to listen to it (`tools meetings play <meeting> --at <start> --to <end>`). When the user says
    only that person speaks, run `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`
    (REPL: `meetings.voices.add({ meeting, fromSec, toSec, person, confirmed: true })`). From an agent it saves nothing

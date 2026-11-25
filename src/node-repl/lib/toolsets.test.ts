@@ -3041,9 +3041,13 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
         });
         const [item] = meeting.record.items;
-        const confirmed = await meeting.items.confirm({ ids: [item.id] });
+        const confirmed = await meeting.items.confirm({ ids: [item.id], reason: 'Alice in chat: "it is JSON"' });
         expect(confirmed.decided).toEqual([item.id]);
         expect(confirmed.token).toBeString();
+        // The reason reaches the decision journal as `confirm --reason` puts it there, so a relayed confirm quotes the user.
+        expect(new DecisionJournal({ store: new MeetingStore() }).read(record.id)[0]?.reason).toBe(
+            'Alice in chat: "it is JSON"'
+        );
         expect((await meeting.items.reopen({ ids: [item.id], token: confirmed.token })).reopened).toEqual([item.id]);
         expect(meeting.record.items[0].status).toBe("suggested");
 
