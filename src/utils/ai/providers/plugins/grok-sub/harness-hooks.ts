@@ -8,6 +8,7 @@ export const grokHooks: HookFacts = {
     diffLogFromTranscript: true,
     readToolCalls: grokToolCalls,
     modsDrawDiffs: false,
+    callHasOwnRow: () => true,
     // `~/.claude/settings.json` says nothing about the model a Grok session runs (2026-09-16: every grok row read "sonnet").
     settingsModel: false,
     currentModel: grokCurrentModel,

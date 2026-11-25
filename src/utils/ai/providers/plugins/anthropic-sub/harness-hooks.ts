@@ -40,6 +40,8 @@ export const claudeHooks: HookFacts = {
     diffLogFromTranscript: true,
     readToolCalls: claudeToolCalls,
     modsDrawDiffs: true,
+    // A code-mode script's shell call is `repl_<uuid>` (the hook payloads of 2026-11-24); a Bash tool call is `toolu_…`.
+    callHasOwnRow: (toolUseId) => !toolUseId?.startsWith("repl_"),
     settingsModel: true,
     currentModel: claudeCurrentModel,
     subagentTranscript: claudeSubagentTranscript,

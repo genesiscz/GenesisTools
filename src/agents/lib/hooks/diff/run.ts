@@ -904,21 +904,25 @@ function installedMod(sessionId: string | undefined): boolean {
 /**
  * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.diff.fullDiff` on: the mod
  * draws each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
+ * The mod draws under the call's own row, so a call with none (a code-mode script's shell call) gets the hook's message.
  */
 export function modDrawsDiffs({
     config,
     harness,
     sessionId,
+    toolUseId,
     isEnabled = installedMod,
 }: {
     config: HooksConfig;
     harness: string;
     sessionId?: string;
+    toolUseId?: string;
     isEnabled?: (sessionId: string | undefined) => boolean;
 }): boolean {
     return (
         isHarnessName(harness) &&
         HARNESS_HOOK_FACTS[harness].modsDrawDiffs &&
+        HARNESS_HOOK_FACTS[harness].callHasOwnRow(toolUseId) &&
         config.mods.diff.fullDiff &&
         diffFor(config, harness).fullDiff !== "off" &&
         isEnabled(sessionId)
@@ -950,7 +954,12 @@ export function composePostDiff({
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
     const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
-    const drawnByMod = modDrawsDiffs({ config, harness: payload.harness, sessionId: payload.sessionId });
+    const drawnByMod = modDrawsDiffs({
+        config,
+        harness: payload.harness,
+        sessionId: payload.sessionId,
+        toolUseId: payload.toolUseId,
+    });
     const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod, status }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
     const message = [...own, ...flushedParts].join("\n\n");
