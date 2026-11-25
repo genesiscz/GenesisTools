@@ -15,12 +15,16 @@ export interface ChannelReading {
     source?: ChannelSource;
 }
 
-type Shares = Pick<LineEvidence, "micShare" | "energyMic">;
+type Shares = Pick<LineEvidence, "micShare" | "energyMic" | "energyMicRaw">;
 type ChannelSource = "segments" | "energy" | "both" | "none";
 type ResolvedChannel = ChannelReading & { source: ChannelSource };
 
-/** Segment overlap and calibrated energy measure different things. Neither breaks a disagreement. */
-export function channelFor({ micShare, energyMic }: Shares): ResolvedChannel {
+/**
+ * Segment overlap and calibrated energy measure different things. Neither breaks a disagreement. A recording not yet
+ * calibrated has only the raw energy, which the echo of the call can lift: it never decides a side, but a raw share on
+ * the other side of 0.5 than the segments makes the line mixed, so a line the microphone barely heard excludes nobody.
+ */
+export function channelFor({ micShare, energyMic, energyMicRaw }: Shares): ResolvedChannel {
     const usable = (share: number | undefined): share is number => share !== undefined && share >= 0 && share <= 1;
     const segment = usable(micShare);
     const energy = usable(energyMic);
@@ -29,6 +33,16 @@ export function channelFor({ micShare, energyMic }: Shares): ResolvedChannel {
     if (!shares.length) {
         return { side: "unknown", strong: false, source };
     }
+
+    if (
+        !energy &&
+        usable(micShare) &&
+        usable(energyMicRaw) &&
+        ((micShare > 0.5 && energyMicRaw < 0.5) || (micShare < 0.5 && energyMicRaw > 0.5))
+    ) {
+        return { side: "mixed", strong: false, source: "both" };
+    }
+
     if (shares.every((share) => share < 0.5)) {
         return { side: "call", strong: shares.every((share) => share <= 0.35), source };
     }
