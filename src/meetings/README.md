@@ -328,7 +328,9 @@ answer (its rules include `user`) names its line plainly at any confidence. A ra
 takes part at any confidence, so the order below decides its line, but under the threshold the line shows it as a
 guess, `[Name: 60 %]`, as a rule's range under the threshold shows: only a confirmed range or the user's answer makes
 a name plain. A guess for a person whom another range on the same line names at or above the threshold shows the
-plain name. A range owned by an open speaker question stays a guess until answered or confirmed.
+plain name, and so does a guess for the person the line's source label (or its rename) already names, unless a label
+item says the label tracks no one person. A range owned by an open speaker question stays a guess until answered or
+confirmed.
 
 When several ranges cover one line, one order decides its name in every reader (the transcript, `look`, the polished
 file, the naming pass): a confirmed range first (a person's later decision replaces the earlier one), then a range built

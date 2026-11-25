@@ -760,6 +760,85 @@ test("an agent's range under the threshold wins its line as a guess; the user's 
     expect(several(sure("Alice Example"), stated).entries[3]).toMatchObject({ speaker: "Alice Example", guess: false });
 });
 
+test("a guess under the threshold for the person a line's label names keeps the plain name; one for another person is a guess", () => {
+    const range = (
+        speaker: string,
+        {
+            rules = [MeetingRule.VoiceEmbedding],
+            label = "Carol Example",
+            atSec = 20,
+        }: Partial<{
+            rules: MeetingRule[];
+            label: string;
+            atSec: number;
+        }> = {}
+    ) =>
+        item({
+            id: "i1",
+            kind: "speaker-range",
+            status: "suggested",
+            label,
+            fromSec: atSec,
+            toSec: atSec,
+            speaker,
+            confidence: 0.6,
+            rules,
+            evidence: { labeler: "voice", reason: "named" },
+        });
+    const shown = (items: ReturnType<typeof item>[], labels: Record<string, string> = {}) =>
+        correctTranscript({
+            record: { ...base, items, speakers: { ...base.speakers, labels } },
+            transcript,
+            config,
+            format: "json",
+            withSuggested: true,
+            dictionary: false,
+        }).entries;
+
+    // A rule's range and an agent's stated range alike: the label already names Carol, so her guess adds no doubt.
+    for (const rules of [[MeetingRule.VoiceEmbedding], [MeetingRule.Agent]]) {
+        expect(shown([range("Carol Example", { rules })])[2]).toMatchObject({ speaker: "Carol Example", guess: false });
+        expect(shown([range("Alice Example", { rules })])[2]).toMatchObject({
+            speaker: "[Alice Example: 60 %]",
+            guess: true,
+        });
+    }
+
+    // A rename names the label's lines as the label does.
+    const renamed = shown([range("Alice Example", { label: "Speaker 2", atSec: 30 })], {
+        "Speaker 2": "Alice Example",
+    });
+    expect(renamed[3]).toMatchObject({ speaker: "Alice Example", guess: false });
+
+    // A label that tracks no one person names nobody, and an open question doubts the label: both keep the guess.
+    const untracked = item({
+        id: "i2",
+        kind: "label",
+        label: "Carol Example",
+        fromSec: 0,
+        toSec: 30,
+        meaningless: true,
+        status: "suggested",
+        evidence: { reason: "two voices under one label" },
+    });
+    expect(shown([range("Carol Example"), untracked])[2]).toMatchObject({
+        speaker: "[Carol Example: 60 %]",
+        guess: true,
+    });
+    const asked = item({
+        id: "i3",
+        kind: "question",
+        status: "suggested",
+        about: "speaker",
+        fromSec: 20,
+        toSec: 20,
+        question: "Who?",
+        choices: ["Carol Example", "Alice Example"],
+        decides: ["i1"],
+    });
+    expect(shown([range("Carol Example"), asked])[2]).toMatchObject({ speaker: "[Carol Example: 60 %]", guess: true });
+});
+
 test("later ranges shadow earlier outcomes", () => {
     const result = applyCorrections([line("Voice", 5, "Hello")], {
         ranges: [
