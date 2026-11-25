@@ -187,10 +187,11 @@ const WORK_DECISIONS: DecisionRecord[] = [
         option: "a",
         answer: "Yes, ship it.",
         answeredVia: "agent",
-        // The checkout stays on the row: the snapshot names the agent by its harness, session and model only.
+        // The checkout stays on the row: the snapshot names the agent by its harness, session and model only, and
+        // adds the widget key of that session, which the roster lists, so the agent's name opens it.
         answeredBy: {
             harness: "codex",
-            session: "0a1b2c3d4e5f",
+            session: PERSONAL.sessionId,
             model: "gpt-6.1-sol",
             checkout: { cwd: "/fixture/work" },
         },

@@ -806,10 +806,19 @@ struct WidgetPeekView: View {
                 Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
             }
-            Text(WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy)).font(.system(size: 11))
+            WidgetAnsweredByLine(via: item.answeredVia, agent: item.answeredBy, open: openAnswerer).font(.system(size: 11))
                 .foregroundStyle(.secondary).padding(.horizontal, 8)
         }
         .accessibilityIdentifier("widget.peek.answered")
+    }
+
+    /// The link on the answering agent's name: its session in the agents panel, as Whole inbox opens a session's inbox.
+    private var openAnswerer: (() -> Void)? {
+        guard let session = model.answererSession(item.answeredBy) else { return nil }
+        return {
+            guard let surface = model.hoveredSurface else { return }
+            model.openSessionInbox(session, on: surface)
+        }
     }
 
     /// The alerts that came while this one was open (Alerts → Several at once: listed together), one line each. A

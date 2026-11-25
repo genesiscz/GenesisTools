@@ -998,6 +998,20 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
     }
 
+    /// The agent named on an answered decision is the link to its session: only with a session to open, and only the
+    /// agent's own words are underlined.
+    @MainActor
+    func testTheAnsweringAgentsNameIsTheLinkToItsSession() {
+        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol", sessionKey: "k")
+        XCTAssertTrue(WidgetAnsweredByLine(via: "agent", agent: relay, open: {}).isLink)
+        XCTAssertFalse(WidgetAnsweredByLine(via: "agent", agent: relay).isLink, "no session to open: the plain words")
+        XCTAssertFalse(WidgetAnsweredByLine(via: "agent", agent: nil, open: {}).isLink, "no agent named: nothing to link")
+        let line = WidgetAnsweredByLine.linked(WidgetAlerts.answeredViaText("agent", by: relay), agent: WidgetAlerts.agentText(relay))
+        let underlined = line.runs[AttributeScopes.SwiftUIAttributes.UnderlineStyleAttribute.self]
+            .compactMap { style, range in style.map { _ in String(line[range].characters) } }
+        XCTAssertEqual(underlined, ["Codex, session 0a1b2c3d · gpt-6.1-sol"])
+    }
+
     /// The popup says "Decision 4", not "New decision · DECISION 4"; VoiceOver hears what arrived and from where; the
     /// popup's time and a note's time are settings (ux catalogue R4, R6, R10, R3).
     func testAlertWordsAndTheTimesTheySettle() throws {

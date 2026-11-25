@@ -665,7 +665,8 @@ private struct WidgetGeneralSettings: View {
 }
 
 /// Settings → Automatic decisions: the decisions answered outside the widget in the last week, newest first. A row
-/// names the decision, the option it took and who recorded it; Open shows its session in the widget.
+/// names the decision, the option it took and who recorded it; Open shows its session in the widget, and the name of
+/// the agent that recorded it shows that agent's session.
 private struct WidgetAnsweredElsewhereLog: View {
     @ObservedObject var model: WidgetModel
     let openSession: (WidgetSession) -> Void
@@ -690,7 +691,8 @@ private struct WidgetAnsweredElsewhereLog: View {
         let picks = WidgetAlerts.answeredOptions(item).map { $0.letter + ") " + $0.text }
         let answer = picks.isEmpty ? item.answer ?? "" : picks.joined(separator: "; ")
         let when = Date(timeIntervalSince1970: item.at / 1000).formatted(.dateTime.month(.abbreviated).day().hour().minute())
-        let details = [WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy), session?.title ?? "", when].filter { !$0.isEmpty }
+        let details = [session?.title ?? "", when].filter { !$0.isEmpty }
+        let answerer = model.answererSession(item.answeredBy)
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: "checkmark.bubble.fill").foregroundStyle(.green).padding(.top, 1)
                 .accessibilityHidden(true)
@@ -699,7 +701,13 @@ private struct WidgetAnsweredElsewhereLog: View {
                     .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                 if !answer.isEmpty { Text(answer).font(.system(size: 12)).lineLimit(2) }
-                Text(details.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 0) {
+                    WidgetAnsweredByLine(via: item.answeredVia, agent: item.answeredBy,
+                                         open: answerer.map { found in { openSession(found) } })
+                        .layoutPriority(1)
+                    if !details.isEmpty { Text(" · " + details.joined(separator: " · ")) }
+                }
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
             if let session {

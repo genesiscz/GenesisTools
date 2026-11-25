@@ -763,7 +763,11 @@ public struct LiveWidgetView: View {
                 WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
             }
             if card.kind == "decision" && !card.needsAnswer {
-                WidgetDecisionOutcome(card: card) { model.openDecision(id: $0.id, sessionKey: $0.sessionKey) }
+                // The agent that stored the answer opens its session, unless it is this card's own, which is open.
+                let answerer = model.answererSession(card.answeredBy).flatMap { $0.key == card.sessionKey ? nil : $0 }
+                WidgetDecisionOutcome(card: card, openAnswerer: answerer.map { session in { model.openSessionInbox(session) } }) {
+                    model.openDecision(id: $0.id, sessionKey: $0.sessionKey)
+                }
             }
             if card.needsAnswer {
                 if card.kind == "form" {

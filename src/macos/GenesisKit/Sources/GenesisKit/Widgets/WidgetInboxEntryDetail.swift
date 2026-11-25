@@ -137,7 +137,10 @@ struct WidgetInboxEntryDetail: View {
                 let words = [item.option.map { "Answered " + $0.uppercased() }, item.answer]
                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
                 WidgetAnswerBlock(question: nil, answer: words, more: false, clampLines: 1,
-                                  label: WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy))
+                                  answerer: WidgetAnsweredByLine(via: item.answeredVia, agent: item.answeredBy,
+                                      open: model.answererSession(item.answeredBy).map { session in
+                                          { model.openSessionInbox(session, on: surface) }
+                                      }))
             }
             if let count = item.count, count > 1, item.reply != nil || item.message != nil {
                 earlierEntries(count - 1)

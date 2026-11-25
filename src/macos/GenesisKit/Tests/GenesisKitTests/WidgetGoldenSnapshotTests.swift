@@ -71,15 +71,18 @@ final class WidgetGoldenSnapshotTests: XCTestCase {
     }
 
     /// A decision an agent answered names that agent on its card and in "answered elsewhere": its harness, session and
-    /// model.
+    /// model, and the widget key of that session, which the widget lists, so the name opens it.
     func testAnAgentsAnswerNamesTheAgentThatStoredIt() throws {
         let snapshot = try JSONDecoder().decode(
             WidgetSnapshot.self, from: KitFixture.data("snapshot-overview.json", in: "Widget"))
-        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol")
+        let relay = WidgetAnsweredBy(harness: "codex", session: "fixture-personal", model: "gpt-6.1-sol",
+                                     sessionKey: "local:codex:fixture-personal:")
         let card = try XCTUnwrap(snapshot.cards.first { $0.answeredVia == "agent" })
         XCTAssertEqual(card.answeredBy, relay)
+        XCTAssertTrue(snapshot.sessions.contains { $0.key == relay.sessionKey }, "the key names a session the widget lists")
+        XCTAssertNotEqual(card.sessionKey, relay.sessionKey, "another session stored the answer: its name is a link")
         XCTAssertEqual(WidgetAlerts.answeredViaText(card.answeredVia, by: card.answeredBy),
-                       "Answer recorded by Codex, session 0a1b2c3d · gpt-6.1-sol")
+                       "Answer recorded by Codex, session fixture- · gpt-6.1-sol")
         let elsewhere = snapshot.notifications?.answeredElsewhere?.first { $0.answeredVia == "agent" }
         XCTAssertEqual(elsewhere?.answeredBy, relay)
     }

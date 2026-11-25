@@ -809,11 +809,15 @@ public struct WidgetAnsweredBy: Codable, Hashable, Sendable {
     public var harness: String
     public var session: String?
     public var model: String?
+    /// The widget key of that session when the widget lists it, so the agent's name opens it; nil from the hub's inbox
+    /// (which opens its own row of `session`) and from an older hub.
+    public var sessionKey: String?
 
-    public init(harness: String, session: String? = nil, model: String? = nil) {
+    public init(harness: String, session: String? = nil, model: String? = nil, sessionKey: String? = nil) {
         self.harness = harness
         self.session = session
         self.model = model
+        self.sessionKey = sessionKey
     }
 }
 
