@@ -26,6 +26,7 @@ describe("several-letter decisions on the /qa decisions tab", () => {
         option: null,
         answer: null,
         answeredVia: null,
+        answeredBy: null,
         source: "store",
         at: "2026-11-04T14:50:00.000Z",
         context: null,
