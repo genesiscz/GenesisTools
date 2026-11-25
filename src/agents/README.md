@@ -632,7 +632,11 @@ links its full diff.
 
 #### Which files it watches
 
-- Files inside the git roots the command works in.
+- Files inside the git roots the command works in: the session cwd and every `cd` target. A command that may write
+  also works in each folder it hands a program: the value of a folder flag (`--cwd`, `--dir`, `--directory`,
+  `--root`, `--chdir`, `--workdir`, `--work-tree`, `-C`), and a repository's top folder given to a script runner
+  (`bun renames.ts <checkout>`). A command that only reads (`git -C <dir> log`) gets no such root, because each root
+  costs a `git rev-parse` and a `git status`.
 - Files the command **names** as a path (`diff.watchNamedPaths`, on), so an edit to a note, a `~/.claude` memory file
   or any path outside the cwd repository shows at all. At most `diff.maxNamedPaths` (8) per call, each a `stat` and a
   clone.
@@ -965,7 +969,9 @@ Installing the plugin is not what makes the diff hook stand down. On every turn 
 draws it, so it is not drawn twice. The mod may be loaded from any settings scope or with `--plugin-dir`. A session
 that has not loaded it (started before the install and not reloaded, or a nested session that inherited another
 session's id) keeps the hook's own message, and so does a marked session whose settings now disable the plugin, until
-it reloads. Codex and Grok always keep the hook's message.
+it reloads. Codex and Grok always keep the hook's message. So does a shell call of a code-mode script (the REPL
+tool, a call id `repl_<uuid>`): it has no Bash row of its own for the mod to draw under, and on 2026-11-24 918 such
+diffs were left to the mod and drawn by no one.
 
 Each file has a `[-]` / `[+]` button that folds its diff to its name and back, and `[ files only ]` above them folds
 every file; a click on the diff itself still opens the group's calls. The diff of a call that runs `git pull`,
