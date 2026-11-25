@@ -53,6 +53,26 @@ final class WidgetPolishShotsTests: XCTestCase {
          "revision": 1]
     }
 
+    /// A session row says how many of its decisions are staged and not sent, in the hover list and in the expanded
+    /// view's "Sessions with inbox items", as the hub's session row does.
+    func testASessionRowSaysHowManyDecisionsAreStaged() throws {
+        let session = WidgetInboxRender.session("alpha", project: "Orchard")
+        var item = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: session.key, at: 5000,
+                                   needsAnswer: true, title: "Pick a basket", number: 1, options: ["a) Wicker", "b) Crate"])
+        item.draftOption = "b"
+        let model = try WidgetInboxRender.model(sessions: [session], items: [item])
+        defer { model.stop() }
+        XCTAssertEqual(model.stagedToSend.filter { $0.key == session.key }.count, 1)
+        for density in [WidgetSessionRowDensity.preview, .expanded] {
+            let row = WidgetPreviewRosterRow(session: session, inbox: model.inboxFor(session.key), question: nil, pulse: 0,
+                                             reduceMotion: true, complete: true, panelOpen: false, model: model,
+                                             density: density, staged: 1, open: {}, openPanel: {}, closePanel: {})
+            let text = try WidgetInboxRender.draw(row, size: CGSize(width: 420, height: 120)).joined(separator: " ")
+            XCTAssertTrue(text.contains("1 staged"), "\(density): \(text)")
+            XCTAssertTrue(text.contains("Alpha"), "\(density): \(text)")
+        }
+    }
+
     /// Martin, 2026-10-26: an own answer sent from its card left the card's field, came back in the top reply field
     /// for a few seconds, and disappeared only when the hub's next snapshot cleared it. The perf log showed a draft
     /// save half a second after the send: the closing field wrote the sent text back into the emptied draft.

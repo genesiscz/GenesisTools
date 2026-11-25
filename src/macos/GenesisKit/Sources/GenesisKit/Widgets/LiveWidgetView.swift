@@ -81,6 +81,8 @@ public struct LiveWidgetView: View {
     @State private var retry: WidgetOutgoing?
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
+    /// The "Sessions with inbox items" row whose cmux popover is open.
+    @State private var waitingCmuxKey: String?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
@@ -528,18 +530,40 @@ public struct LiveWidgetView: View {
                     markAllReadButton
                 }.padding(.bottom, 4)
                 ForEach(model.inbox.sessions, id: \.key) { entry in
-                    let session = model.session(forKey: entry.key)
-                    let source = session?.title ?? entry.latest?.message?.origin ?? "Unknown session"
-                    Button {
-                        if let session {
-                            model.openSessionInbox(session)
-                        } else {
-                            model.overviewFilterPick = "all"
-                            model.inboxOverview = true
-                        }
+                    if let session = model.session(forKey: entry.key) {
+                        // The hover list's session row: status, times, the waiting question, the ring and cmux.
+                        WidgetPreviewRosterRow(
+                            session: session, inbox: entry,
+                            question: AgentWidgetPreview.pendingQuestion(entry.pendingItem,
+                                                                         enabled: model.preferences.previewQuestion),
+                            pulse: model.inboxPulseFor(entry.key), reduceMotion: model.effectiveReduceMotion,
+                            complete: model.inbox.complete, panelOpen: waitingCmuxKey == session.key, model: model,
+                            density: .expanded, staged: model.stagedToSend.filter { $0.key == session.key }.count,
+                            open: { model.openSessionInbox(session) },
+                            openPanel: { waitingCmuxKey = session.key }, closePanel: { waitingCmuxKey = nil })
+                            .equatable()
+                    } else {
+                        senderRow(entry)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+            .scrollOverflowContent()
+        }
+        .scrollOverflowHints()
+        // Like the hover list's: while a row's cmux popover is open the edge panel must not collapse.
+        .onChange(of: waitingCmuxKey) { _, key in model.cmuxPopoverOpen = key != nil }
+    }
+
+    /// A sender that is no session (an external message): its small row opens the inbox of every session.
+    private func senderRow(_ entry: WidgetInboxSession) -> some View {
+                    let source = entry.latest?.message?.origin ?? "Unknown session"
+                    return Button {
+                        model.overviewFilterPick = "all"
+                        model.inboxOverview = true
                     } label: {
                         HStack(spacing: 9) {
-                            AIProviderGlyph(meta: AIProviders.meta(for: session?.target.provider ?? "unknown"), size: 18)
+                            AIProviderGlyph(meta: AIProviders.meta(for: "unknown"), size: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(source).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                 Text(inboxSummary(entry)).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -554,13 +578,7 @@ public struct LiveWidgetView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(RowButtonStyle(cornerRadius: 10))
-                    .accessibilityLabel("Open " + (session == nil ? "inbox overview" : source) + ", " + inboxSummary(entry))
-                }
-            }
-            .padding(.vertical, 2)
-            .scrollOverflowContent()
-        }
-        .scrollOverflowHints()
+                    .accessibilityLabel("Open inbox overview, " + inboxSummary(entry))
     }
 
     private func inboxSummary(_ entry: WidgetInboxSession) -> String {
