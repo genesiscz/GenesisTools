@@ -385,6 +385,12 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         }
     }
 
+    if (result.transcript) {
+        ui.ok(
+            `${result.dryRun ? "Would copy" : "Copied"} the joined transcript into ${result.meeting}: ${result.transcript.lines} lines, read once from its recordings' sources; no later read asks them.`
+        );
+    }
+
     if (result.joinedFile) {
         ui.dim(`  the whole meeting as one file: ${result.joinedFile}`);
     }
@@ -451,6 +457,16 @@ async function joinCommand(
         if (result.rounded > 0) {
             ui.warn(
                 `  ${result.rounded} stored seconds held more than microseconds; they were rounded to the microsecond.`
+            );
+        }
+
+        if (result.dryRun || result.transcript.copied) {
+            ui.dim(
+                `  the joined transcript, ${result.transcript.lines} lines, ${result.dryRun ? "would be" : "is"} the record's own copy; no read asks the recordings' sources`
+            );
+        } else {
+            ui.warn(
+                `  the joined transcript was not copied, so reads still ask both recordings' sources; copy it: ${TOOL} join ${result.into} --repair`
             );
         }
 

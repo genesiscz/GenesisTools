@@ -65,14 +65,17 @@ export class CallTimeline {
         );
     }
 
-    /** The record's timeline on its linked source's clock, else on the stored one. Never throws. */
-    static async forRecord(record: MeetingRecord): Promise<CallTimeline> {
+    /**
+     * The record's timeline on its linked source's clock, else on the stored one. Never throws. With its `store`, the
+     * record's own copy answers when the source cannot (a joined record reads no recording's source); it writes none.
+     */
+    static async forRecord(record: MeetingRecord, store?: MeetingStore): Promise<CallTimeline> {
         if (!sourceRefOf(record)) {
             return CallTimeline.stored(record);
         }
 
         try {
-            const linked = await linkedSource(record);
+            const linked = await linkedSource(record, store, { saveCopy: false });
             const meeting = await linked.source.load(linked.sourceMeetingId);
             return await CallTimeline.ofSource(record, linked, meeting);
         } catch (err) {

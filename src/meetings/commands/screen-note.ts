@@ -41,7 +41,7 @@ async function screenNote(ref: string, opts: { out?: string; json?: boolean }): 
     }
 
     const notePath = opts.out ?? join(folder, `${record.id}.ScreenOCR.md`);
-    const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
+    const zeroMs = (await CallTimeline.forRecord(record, store)).zeroMs;
 
     try {
         const result = writeScreenNote({ record, meetingFolder: folder, notePath, zeroMs });

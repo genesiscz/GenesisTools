@@ -33,7 +33,7 @@ import { type CaptureBlockersView, captureBlockersRead } from "./never-capture";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
 import type { ReviewRows } from "./review-row-schema";
-import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
+import { type LinkedSource, linkedSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
 import { meetingWordTimingCache } from "./word-timings";
 
@@ -129,13 +129,13 @@ export async function revisionsRead(options: {
     const folder = store.folder(record.id);
     const recordFile = fileIdentity(join(folder, MEETING_FILE));
     const config = fileIdentity(new MeetingsConfigStore().path);
-    const ref = linked ? { sourceId: linked.source.id, sourceMeetingId: linked.sourceMeetingId } : sourceRefOf(record);
     let source: string | null = "no source";
 
-    if (ref) {
+    if (linked || sourceRefOf(record)) {
         try {
-            const reader = linked?.source ?? (await meetingSource(ref.sourceId));
-            source = await reader.revision(ref.sourceMeetingId);
+            // The source the transcript reads: a joined record's own copy, a single record's source behind its copy.
+            const reader = linked ?? (await linkedSource(record, store, { saveCopy: false }));
+            source = await reader.source.revision(reader.sourceMeetingId);
         } catch (error) {
             log.debug({ error, meeting: record.id }, "the source gave no revision; the window reads it again");
             source = null;

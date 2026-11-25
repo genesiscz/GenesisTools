@@ -372,6 +372,51 @@ export function copyBackedSource(
     };
 }
 
+/** Whether the folder keeps a copy of the meeting `ref` names: a header read, not the transcript. */
+export function hasSourceCopy(folder: string, ref: SourceCopyRef): boolean {
+    return copyHeader(folder, "meeting", ref) !== undefined;
+}
+
+/**
+ * The source of a record that owns its copy: a joined record (`meetings join`), whose meeting no single source can
+ * answer. The meeting, its evidence, its clock, its revision and its folders come only from the copy saved under
+ * `ref`, whatever id a caller asks with, so no read loads a source meeting. `base` answers the source's own reads (its
+ * word list, describe, calendar, live recording, folder list): the live source, or `copyOnlySource` when the running
+ * code cannot open it. Undefined when the folder keeps no copy under `ref`.
+ */
+export function ownedCopySource(options: {
+    folder: string;
+    ref: SourceCopyRef;
+    base: TranscriptSource;
+}): TranscriptSource | undefined {
+    const { folder, ref, base } = options;
+
+    if (!hasSourceCopy(folder, ref)) {
+        return undefined;
+    }
+
+    const meeting = (): SourceMeeting => {
+        const saved = readSourceCopy(folder, "meeting", ref);
+
+        if (!saved) {
+            throw new Error(
+                `The record's own copy of its meeting is gone or unreadable (${folder}); restore it from the backup.`
+            );
+        }
+
+        return saved.value;
+    };
+
+    return {
+        ...base,
+        load: async () => meeting(),
+        evidence: async () => readSourceCopy(folder, "evidence", ref)?.value ?? null,
+        recordingClock: async () => readSourceCopy(folder, "clock", ref)?.value ?? null,
+        revision: async () => copyRevision(folder, ref) ?? null,
+        meetingFolders: async () => meeting().folders,
+    };
+}
+
 /**
  * A source that answers only from the record's copy, for a record whose source code cannot be opened (the running
  * checkout has no reader for it). Undefined when the record has no saved meeting.

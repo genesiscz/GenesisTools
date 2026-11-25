@@ -20,7 +20,7 @@ import { attendanceWarning, OpenedMeeting, openedMeetingLog } from "./opened-mee
 import { faceTimePlatform } from "./platforms/facetime";
 import { showText } from "./show-text";
 import { preserveSourceAudio } from "./source-audio";
-import { copyBackedSource, copyOnlySource, readSourceCopy } from "./source-copy";
+import { copyBackedSource, copyOnlySource, ownedCopySource, readSourceCopy, saveSourceCopy } from "./source-copy";
 import { speakerStatsRead } from "./window-reads";
 
 let stores = 0;
@@ -1273,6 +1273,40 @@ describe("the record's own copy of its source", () => {
         expect((await copyBackedSource(changed, folder, { save: false }).load("abc")).title).toBe("Renamed");
         expect(readSourceCopy(folder, "meeting", ref)?.savedAt).toBe(savedAt);
         expect(readSourceCopy(folder, "meeting", ref)?.value.title).toBe("Planning");
+    });
+
+    test("a record that owns its copy answers every meeting read from it, whatever id is asked", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const owned = { sourceId: "wisprflow", sourceMeetingId: "abc+def" };
+        const asked: string[] = [];
+        const live: TranscriptSource = {
+            ...fakeSource(),
+            load: async (id) => {
+                asked.push(id);
+                throw new Error("a recording's source must not be read");
+            },
+            dictionary: async () => [{ value: "Kubernetes" }],
+        };
+        expect(ownedCopySource({ folder, ref: owned, base: live })).toBeUndefined();
+
+        const meeting = { ...(await fakeSource().load("abc")), sourceMeetingId: "abc+def", folders: ["Planning"] };
+        saveSourceCopy(folder, "clock", owned, { startedAt: "2026-11-02T15:00:05.000Z" });
+        saveSourceCopy(folder, "meeting", owned, meeting);
+        const source = ownedCopySource({ folder, ref: owned, base: live })!;
+        const revision = await source.revision("abc");
+
+        expect((await source.load("abc")).transcript).toEqual(meeting.transcript);
+        expect(await source.meetingFolders("abc")).toEqual(["Planning"]);
+        expect(await source.recordingClock("abc")).toEqual({ startedAt: "2026-11-02T15:00:05.000Z" });
+        expect(await source.evidence("abc")).toBeNull();
+        // The source's own reads still come from the live source; no meeting was asked of it.
+        expect(await source.dictionary()).toEqual([{ value: "Kubernetes" }]);
+        expect(asked).toEqual([]);
+        expect(revision).toStartWith("source-copy:");
+        expect(await source.revision("abc")).toBe(revision);
+        // A copy of one recording (the plain id) is not the joined record's copy.
+        expect(readSourceCopy(folder, "meeting", ref)).toBeUndefined();
     });
 
     test("a record whose source code cannot be opened reads its copy", async () => {

@@ -47,6 +47,15 @@ import {
     restoreJoinedSlot,
 } from "./join-sound";
 import {
+    type JoinedReads,
+    joinedCopyRef,
+    joinedMeeting,
+    type RecordingOpener,
+    type RecordingRef,
+    readJoinedParts,
+    saveJoinedCopy,
+} from "./joined-source";
+import {
     cloneTree,
     DERIVED_FILES,
     GENERATED_TITLE,
@@ -60,7 +69,8 @@ import { OpenedMeeting } from "./opened-meeting";
 import { readRecorderState } from "./recorder-shared";
 import { localStamp } from "./shared";
 import { preservedSourceAudio, syncSourceAudio } from "./source-audio";
-import { meetingSource, sourceRefOf } from "./sources";
+import { hasSourceCopy } from "./source-copy";
+import { meetingSource, recordingSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-join");
 
@@ -134,6 +144,8 @@ export interface JoinRequest {
     now?: Date;
     /** Puts the recordings into one file (tests pass a fake); ffmpeg by default. */
     encode?: JoinedSoundEncoder;
+    /** Opens one recording's own source (tests pass a fake); `recordingSource` by default. */
+    open?: RecordingOpener;
 }
 
 export interface JoinedPartPlan {
@@ -162,6 +174,11 @@ export interface JoinResult {
     rounded: number;
     /** The later recordings' sound that moves into the joined record's folder (`join-sound.ts`). */
     sound: JoinSoundSummary;
+    /**
+     * The joined transcript the record keeps as its own copy (source-copy.ts): its lines, and whether it was written.
+     * Not written: the join is done, and `join <id> --repair` writes the copy.
+     */
+    transcript: { lines: number; copied: boolean };
     backup?: string;
     withdrawn?: string;
 }
@@ -176,14 +193,14 @@ interface LoadedPart {
     endOwnSec: number;
 }
 
-async function loadPart(record: MeetingRecord): Promise<LoadedPart> {
+async function loadPart(record: MeetingRecord, open: RecordingOpener): Promise<LoadedPart> {
     const ref = sourceRefOf(record);
 
     if (!ref) {
         throw new Error(`${record.id} links no source meeting, so its clock is unknown; link it first.`);
     }
 
-    const source = await meetingSource(ref.sourceId);
+    const source = await open({ record: record.id, ...ref });
     const [meeting, clock] = await Promise.all([
         source.load(ref.sourceMeetingId),
         CallTimeline.sourceClock({ source, sourceMeetingId: ref.sourceMeetingId }),
@@ -414,8 +431,9 @@ function backupReadme(options: { ids: string[]; root: string; folder: string; at
 /**
  * Joins two records of one meeting that its source recorded as two (Wispr Flow split it): one record, the earliest
  * recording's id and clock, the later recording's lines and items on that clock at their own wall time, and the gap
- * between them kept empty. Both folders are cloned into a backup first; the later recording's sound and caches stay
- * in its folder (a part folder now), so every cut of its sound is the same file at the same second.
+ * between them kept empty. Both folders are cloned into a backup first. The later recording's sound moves into the
+ * joined folder (`join-sound.ts`), and the joined transcript, each recording read once, is the record's own copy
+ * (`saveJoinedCopy`): no later read asks a recording's source.
  */
 export async function joinMeetings(request: JoinRequest): Promise<JoinResult> {
     const { store } = request;
@@ -478,7 +496,10 @@ async function joinLocked({
     update: MeetingStore["update"];
 }): Promise<JoinResult> {
     const { store } = request;
-    const loaded = (await Promise.all(records.map(loadPart))).sort((a, b) => a.zeroMs - b.zeroMs);
+    const open = request.open ?? ((recording: RecordingRef) => recordingSource(store, recording));
+    const loaded = (await Promise.all(records.map((record) => loadPart(record, open)))).sort(
+        (a, b) => a.zeroMs - b.zeroMs
+    );
     const refused = joinRefusal(loaded, store);
 
     if (refused) {
@@ -607,6 +628,7 @@ async function joinLocked({
         gaps,
         rounded: rounded.count,
         sound: joinSoundSummary(sound),
+        transcript: { lines: loaded.reduce((sum, part) => sum + part.lines, 0), copied: false },
         ...(pending ? { withdrawn: pending } : {}),
     };
 
@@ -614,6 +636,8 @@ async function joinLocked({
         return result;
     }
 
+    // Each recording is read once, before anything moves: the joined record keeps the merged meeting as its own copy.
+    const reads = await readJoinedParts(parts, open);
     const at = request.now ?? new Date();
     // The one source file is written before anything moves: a failed encode leaves both records as they were.
     const joinedFile = await buildJoinedSourceFile(sound, {
@@ -719,7 +743,7 @@ async function joinLocked({
     const laterMove = moves.get(later)!;
     const keptMove = moves.get(kept)!;
     const history = later.record.history.map((entry) => ({ ...entry, change: `[${later.record.id}] ${entry.change}` }));
-    await update(
+    const joined = await update(
         kept.record.id,
         {
             command: "join",
@@ -835,6 +859,8 @@ async function joinLocked({
         }
     );
 
+    result.transcript = keepJoinedCopy({ folder: keptFolder, record: joined, reads });
+
     if (pending) {
         const withdrawn = await (request.inbox ?? decisionInbox).cancel(pending).catch((err: unknown) => {
             log.warn({ err, formId: pending }, "join: the project question of the later record could not be withdrawn");
@@ -853,6 +879,26 @@ async function joinLocked({
     return { ...result, backup };
 }
 
+/** Writes the joined record's own copy of its transcript; a write that fails leaves the join done, for the repair. */
+function keepJoinedCopy(options: { folder: string; record: MeetingRecord; reads: JoinedReads }): {
+    lines: number;
+    copied: boolean;
+} {
+    try {
+        return { lines: saveJoinedCopy(options).lines, copied: true };
+    } catch (error) {
+        log.warn(
+            { error, meeting: options.record.id },
+            "join: the joined transcript was not copied; --repair copies it"
+        );
+        return { lines: joinedLines(options.reads), copied: false };
+    }
+}
+
+function joinedLines(reads: JoinedReads): number {
+    return reads.meetings.reduce((sum, meeting) => sum + meeting.transcript.length, 0);
+}
+
 export interface JoinRepairRequest {
     store: MeetingStore;
     /** The joined record: an id, a unique prefix or last. */
@@ -862,14 +908,16 @@ export interface JoinRepairRequest {
     now?: Date;
     /** Puts the recordings into one file (tests pass a fake); ffmpeg by default. */
     encode?: JoinedSoundEncoder;
+    /** Opens one recording's own source (tests pass a fake); `recordingSource` by default. */
+    open?: RecordingOpener;
 }
 
 export interface JoinRepairResult {
     meeting: string;
     dryRun: boolean;
     /**
-     * False when there was nothing to do: the record's sound is in its own folder, its source slot is whole and its
-     * later recordings' line addresses count on the joined transcript.
+     * False when there was nothing to do: the record's sound is in its own folder, its source slot is whole, it keeps
+     * its own copy of the joined transcript and its later recordings' line addresses count on the joined transcript.
      */
     repaired: boolean;
     reason?: string;
@@ -878,6 +926,8 @@ export interface JoinRepairResult {
     slot?: string;
     /** The one source file of the whole meeting the readers of one file read. */
     joinedFile?: string;
+    /** The joined transcript the repair copied (or would copy) into the record's own copy. */
+    transcript?: { lines: number };
     /**
      * The later recordings' line addresses (an item's `transcriptLine`) that a join before 2026-11-25 left on their own
      * recording's lines, moved onto the joined transcript's; `unplaced` name no line of their item either way and stay.
@@ -887,14 +937,22 @@ export interface JoinRepairResult {
 }
 
 /**
- * Brings a joined record to the shape `join` writes now (`join-sound.ts`), after cloning every folder it touches into a
- * backup. A record joined before 2026-11-25 kept its later recording's sound in that recording's folder: it moves in.
- * A record whose sound moved in but whose source slot no longer is the file of the whole meeting (a source-audio pass
- * copied one recording over it) gets that slot written again. Idempotent: a record already in shape changes nothing.
+ * Brings a joined record to the shape `join` writes now, after cloning every folder it touches into a backup:
+ * - a record joined before 2026-11-25 kept its later recording's sound in that recording's folder: it moves in
+ *   (`join-sound.ts`);
+ * - a record whose sound moved in but whose source slot no longer is the file of the whole meeting (a source-audio pass
+ *   copied one recording over it) gets that slot written again;
+ * - a record without its own copy of the joined transcript (joined before the join kept one) gets it: each recording
+ *   read once from its own source, with the copy it kept answering when the provider lost it, merged on the joined
+ *   clock (`saveJoinedCopy`). From then on no read of the record loads a recording's source meeting;
+ * - the line addresses a join before 2026-11-25 left on a later recording's own lines move onto the joined transcript's.
+ * The recordings are read before anything is written, so one that cannot be read changes nothing. Idempotent: a
+ * record already in shape changes nothing.
  */
 export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepairResult> {
     const { store } = request;
     const dryRun = Boolean(request.dryRun);
+    const open = request.open ?? ((recording: RecordingRef) => recordingSource(store, recording));
     const found = store.resolve(request.ref);
 
     if (!found) {
@@ -918,19 +976,26 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
     const soundDone = (record: MeetingRecord) => merged(record) && !joinedSlotProblem(record);
     const linesDone = (record: MeetingRecord) =>
         joinParts(record).every((part) => part.firstLine !== undefined) || !hasLaterLineAddresses(record);
+    const copied = (record: MeetingRecord) =>
+        record.join !== undefined && hasSourceCopy(store.folder(record.id), joinedCopyRef(record.join.parts));
     const done = (record: MeetingRecord): JoinRepairResult | undefined =>
-        soundDone(record) && linesDone(record)
+        soundDone(record) && linesDone(record) && copied(record)
             ? {
                   meeting: record.id,
                   dryRun,
                   repaired: false,
                   reason: joinParts(record).every((part) => part.firstLine !== undefined)
-                      ? "its sound is in its own folder already, and its line addresses count on the joined transcript"
-                      : "its sound is in its own folder already",
+                      ? "its sound and its transcript are in its own folder already, and its line addresses count on the joined transcript"
+                      : "its sound and its transcript are in its own folder already",
               }
             : undefined;
+    // Each recording read once, before anything is written, when the record keeps no copy of the joined transcript yet.
+    const readsOf = (record: MeetingRecord) => (copied(record) ? undefined : readJoinedParts(joinParts(record), open));
     // The joined transcript a line address is checked against: the line it names must be its item's.
-    const transcriptOf = async (record: MeetingRecord) => (await OpenedMeeting.of(store, record).meeting()).transcript;
+    const transcriptOf = async (record: MeetingRecord, reads: JoinedReads | undefined) =>
+        reads
+            ? joinedMeeting(record, joinParts(record), reads.meetings).transcript
+            : (await OpenedMeeting.of(store, record).meeting()).transcript;
     const linesOf = (plan: JoinedLines) => ({ moved: plan.moved, unplaced: plan.unplaced });
 
     if (done(found)) {
@@ -939,12 +1004,16 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
 
     if (dryRun) {
         const slot = merged(found) ? joinedSlotProblem(found) : undefined;
+        const reads = await readsOf(found);
         return {
             meeting: found.id,
             dryRun,
             repaired: false,
             ...(soundDone(found) ? {} : slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
-            ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await transcriptOf(found))) }),
+            ...(reads ? { transcript: { lines: joinedLines(reads) } } : {}),
+            ...(linesDone(found)
+                ? {}
+                : { lines: linesOf(joinedLineAddresses(found, await transcriptOf(found, reads))) }),
         };
     }
 
@@ -961,7 +1030,9 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 return done(record)!;
             }
 
-            const transcript = linesDone(record) ? undefined : await transcriptOf(record);
+            // Read before anything is written: a recording that cannot be read leaves the record as it was.
+            const reads = await readsOf(record);
+            const transcript = linesDone(record) ? undefined : await transcriptOf(record, reads);
             const at = request.now ?? new Date();
             const backup = join(
                 request.backupRoot ?? genesisToolsDir("backups", "meetings"),
@@ -988,11 +1059,12 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             const encode = request.encode ? { encode: request.encode } : {};
             const source = sourceRefOf(record);
             const result: JoinRepairResult = { meeting: record.id, dryRun, repaired: true, backup };
+            let latest = record;
 
             if (!soundDone(record) && merged(record)) {
                 const slot = joinedSlotProblem(record)!;
                 const audio = await restoreJoinedSlot({ store, record, backup, ...encode, now: at });
-                await update(
+                latest = await update(
                     record.id,
                     { command: "join", change: `repair: ${slot}; written again; backup ${backup}` },
                     (next) => {
@@ -1015,7 +1087,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                     ...(joinedFile ? { joined: joinedFile } : {}),
                 });
                 const sound = joinSoundSummary(plan);
-                await update(
+                latest = await update(
                     record.id,
                     {
                         command: "join",
@@ -1042,6 +1114,19 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 if (joinedFile) {
                     result.joinedFile = joinedFile.path;
                 }
+            }
+
+            if (reads) {
+                const { lines } = saveJoinedCopy({ folder: store.folder(record.id), record: latest, reads });
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: the joined transcript (${lines} lines) is now this record's own copy; backup ${backup}`,
+                    },
+                    () => undefined
+                );
+                result.transcript = { lines };
             }
 
             if (transcript) {

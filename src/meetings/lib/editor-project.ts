@@ -112,7 +112,7 @@ export async function meetingEditorSource(
 
     const segments = captionSegments({
         entries,
-        zeroMs: (await CallTimeline.forRecord(record)).zeroMs,
+        zeroMs: (await CallTimeline.forRecord(record, store)).zeroMs,
         startedMs: Date.parse(manifest.startedAt),
         durationSec:
             framesDurationUs({ lastUs: lastMs * 1000, startedAt: manifest.startedAt, endedAt: manifest.endedAt }) /

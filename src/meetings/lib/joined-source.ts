@@ -4,6 +4,7 @@ import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/tran
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { toJoinedSec } from "./join-clock";
+import { type SourceCopyRef, saveSourceCopy } from "./source-copy";
 
 /** Opens a meeting source by its id (`meetingSource`); a test passes a fake one. */
 export type SourceOpener = (sourceId: string) => Promise<TranscriptSource>;
@@ -13,6 +14,12 @@ export function partSpeakerLabel(part: Pick<JoinPart, "speakerLabels">, label: s
     const labels = part.speakerLabels;
     return labels && Object.hasOwn(labels, label) ? labels[label]! : label;
 }
+
+/** One recording and the record it was: its source meeting and its old folder (`recordingSource`; a test fakes it). */
+export type RecordingRef = Pick<JoinPart, "record" | "sourceId" | "sourceMeetingId">;
+
+/** Opens one recording's own source (`recordingSource` in production; a test passes a fake one). */
+export type RecordingOpener = (recording: RecordingRef) => Promise<TranscriptSource>;
 
 /**
  * One recording's transcript on the joined clock: every start and word time moved by the part's offset, every line
@@ -161,8 +168,76 @@ export function joinedEvidence(
 }
 
 /**
- * The source of a joined record: each method asks the parts' own source meetings and answers on the joined clock.
- * The meeting id it is asked with is ignored; the record's parts name the source meetings.
+ * The ref a joined record's own copy is saved under (source-copy.ts): the first recording's source and its
+ * recordings' meeting ids in time order, joined by "+". No single source meeting has that id, so a read of one
+ * recording never takes the joined copy for its own, and the joined copy never answers for one recording.
+ */
+export function joinedCopyRef(parts: readonly JoinPart[]): SourceCopyRef {
+    return { sourceId: parts[0]!.sourceId, sourceMeetingId: parts.map((part) => part.sourceMeetingId).join("+") };
+}
+
+/** Each recording's meeting and evidence, read once from its own source by the join or its repair. */
+export interface JoinedReads {
+    meetings: SourceMeeting[];
+    /** Null for a recording whose source keeps no evidence now but whose sound the record kept. */
+    evidence: Array<MeetingEvidence | null>;
+}
+
+/**
+ * Reads each recording once. A meeting that cannot be read throws, so nothing is written from half a meeting; the
+ * evidence of a recording whose sound the record kept may be missing, as `joinedSource` reads it.
+ */
+export async function readJoinedParts(parts: readonly JoinPart[], open: RecordingOpener): Promise<JoinedReads> {
+    const sources = await Promise.all(parts.map((part) => open(part)));
+    const [meetings, evidence] = await Promise.all([
+        Promise.all(parts.map((part, index) => sources[index]!.load(part.sourceMeetingId))),
+        Promise.all(
+            parts.map((part, index) =>
+                sources[index]!.evidence(part.sourceMeetingId).catch((error: unknown) => {
+                    if (!part.audio) {
+                        throw error;
+                    }
+
+                    return null;
+                })
+            )
+        ),
+    ]);
+    return { meetings, evidence };
+}
+
+/**
+ * Saves the joined meeting as the joined record's own copy (`joinedCopyRef`): the meeting on the joined clock, the
+ * evidence and the first recording's clock. The meeting is written last: its header is what says the record owns a
+ * copy (`hasSourceCopy`), so a write cut short leaves the record reading as before. Writes nothing when the copy is
+ * the same. `record` must carry its `join`.
+ */
+export function saveJoinedCopy(options: { folder: string; record: MeetingRecord; reads: JoinedReads }): {
+    lines: number;
+    written: boolean;
+} {
+    const { folder, record, reads } = options;
+    const parts = record.join?.parts ?? [];
+
+    if (parts.length < 2) {
+        throw new Error(`${record.id} is not a joined meeting; it has no joined transcript to keep.`);
+    }
+
+    const ref = joinedCopyRef(parts);
+    const meeting = joinedMeeting(record, parts, reads.meetings);
+    const evidence = saveSourceCopy(folder, "evidence", ref, joinedEvidence(parts, reads.evidence));
+    const clock = saveSourceCopy(folder, "clock", ref, { startedAt: parts[0]!.zeroAt });
+    const saved = saveSourceCopy(folder, "meeting", ref, meeting);
+    return { lines: meeting.transcript.length, written: evidence || clock || saved };
+}
+
+/**
+ * The source of a joined record composed from its recordings' sources on every read: each method asks the parts' own
+ * source meetings and answers on the joined clock. The meeting id it is asked with is ignored; the record's parts
+ * name the source meetings.
+ *
+ * @deprecated Only a record joined before its transcript was copied reads this, until `meetings join <id> --repair`
+ * writes its copy (`saveJoinedCopy`); every other joined record reads its own copy (`linkedSource`).
  */
 export async function joinedSource(record: MeetingRecord, open: SourceOpener): Promise<TranscriptSource> {
     const parts = record.join?.parts ?? [];

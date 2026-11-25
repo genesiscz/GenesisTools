@@ -65,7 +65,7 @@ async function attendance(
                 })
             );
         } else if (opts.from) {
-            const timeline = await CallTimeline.forRecord(record);
+            const timeline = await CallTimeline.forRecord(record, store);
             current = await timeline.store(
                 store,
                 await timeline.stays(opts.from, opts.id ? { id: opts.id } : undefined),

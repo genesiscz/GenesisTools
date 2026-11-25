@@ -23,7 +23,7 @@ in a fresh process). Bindings survive between `js` calls of the MCP server, neve
 | `meetings.seats({ meeting })` | `tools meetings seats <meeting> --json` |
 | `meetings.play({ meeting, atSec, toSec?, beforeSec?, track?, player?, start? })` (`start: false` plans only) | `tools meetings play <meeting> <time> --json` (`--no-start`) |
 | `meetings.join({ meetings: [a, b], dryRun })` | `tools meetings join <a> <b> --json` (`--dry-run`) |
-| `meetings.joinRepair({ meeting, dryRun })` (a meeting joined before 2026-11-25) | `tools meetings join <meeting> --repair --json` (`--dry-run`) |
+| `meetings.joinRepair({ meeting, dryRun })` (a meeting joined before 2026-11-25, or before the join kept its transcript) | `tools meetings join <meeting> --repair --json` (`--dry-run`) |
 | `meetings.thresholds({ meeting, set: { "term.applyAbove": 0.8 }, preview: true })` | `tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview --json` |
 | `meetings.voiceReadiness({ meeting })` | The `voice` field of `tools meetings show <meeting> --json` |
 | `meetings.voices({ scope: "project", project })` | `tools meetings voices --project <p> --json` |

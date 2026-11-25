@@ -917,24 +917,24 @@ export const join = defineMethod({
     }),
     result: z.unknown(),
     resultName:
-        "{ into, dryRun, parts: [{ record, title, source, offsetMs, lines, items, renumbered, relabeled?, endSec }], gaps, rounded, backup?, withdrawn? }",
+        "{ into, dryRun, parts: [{ record, title, source, offsetMs, lines, items, renumbered, relabeled?, endSec }], gaps, rounded, sound, transcript: { lines, copied }, backup?, withdrawn? }",
     effect: "reversible",
-    doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). A speaker label both recordings use reads as "Speaker 1 (2)" on the later recording's lines, items, journal and seats (relabeled: own label to joined label). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
+    doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). A speaker label both recordings use reads as "Speaker 1 (2)" on the later recording's lines, items, journal and seats (relabeled: own label to joined label). Each recording is read once and the joined transcript (joined line numbering and labels) is kept as the record's own copy (transcript.copied), so no later read asks the recordings' sources. Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
 });
 
 export const joinRepair = defineMethod({
     name: "joinRepair",
     params: z.object({
-        /** A meeting joined before 2026-11-25 (its later recording's sound still in that recording's folder). */
+        /** A joined meeting: its later recording's sound still in its own folder, or no own copy of its transcript yet. */
         meeting: z.string().min(1),
         /** true: say what would move; nothing changes. */
         dryRun: z.boolean().optional(),
     }),
     result: z.unknown(),
     resultName:
-        "{ meeting, dryRun, repaired, reason?, slot?, sound?: { pieces, rows, levels, recordings: [{ record, offsetMs }] }, joinedFile?, lines?: { moved, unplaced }, backup? }",
+        "{ meeting, dryRun, repaired, reason?, slot?, sound?: { pieces, rows, levels, recordings: [{ record, offsetMs }] }, joinedFile?, transcript?: { lines }, lines?: { moved, unplaced }, backup? }",
     effect: "reversible",
-    doc: `Move the later recording's sound of a meeting joined before 2026-11-25 into the joined record's folder, as join does now: its recorder files and rows, its measured clock as its own entry, its source recording as a piece of one source file of the whole meeting (the gap silence). It also moves the line addresses (an item's transcriptLine) that such a join left on the later recording's own lines onto the joined transcript's lines, each checked against the line it names, and writes each recording's firstLine (lines: { moved, unplaced }). Every folder it touches is cloned into a backup first; a second run changes nothing (repaired: false). CLI twin: ${toolCommand("meetings", "join")} <meeting> --repair [--dry-run] --json.`,
+    doc: `Bring a joined meeting to what join writes now. The later recording's sound of a meeting joined before 2026-11-25 moves into the joined record's folder: its recorder files and rows, its measured clock as its own entry, its source recording as a piece of one source file of the whole meeting (the gap silence). A meeting joined before its transcript was copied gets the joined transcript as its own copy (transcript.lines): each recording read once, so no later read asks the recordings' sources. It also moves the line addresses (an item's transcriptLine) that such a join left on the later recording's own lines onto the joined transcript's lines, each checked against the line it names, and writes each recording's firstLine (lines: { moved, unplaced }). Every folder it touches is cloned into a backup first; a second run changes nothing (repaired: false). CLI twin: ${toolCommand("meetings", "join")} <meeting> --repair [--dry-run] --json.`,
 });
 
 export const confirmRelayed = defineMethod({
