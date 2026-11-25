@@ -347,6 +347,53 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertEqual(results.first?.picked, ["m2:i7"], "only the ticked row is confirmed")
         XCTAssertEqual(fake.stopped, [6161], "the answer stops the row's clip")
     }
+
+    // MARK: A request that ends elsewhere (withdrawn by its caller, answered in another surface)
+
+    func testARequestThatEndsElsewhereClosesItsWindowOrLeavesTheQueue() throws {
+        let harness = try PresenterHarness()
+        harness.enqueue("a")
+        harness.enqueue("b")
+        harness.enqueue("c")
+        harness.presenter.end("b", reason: "withdrawn")
+        XCTAssertEqual(harness.results.map(\.id), ["b"], "a queued request leaves the queue at once")
+        XCTAssertEqual(harness.results.first?.status, .value3)
+        XCTAssertEqual(harness.results.first?.reason, "withdrawn")
+        harness.presenter.end("unknown", reason: "another request")
+        XCTAssertEqual(harness.results.count, 1, "an id that is not here changes nothing")
+        XCTAssertEqual(harness.panel.closes, 0)
+
+        harness.presenter.end("a", reason: "withdrawn")
+        XCTAssertEqual(harness.results.map(\.id), ["b", "a"])
+        XCTAssertEqual(harness.results.map(\.status), [.value3, .value3])
+        XCTAssertEqual(harness.panel.closes, 1, "the open window closes")
+        XCTAssertEqual(harness.panel.shown.map(\.title), ["a", "c"], "the next one shows, and b never showed")
+        harness.panel.shown[0].allow()
+        XCTAssertEqual(harness.results.count, 2, "a click on the closed window answers nothing")
+        harness.clock.advance(by: 200)
+        XCTAssertEqual(harness.results.map(\.status), [.value3, .value3, .value4], "the next one keeps its own deadline")
+        harness.presenter.end("c", reason: "late")
+        XCTAssertEqual(harness.results.count, 3, "a request that already ended here is not answered twice")
+        XCTAssertEqual(harness.idles, 1)
+    }
+
+    func testOnlyARequestThatNoLongerWaitsClosesItsWindow() throws {
+        func change(state: String, status: String, reason: String?) throws -> RequestChangedEvent {
+            let request = #"{"kind":"notice","id":"relayed:fixture","title":"Confirm the answer you gave","reason":"An agent relayed it.","createdAt":"2026-11-25T00:00:00.000Z"}"#
+            let posted = #"{"type":"posted","at":"2026-11-25T00:00:00.000Z","request":"# + request + #","asker":null}"#
+            let why = reason.map { "\"\($0)\"" } ?? "null"
+            let json = #"{"id":"relayed:fixture","request":"# + request + #","state":""# + state + #"","events":["# + posted
+                + #"],"outcome":{"id":"relayed:fixture","status":""# + status + #"","reason":"# + why + "}}"
+            return try JSONDecoder().decode(RequestChangedEvent.self, from: Data(json.utf8))
+        }
+        XCTAssertNil(RequestPresenter.endedElsewhere(try change(state: "waiting", status: "pending", reason: nil)))
+        XCTAssertEqual(
+            RequestPresenter.endedElsewhere(try change(state: "withdrawn", status: "obsolete", reason: "Withdrawn by its caller.")),
+            "This window closed without an answer, because the request ended elsewhere (withdrawn). Withdrawn by its caller.")
+        XCTAssertEqual(
+            RequestPresenter.endedElsewhere(try change(state: "done", status: "done", reason: nil)),
+            "This window closed without an answer, because the request ended elsewhere (done).")
+    }
 }
 
 @MainActor

@@ -528,6 +528,72 @@ test("a subscribed face receives each worker and service settlement transition e
     }
 });
 
+test("a face that shows a request hears another process withdraw it, and its obsolete answer leaves the request withdrawn", async () => {
+    const dir = scratch();
+    const start = await startGenesisToolsService({
+        dir,
+        checkEveryMs: 200,
+        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: async () => true } },
+    });
+    if (start.status !== "started") {
+        throw new Error("fixture service did not start");
+    }
+
+    // Another process (a rerun of tools meetings listen --confirm-relayed) withdraws through its own journal.
+    const elsewhere = createRequestJournal({ dir: join(dir, "requests") });
+    const id = "relayed:fixture";
+    const shown = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<RequestView>();
+    let face: RpcSocketClient | null = null;
+    let client: RpcSocketClient | null = null;
+    try {
+        face = await RpcSocketClient.connect({
+            socket: start.host.entry.socket,
+            logScope: "fixture",
+            label: "fixture face",
+            onRequest: async (incoming) => {
+                const request = requestSchema.parse(incoming.params);
+                shown.resolve();
+                // The app's window stays open until the request ends elsewhere, then closes and answers obsolete.
+                const view = await ended.promise;
+                return { id: request.id, status: "obsolete", reason: `The request ended elsewhere (${view.state}).` };
+            },
+        });
+        face.onNotification((event) => {
+            if (event.method !== "request.changed") {
+                return;
+            }
+
+            const view = requestViewSchema.parse(event.params);
+            if (view.id === id && view.outcome.status !== "pending") {
+                ended.resolve(view);
+            }
+        });
+        await face.call("hello", { methods: ["request.present"] });
+        await face.call("subscribe", { events: ["request.changed"] });
+        client = await connectGenesisToolsService({ dir });
+        if (!client) {
+            throw new Error("fixture client did not connect");
+        }
+
+        await elsewhere.post({ input: { ...input, id } });
+        const presented = client.call<{ status: string }>("requests.present", { id });
+        await withTimeout(shown.promise, 2_000, new Error("the face never showed the request"));
+        await elsewhere.withdraw(id);
+
+        const view = await withTimeout(ended.promise, 5_000, new Error("the withdrawal never reached the face"));
+        expect(view.state).toBe("withdrawn");
+        await expect(presented).resolves.toMatchObject({ status: "obsolete" });
+        expect(elsewhere.get(id)?.state).toBe("withdrawn");
+        expect(elsewhere.get(id)?.events.map((event) => event.type)).toEqual(["posted", "withdrawn"]);
+    } finally {
+        client?.close();
+        face?.close();
+        start.host.stop("test complete");
+        await start.host.stopped;
+    }
+});
+
 test("the wire samples reach both alternatives of a nullable field inside one arm of an outer union", () => {
     const schema: WireSchema = {
         anyOf: [
