@@ -29,7 +29,7 @@ import {
     proposeSpeakerLabels,
     speakerLabelRule,
 } from "./speaker-labels";
-import type { LabelContext } from "./speaker-labels/types";
+import type { LabelContext, LineLabel } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { suggestItems } from "./suggest";
 import { correctionsOf } from "./transcript-corrections";
@@ -418,6 +418,42 @@ test("in a room of three, a person with fewer prints than minSamples takes no pa
     expect(name({ lines: [line([1, 0, 0])], attended: [alice, carol], store, minSamples: 2 })[0]?.person).toBe(
         alice.person
     );
+});
+
+test("minSamples holds back only a split of three or more at one seat: a seat of one keeps its person, sampled or not", () => {
+    const carol = { ...bob, person: "Carol Example" };
+    const dana = { person: "Dana Example", seat: "call" as const, fromSec: 0, toSec: 100 };
+    const attended = [alice, bob, carol, dana];
+    const store = storeOf({
+        [alice.person]: [
+            [1, 0, 0],
+            [0.99, 0.14, 0],
+        ],
+        [bob.person]: [
+            [0, 1, 0],
+            [0.14, 0.99, 0],
+        ],
+        [carol.person]: [[0, 0, 1]],
+    });
+    // Dana sits alone on the call seat and has no voice sample: the voice has no split there, so no line waits.
+    const callLine = line([0, 0, 1], { index: 1, seat: "call", track: "source-call" });
+    const alone = name({ lines: [callLine], attended, store, minSamples: 2 });
+    expect(alone[0]?.reason).not.toBe("few-samples");
+    expect(fewSampleWarnings(alone, 2)).toEqual([]);
+    const seat: LineLabel = { labeler: "seat", index: 1, seat: "call", person: dana.person, reason: "seat-of-one" };
+    expect(
+        mergeLineLabels(
+            new Map([
+                ["seat", [seat]],
+                ["voice", alone],
+            ])
+        )
+    ).toEqual([seat]);
+    // The three people of the room still leave Carol's one print out of their split.
+    expect(name({ lines: [line([0.3, 0.3, Math.sqrt(1 - 0.18)])], attended, store, minSamples: 2 })[0]).toMatchObject({
+        reason: "few-samples",
+        next: { person: carol.person },
+    });
 });
 
 test("unsampled attended people raise the configured gate, and identify who lacks a print", () => {
