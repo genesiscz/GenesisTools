@@ -198,6 +198,12 @@ final class RequestPresenter {
                     action.problem.map { ApprovalFact(action.link.title, $0.detail, monospaced: true) }
                 })
             }
+            // One clip at a time: a button's Play stops the clip another button plays (a row's or the request's own).
+            action.willPlay = { [weak action] in
+                for other in every where other !== action {
+                    other.stopPlaying()
+                }
+            }
             action.prepare()
         }
         var answered = false

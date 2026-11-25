@@ -348,6 +348,43 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertEqual(fake.stopped, [6161], "the answer stops the row's clip")
     }
 
+    func testAWindowPlaysOneClipAtATime() throws {
+        let fake = FakeActions()
+        let panel = FakeRequestPanel()
+        let clock = ManualClock()
+        let presenter = RequestPresenter(panel: panel, clock: clock.clock, activate: {}, actionContext: fake.context)
+        presenter.enqueue(try Self.relayed()) { _ in }
+        let model = try XCTUnwrap(panel.shown.last)
+        fake.replies.removeFirst()(0, "{}", "")
+        fake.replies.removeFirst()(0, "{}", "")
+
+        // The second row's Play stops the clip of the first row before its own starts.
+        model.checks[0].link?.action()
+        fake.replies.removeFirst()(0, #"{"pid":7171}"#, "")
+        XCTAssertEqual(model.checks.map { $0.link?.title }, ["Stop", "Play clip"])
+        model.checks[1].link?.action()
+        XCTAssertEqual(fake.stopped, [7171], "the first row's clip stops at the second row's Play")
+        XCTAssertEqual(fake.runs.last, ["meetings", "play", "m2", "--at", "20", "--to", "25", "--json"])
+        fake.replies.removeFirst()(0, #"{"pid":7272}"#, "")
+        XCTAssertEqual(model.checks.map { $0.link?.title }, ["Play clip", "Stop"])
+
+        // A Play that comes while another row's player still starts: that player stops the moment it starts.
+        model.checks[1].link?.action()
+        model.checks[0].link?.action()
+        model.checks[1].link?.action()
+        fake.replies.removeFirst()(0, #"{"pid":7373}"#, "")
+        fake.replies.removeFirst()(0, #"{"pid":7474}"#, "")
+        XCTAssertEqual(fake.stopped, [7171, 7272, 7373], "the overtaken start never plays beside the newer one")
+        XCTAssertEqual(model.checks.map { $0.link?.title }, ["Play clip", "Stop"])
+
+        // A window that closes while a clip starts stops that clip as it starts.
+        model.checks[0].link?.action()
+        XCTAssertEqual(fake.stopped, [7171, 7272, 7373, 7474])
+        model.deny()
+        fake.replies.removeFirst()(0, #"{"pid":7575}"#, "")
+        XCTAssertEqual(fake.stopped, [7171, 7272, 7373, 7474, 7575], "the clip that started after the close stops too")
+    }
+
     // MARK: A request that ends elsewhere (withdrawn by its caller, answered in another surface)
 
     func testARequestThatEndsElsewhereClosesItsWindowOrLeavesTheQueue() throws {
