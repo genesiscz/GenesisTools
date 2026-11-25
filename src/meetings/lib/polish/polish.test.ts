@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -331,7 +331,9 @@ describe("buildPolished", () => {
             },
             { command: "new", change: "test" }
         );
-        const folder = mkdtempSync(join(tmpdir(), "meetings-polish-"));
+        // Reached through a symlink, as /tmp and /var are on macOS: Bun 1.4.2 lists such a folder once per process.
+        const folder = `${mkdtempSync(join(tmpdir(), "meetings-polish-"))}-link`;
+        symlinkSync(folder.replace(/-link$/, ""), folder, "junction");
         const file = join(folder, "Planning.polished.ts");
         const config = {
             title: "Planning",
@@ -406,8 +408,8 @@ describe("buildPolished", () => {
             ["en", "- b) something else", false],
             ["de", "- b) something else", true],
         ] as const) {
-            // A folder of its own: Bun's resolver keeps the file list of a folder it already imported from.
-            const other = join(mkdtempSync(join(tmpdir(), "meetings-polish-")), "Planning.polished.ts");
+            // A module written after the first build, in the folder the process imported from already.
+            const other = join(folder, `Planning-${language}.polished.ts`);
             writeFileSync(
                 other,
                 `import { defineMeetingsPolished } from ${SafeJSON.stringify(POLISHED_MODULE)};\nexport default defineMeetingsPolished(${SafeJSON.stringify({ ...config, language })});\n`
