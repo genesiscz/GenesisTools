@@ -485,6 +485,16 @@ export function formatTimecode(totalSeconds: number, options: { hours?: "always"
 }
 
 /**
+ * One line of tab-separated values. A tab, carriage return or newline inside a cell becomes one space, so a cell never
+ * splits a row; an absent cell is empty.
+ */
+export function tsvLine(cells: ReadonlyArray<string | number | undefined | null>): string {
+    return cells
+        .map((cell) => (cell === undefined || cell === null ? "" : String(cell).replace(/[\t\r\n]+/g, " ")))
+        .join("\t");
+}
+
+/**
  * `H:MM:SS`, `M:SS` or plain seconds (`5:21:35`, `21:35`, `19295.5`) as seconds; null for anything else. Without an
  * hour field the minutes may pass 59 (`62:03` is 3723 s), as a player counts a long video.
  */

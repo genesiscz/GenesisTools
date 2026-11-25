@@ -32,6 +32,7 @@ import {
     voicesJobsCancel,
     voicesList,
     voicesMove,
+    voicesPreview,
     voicesQuality,
     voicesReject,
     voicesRemove,
@@ -1014,6 +1015,10 @@ export const voiceLibraryMethods = {
     remove: defineMethod({
         ...voicesRemove,
         doc: `Return the IDs and suggestions affected by ${toolCommand("meetings voices remove")}. Set preview to true for a planToken to pass when confirming.`,
+    }),
+    preview: defineMethod({
+        ...voicesPreview,
+        doc: `Read the voice labeler's proposal for each transcript line: index, times, text, current speaker, person, score, margin, the runner-up (next) and the refusal reason. Saves nothing. CLI twin: ${toolCommand("meetings voices preview")} <meeting> --json (--format tsv: one row per line).`,
     }),
     apply: defineMethod({
         ...voicesApply,

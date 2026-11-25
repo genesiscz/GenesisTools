@@ -84,6 +84,7 @@ import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
+import { indicatorGapSummary } from "./lib/indicator-facts";
 import { appliedLine, itemWhat } from "./lib/item-text";
 import {
     clockMove,
@@ -8420,6 +8421,23 @@ test("raw facts expose indicator gaps, prehistory, indicator-only people and unk
     const compact = compactEvidence(raw);
     expect(compact.split("\n")).toHaveLength(transcript.length + 1);
     expect(compact).toContain("|e?|s[");
+});
+
+test("indicator gaps are one warning line: one gap keeps its own line, more give the count and the longest", () => {
+    const reason = "no speaking or muted indicator observation";
+    expect(indicatorGapSummary([])).toBeUndefined();
+    expect(indicatorGapSummary([{ fromSec: 60, toSec: 130, reason }])).toBe(
+        `Speaking indicator gap 60s to 130s: ${reason}`
+    );
+    expect(
+        indicatorGapSummary([
+            { fromSec: 60, toSec: 130, reason },
+            { fromSec: 3967, toSec: 4147, reason },
+            { fromSec: 5000, toSec: 5061, reason },
+        ])
+    ).toBe(
+        "3 speaking indicator gaps, longest 03:00 at 1:06:07; --verbose or evidence --raw (meeting.indicatorGaps) lists them"
+    );
 });
 
 test("unknown failed or gapped indicator observations award no E3 evidence", () => {

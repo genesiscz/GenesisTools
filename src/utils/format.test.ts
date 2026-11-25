@@ -13,6 +13,7 @@ import {
     parseDuration,
     parseTimecode,
     requireDuration,
+    tsvLine,
 } from "./format";
 import { generateId } from "./id";
 
@@ -402,5 +403,13 @@ describe("timecodes", () => {
         expect(parseTimecode("90m")).toBeNull();
         expect(parseTimecode("9".repeat(400))).toBeNull();
         expect(parseTimecode(`${"9".repeat(400)}:00`)).toBeNull();
+    });
+});
+
+describe("tsvLine", () => {
+    it("joins cells with tabs and keeps every row on one line", () => {
+        expect(tsvLine(["a", 1, undefined, null, "two\twords", "line\r\nbreak"])).toBe(
+            "a\t1\t\t\ttwo words\tline break"
+        );
     });
 });

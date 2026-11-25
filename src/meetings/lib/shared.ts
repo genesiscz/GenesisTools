@@ -164,6 +164,32 @@ export function formatFlag(opts: { format?: string | boolean; json?: boolean }):
 }
 
 /**
+ * The `--format` of a listing (items, seats, voices preview). `--json` is its short form and a bare `--format`
+ * prompts in a terminal. Without either, a terminal keeps the table and a pipe gets `piped`, the compact form an agent
+ * reads.
+ */
+export async function listingFormat<T extends string>(options: {
+    opts: { format?: string | boolean; json?: boolean };
+    values: readonly ("table" | T)[];
+    piped: T;
+    subcommand: string[];
+}): Promise<"table" | T | undefined> {
+    const flag = formatFlag(options.opts);
+
+    if (!flag) {
+        return undefined;
+    }
+
+    return resolveEnum<"table" | T>({
+        value: flag.format,
+        fallback: process.stdout.isTTY ? "table" : options.piped,
+        values: options.values,
+        flag: "--format",
+        subcommand: options.subcommand,
+    });
+}
+
+/**
  * An enumerated flag declared `--flag [value]`: a value is checked, a bare flag prompts in a
  * terminal, and anything else prints the possible values with a ready command.
  */

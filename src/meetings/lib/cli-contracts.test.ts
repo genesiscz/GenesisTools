@@ -59,6 +59,7 @@ import { preserveSourceAudio } from "./source-audio";
 import { linkedSource } from "./sources";
 import * as labelsModule from "./speaker-labels";
 import * as suggestRun from "./suggest-run";
+import * as voicesModule from "./voices";
 import {
     applyVoices,
     listProjectVoices,
@@ -1886,10 +1887,107 @@ test("the items column keeps a long quote's source inside its width", async () =
     try {
         const program = new Command().exitOverride();
         await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
-        await program.parseAsync(["items", record.id], { from: "user" });
+        await program.parseAsync(["items", record.id, "--format", "table"], { from: "user" });
         expect(printed.join("\n")).toContain('…" (quote from dto.ts:12)');
     } finally {
         output.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("items, seats and voices preview print the compact form in a pipe and the table in a terminal", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Compact outputs",
+            start: "2026-11-09T10:00:00Z",
+            createdBy: "new",
+            participants: [{ name: "Reed", self: true, from: [] }],
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    suggestedAt: "2026-11-09T10:00:00Z",
+                    rules: [],
+                    heard: "flim bit",
+                    proposed: "flimbit",
+                    confidence: 0.874,
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const preview = spyOn(voicesModule, "previewVoices").mockResolvedValue({
+        meeting: record.id,
+        lines: [
+            {
+                labeler: "voice",
+                index: 3,
+                seat: "mic",
+                fromSec: 61,
+                toSec: 64,
+                text: "Two\twords",
+                current: "Speaker 1",
+                person: "Reed",
+                score: 0.812,
+                reason: "named",
+                next: { person: "Lake", score: 0.5 },
+            },
+        ],
+    });
+    const results: string[] = [];
+    const lines: string[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(String(data));
+    });
+    const println = spyOn(out, "println").mockImplementation((text: string) => {
+        lines.push(text);
+    });
+    const stdoutTTY = process.stdout.isTTY;
+    async function run(tty: boolean, requested: string, ...args: string[]) {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: tty });
+        results.length = 0;
+        lines.length = 0;
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested });
+        await program.parseAsync(args, { from: "user" });
+    }
+    try {
+        await run(false, "items", "items", record.id);
+        expect(results).toEqual([
+            "id\tq\tkind\tstatus\tconf\twhat\trules\ni1\t\tterm\tsuggested\t87\tflim bit → flimbit\t",
+        ]);
+        expect(lines).toEqual([]);
+        await run(true, "items", "items", record.id);
+        expect(results).toEqual([]);
+        expect(lines.join("\n")).toContain("STATUS");
+        await run(false, "items", "items", record.id, "--json");
+        expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject([{ id: "i1" }]);
+
+        await run(false, "seats", "seats", record.id);
+        expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({ meeting: record.id, saved: false });
+        await run(false, "seats", "seats", record.id, "--format", "tsv");
+        expect(results[0]?.split("\n")[0]).toBe("person\tcurrent\tsuggested\treason");
+        expect(results[0]).toContain("\n# Current seats: not set");
+        await run(true, "seats", "seats", record.id);
+        expect(results).toEqual([]);
+        expect(lines.join("\n")).toContain("PERSON");
+
+        await run(false, "voices", "voices", "preview", record.id);
+        expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({ lines: [{ index: 3 }] });
+        await run(false, "voices", "voices", "preview", record.id, "--format", "tsv");
+        expect(results[0]).toBe(
+            "idx\tfrom\tto\tcurrent\tperson\tscore\treason\tmargin\tnext\ttext\n3\t01:01\t01:04\tSpeaker 1\tReed\t0.81\tnamed\t\tLake 0.50\tTwo words"
+        );
+        await run(true, "voices", "voices", "preview", record.id);
+        expect(results).toEqual([]);
+        expect(lines[0]).toContain("Speaker 1 → Reed by voice 0.81");
+    } finally {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: stdoutTTY });
+        result.mockRestore();
+        println.mockRestore();
+        preview.mockRestore();
         process.exitCode = 0;
     }
 });
