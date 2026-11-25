@@ -46,6 +46,9 @@ enum WidgetDecisionSurface: Equatable {
         }
     }
 
+    /// The gap above a list row's staged row: the feed's 2 pt; the staged list's row sits on its options' rhythm.
+    var stagedRowGap: CGFloat { self == .staged ? 0 : 2 }
+
     /// Where Send, Unstage and Send now (all N) sit: on their own line under a list row's options (the rows are 260 to
     /// 560 pt wide), or in the card's and the alert's footer.
     var placement: WidgetStagedActions.Placement {
@@ -184,7 +187,7 @@ struct WidgetDecisionBody<OwnAnswer: View, Footer: View>: View {
                 ownAnswer
                 if surface == .session { stagedNote }
                 // Send and Unstage of a staged pick or note, beside the options they send.
-                if surface.placement == .row { surface.stagedActions(value, host: host).padding(.top, 2) }
+                if surface.placement == .row { surface.stagedActions(value, host: host).padding(.top, surface.stagedRowGap) }
             }
             if surface == .session {
                 // Send now is the card's one primary action while a pick or a note waits, at the footer's start; the

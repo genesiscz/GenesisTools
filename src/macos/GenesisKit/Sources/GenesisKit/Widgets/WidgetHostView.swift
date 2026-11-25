@@ -590,7 +590,7 @@ struct WidgetPeekView: View {
     /// The panel's corner (EdgePanelShape's 18) minus the inset, so the flash runs parallel to the panel's edge.
     static let cornerRadius: CGFloat = 18 - inset
     /// The options the tile lists; the rest wait in the session's inbox.
-    static let shownOptions = 4
+    static let shownOptions = WidgetDecisionSurface.alertOptions
     /// The later alerts the tile lists under the shown one; the rest wait in the inbox.
     static let shownWaiting = 3
 
@@ -633,10 +633,11 @@ struct WidgetPeekView: View {
                     // What the send from this popup did, read where it was sent (UX audit F5).
                     outcomeBlock(outcome)
                 } else {
-                    // The context the agent wrote under the title, so a pick here is not made blind (Martin,
-                    // 2026-10-28: "in this window you should probably have the description").
-                    if model.preferences.alertSummary,
-                       let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                    if !options.isEmpty {
+                        decision
+                    } else if model.preferences.alertSummary,
+                              let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                        // The context the agent wrote under the title (the decision body draws it above options).
                         WidgetPeekSummary(summary: summary).equatable()
                     }
                     if let text = item.message?.text, !text.isEmpty {
@@ -645,7 +646,6 @@ struct WidgetPeekView: View {
                             .accessibilityIdentifier("widget.peek.message")
                             .frameProbe("widget.peek.message")
                     }
-                    if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
                 }
@@ -753,41 +753,41 @@ struct WidgetPeekView: View {
     /// The summary's tallest block; a longer one scrolls, so the options and the footer under it stay on screen.
     static let summaryMaxHeight: CGFloat = 132
 
-    /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
-    /// setting) without opening anything, and the row says Staged at once. A send shows its outcome here.
-    private var optionList: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
-                // A pick sent at once stays in the popup, which shows its outcome (`WidgetAlertPopup.outcome`), or opens its session
-                // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
-                // Read at the click, ⌘ included: a click that only stages never opens anything.
-                // A decision that takes any set of its options only ticks the letter, in every click mode.
-                WidgetOptionButton(model: model, item: item, index: index, option: option) {
-                    if Self.sendOpensSession(model.preferences,
-                        staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
-                        open()
+    /// The alert's decision on the shared decision body: its summary (Alerts → the description), at most four
+    /// options as the inbox draws them and "N more in its session", and the compact own answer. A click stages an
+    /// option (or sends it, by the Decision click setting) without opening anything, and the row says Staged at once.
+    private var decision: some View {
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: nil), surface: .alert, host: host,
+            // A pick sent at once stays in the popup, which shows its outcome (`WidgetAlertPopup.outcome`), or opens its
+            // session when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no
+            // setting). Read at the click, ⌘ included: a click that only stages never opens anything. A decision that
+            // takes any set of its options only ticks the letter, in every click mode.
+            chosen: {
+                if Self.sendOpensSession(model.preferences,
+                    staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
+                    open()
+                }
+            },
+            ownAnswer: {
+                // The card's answer field, compact (Martin, 2026-10-28: "just under the buttons as a smaller compact
+                // version of the input"). The popup's panel does not type in place: it closes on its timer and when
+                // the pointer leaves, and the draft it would write belongs to the session the panel shows.
+                if model.preferences.alertCompactAnswer {
+                    WidgetCompactOwnAnswer(text: model.ownAnswerText(for: item), identifier: "widget.peek.ownAnswer") {
+                        open(ownAnswer: true)
                     }
                 }
-            }
-            if options.count > Self.shownOptions {
-                // A count opens what it counts (UX audit P5): the decision in its session, with every option.
-                moreButton("\(options.count - Self.shownOptions) more in its session",
-                           tooltip: "Opens the decision in its session with all its options") { open() }
-            }
-            if model.preferences.alertCompactAnswer { ownAnswerField }
-        }
+            },
+            footer: { EmptyView() })
     }
 
-    /// The decision's own answer under its options: the card's answer field, compact (Martin, 2026-10-28: "just under
-    /// the buttons as a smaller compact version of the input"). A click opens the decision in its session with the
-    /// full field holding the keyboard. The popup's panel does not type in place: it closes on its timer and when the
-    /// pointer leaves, and the draft it would write belongs to the session the panel shows, not to this decision's.
-    private var ownAnswerField: some View {
-        WidgetAnswerField<EmptyView, EmptyView>.compact(placeholder: "Write my own answer…", shownText: model.ownAnswerText(for: item),
-                                  tooltip: "Opens it in its session with the answer field ready to type") {
-            open(ownAnswer: true)
-        }
-        .padding(.top, 1)
+    /// The alert's actions on its decision: a send leaves for the session when "After a send" says so, and the
+    /// body's "N more in its session" opens it as the header does.
+    private var host: WidgetItemStagingHost {
+        WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false, afterSend: {
+            if Self.sendOpensSession(model.preferences) { open() }
+        }, opens: { open() })
     }
 
     /// A decision answered outside the widget: the option it took, marked as the answer, who recorded it, and the
@@ -851,7 +851,7 @@ struct WidgetPeekView: View {
                 .accessibilityHint("Shows it here")
             }
             if waiting.count > Self.shownWaiting {
-                moreButton("\(waiting.count - Self.shownWaiting) more in the inbox",
+                WidgetMoreButton(title: "\(waiting.count - Self.shownWaiting) more in the inbox",
                            tooltip: "Opens the inbox of every session") {
                     guard let surface = model.hoveredSurface else { return }
                     model.toggleInboxOverview(on: surface)
@@ -885,7 +885,7 @@ struct WidgetPeekView: View {
                 .accessibilityElement(children: .combine)
             }
             if staged.count > Self.shownWaiting + 1 {
-                moreButton("\(staged.count - Self.shownWaiting - 1) more staged",
+                WidgetMoreButton(title: "\(staged.count - Self.shownWaiting - 1) more staged",
                            tooltip: "Opens the staged decisions in the inbox") { open() }
             }
         }
@@ -911,20 +911,6 @@ struct WidgetPeekView: View {
         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DecisionOptionMetrics.cornerRadius))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("widget.peek.outcome")
-    }
-
-    /// "2 more in its session": a quiet link-like button, since a count opens what it counts.
-    private func moreButton(_ title: String, tooltip: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Text(title)
-                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .semibold))
-            }
-            .font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-        .buttonStyle(.genHover())
-        .padding(.leading, 2)
-        .instantTooltip(tooltip)
     }
 
     /// The decision's staged pick or note, here or in the snapshot.
@@ -975,12 +961,8 @@ struct WidgetPeekView: View {
                 .instantTooltip("Sends every staged decision now, one message per session")
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
-            // A second click on the option unstages here, so the alert has no Unstage of its own.
-            WidgetStagedActions(
-                host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false, afterSend: {
-                    if Self.sendOpensSession(model.preferences) { open() }
-                }),
-                placement: .footer, identifier: "widget.peek.send." + item.sourceId, unstages: false)
+            // The decision body's Send, in the footer under the tile's stretch.
+            WidgetDecisionSurface.alert.stagedActions(WidgetDecisionValue(item: item, card: nil), host: host)
         } else {
             Button(openTitle) { open() }
         }
