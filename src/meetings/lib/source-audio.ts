@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants, lstatSync } from "node:fs";
 import { chmod, copyFile, link, mkdir, stat, unlink } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
@@ -33,16 +34,9 @@ function sourceStillLinked(record: MeetingRecord, ref: SourceRef): boolean {
     );
 }
 
-/** Pure lookup: no source read, migration, archive or hash on the playback path. */
-export function preservedSourceAudio(
-    record: MeetingRecord,
-    ref = sourceRefOf(record)
-): PreservedSourceAudio | undefined {
-    if (!ref) {
-        return undefined;
-    }
-    const audio = record.audio?.sources[ref.sourceId];
-    if (!audio || audio.sourceMeetingId !== ref.sourceMeetingId) {
+/** The saved file when it is where the record says, with the size it saved; a moved or edited file is not kept. */
+export function present<T extends { path: string; bytes: number }>(audio: T | undefined): T | undefined {
+    if (!audio) {
         return undefined;
     }
     try {
@@ -54,6 +48,40 @@ export function preservedSourceAudio(
         }
         throw error;
     }
+}
+
+/**
+ * The kept copy of one source meeting's recording (`ref`, the record's linked one by default): the record's source
+ * slot when it holds that recording, or on a joined record the piece of its slot that does (`meetings join`), so every
+ * source meeting a joined record holds reads as preserved and no discovery pass copies it in again. Whether a source
+ * meeting's sound is kept; the file a reader decodes is `recordSourceAudio`. Pure lookup: no source read, migration,
+ * archive or hash on the playback path.
+ */
+export function preservedSourceAudio(
+    record: MeetingRecord,
+    ref = sourceRefOf(record)
+): PreservedSourceAudio | undefined {
+    if (!ref) {
+        return undefined;
+    }
+    const slot = record.audio?.sources[ref.sourceId];
+    return present(
+        slot?.pieces
+            ? slot.pieces.find((piece) => piece.sourceMeetingId === ref.sourceMeetingId)
+            : slot?.sourceMeetingId === ref.sourceMeetingId
+              ? slot
+              : undefined
+    );
+}
+
+/**
+ * The record's own source file, the one a reader of the whole sound decodes: on a joined record the file of the whole
+ * meeting (with its `pieces`), else the one recording. Undefined when the slot holds another source meeting's file.
+ */
+export function recordSourceAudio(record: MeetingRecord): PreservedSourceAudio | undefined {
+    const ref = sourceRefOf(record);
+    const slot = ref ? record.audio?.sources[ref.sourceId] : undefined;
+    return slot?.sourceMeetingId === ref?.sourceMeetingId ? present(slot) : undefined;
 }
 
 export interface PreserveSourceAudioResult {
@@ -172,6 +200,13 @@ export async function preserveSourceAudio(options: {
                     throw new Error("The meeting's linked source changed while audio was being preserved; retry.");
                 }
                 const previous = next.audio?.sources[ref.sourceId];
+                // A joined record's slot is the file of the whole meeting (its recordings are its pieces): one recording
+                // never replaces it, also when an earlier build already put one there; the repair writes it again.
+                if (next.join) {
+                    throw new Error(
+                        `${meetingId} keeps its recordings as pieces of one file; repair its source sound with: ${toolCommand("meetings", "join", meetingId, "--repair")}`
+                    );
+                }
                 if (
                     previous?.sourceMeetingId === audio.sourceMeetingId &&
                     previous.path === audio.path &&
@@ -218,7 +253,7 @@ export function withPreservedSourceAudio(
     record: MeetingRecord,
     evidence: MeetingEvidence | null
 ): MeetingEvidence | null {
-    const audio = preservedSourceAudio(record);
+    const audio = recordSourceAudio(record);
     return audio ? { ...(evidence ?? { segments: [], speaking: [], files: [] }), audioPath: audio.path } : evidence;
 }
 
@@ -284,7 +319,7 @@ export function sourceAudioSummary(record: MeetingRecord): { sources: string[]; 
     const sources: string[] = [];
     let bytes = 0;
     for (const [sourceId, audio] of Object.entries(record.audio?.sources ?? {})) {
-        if (preservedSourceAudio(record, { sourceId, sourceMeetingId: audio.sourceMeetingId })) {
+        if (present(audio)) {
             sources.push(sourceId);
             bytes += audio.bytes;
         }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
     appendFileSync,
     chmodSync,
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
@@ -51,6 +52,8 @@ import {
 import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 import * as screenBoxes from "./screen-boxes";
+import { preservedSourceAudio, preserveSourceAudio, recordSourceAudio } from "./source-audio";
+import { discoverSourceAudio } from "./source-audio-discovery";
 import { resolveToneSound } from "./tone-sound";
 import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
 import { meetingWordTimingCache } from "./word-timings";
@@ -1744,5 +1747,106 @@ describe("a joined meeting is one record of sound (join --repair moves the later
             [earlierFile, 0],
             [laterFile, 600],
         ]);
+    });
+
+    /** The provider's own copies of both recordings, older than what the record saved, as the watcher lists them. */
+    function providerFiles(fx: Awaited<ReturnType<typeof oldJoin>>) {
+        const dir = mkdtempSync(join(tmpdir(), "joined-provider-"));
+        const old = new Date(Date.parse(now) - 3_600_000);
+        return [
+            { sourceMeetingId: "abc", from: fx.files.earlier },
+            { sourceMeetingId: "def", from: fx.files.later },
+        ].map(({ sourceMeetingId, from }) => {
+            const path = join(dir, `${sourceMeetingId}.ogg`);
+            writeFileSync(path, readFileSync(from));
+            utimesSync(path, old, old);
+            return { sourceMeetingId, path };
+        });
+    }
+
+    test("a source-audio pass over a joined record copies nothing: each recording it holds reads as kept", async () => {
+        const fx = await oldJoin(`meetings-joined-watch-${process.pid}`);
+        const provider = providerFiles(fx);
+        await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            backupRoot: mkdtempSync(join(tmpdir(), "joined-watch-")),
+            encode,
+        });
+        const before = SafeJSON.stringify(fx.store.read(fx.record.id));
+        const source = {
+            id: "wisprflow" as const,
+            files: async () => provider,
+            legacyFiles: async () => [],
+            load: async () => null,
+        };
+
+        const record = fx.store.read(fx.record.id)!;
+        expect(preservedSourceAudio(record, { sourceId: "wisprflow", sourceMeetingId: "def" })?.path).toBe(
+            join(fx.keptFolder, "source-audio", `${"b".repeat(64)}.ogg`)
+        );
+        expect(recordSourceAudio(record)?.pieces).toHaveLength(2);
+        for (let pass = 0; pass < 3; pass++) {
+            expect(await discoverSourceAudio({ store: fx.store, source })).toEqual({ preserved: 0, pending: 0 });
+        }
+        expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(before);
+        // A preserve that reached it anyway never puts one recording over the file of the whole meeting.
+        await expect(
+            preserveSourceAudio({
+                store: fx.store,
+                meetingId: fx.record.id,
+                ref: { sourceId: "wisprflow", sourceMeetingId: "abc" },
+                sourcePath: provider[0]!.path,
+            })
+        ).rejects.toThrow("--repair");
+        expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(before);
+    });
+
+    test("repair writes a source slot a recording was copied over again, once, and keeps the lost file in the backup", async () => {
+        const fx = await oldJoin(`meetings-joined-slot-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-slot-"));
+        const first = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const merged = fx.store.read(fx.record.id)!;
+        const later = merged.audio!.sources.wisprflow!.pieces![1]!;
+        // What the source-audio pass of the earlier build left: the later recording alone in the slot.
+        await fx.store.update(fx.record.id, { command: "audio preserve", change: "test" }, (next) => {
+            const { sourceMeetingId, path, sha256, bytes, savedAt } = later;
+            next.audio = { sources: { wisprflow: { sourceMeetingId, path, sha256, bytes, savedAt } } };
+        });
+        const broken = SafeJSON.stringify(fx.store.read(fx.record.id));
+        // Until the repair, a source-audio pass still copies no recording over it: the preserve refuses a joined record.
+        await expect(
+            preserveSourceAudio({
+                store: fx.store,
+                meetingId: fx.record.id,
+                ref: { sourceId: "wisprflow", sourceMeetingId: "abc" },
+                sourcePath: fx.files.earlier,
+            })
+        ).rejects.toThrow("--repair");
+        expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(broken);
+
+        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, dryRun: true, encode });
+        expect(dry).toMatchObject({ repaired: false, slot: expect.stringContaining("the recording of def") });
+        expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(broken);
+
+        const done = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            backupRoot,
+            encode,
+            now: new Date(Date.parse(now) + 120_000),
+        });
+        const again = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const slot = fx.store.read(fx.record.id)!.audio!.sources.wisprflow!;
+        expect(done).toMatchObject({ repaired: true, slot: expect.stringContaining("the recording of def") });
+        expect(again).toMatchObject({ repaired: false, reason: "its sound is in its own folder already" });
+        expect(slot).toMatchObject({ sourceMeetingId: "abc", path: done.joinedFile });
+        expect(slot.pieces?.map((piece) => [piece.sourceMeetingId, piece.offsetMs])).toEqual([
+            ["abc", 0],
+            ["def", 600_000],
+        ]);
+        // The file of the whole meeting the slot lost is not left beside the new one.
+        const lost = first.joinedFile!;
+        expect(existsSync(lost) && lost !== done.joinedFile).toBe(false);
     });
 });

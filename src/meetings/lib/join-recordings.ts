@@ -32,9 +32,11 @@ import {
     buildJoinedSourceFile,
     type JoinedSoundEncoder,
     type JoinSoundSummary,
+    joinedSlotProblem,
     joinSoundSummary,
     planJoinSound,
     repairReadme,
+    restoreJoinedSlot,
 } from "./join-sound";
 import {
     cloneTree,
@@ -818,19 +820,22 @@ export interface JoinRepairRequest {
 export interface JoinRepairResult {
     meeting: string;
     dryRun: boolean;
-    /** False when there was nothing to move: the record's sound is in its own folder already. */
+    /** False when there was nothing to do: the record's sound is in its own folder and its source slot is whole. */
     repaired: boolean;
     reason?: string;
     sound?: JoinSoundSummary;
+    /** What was wrong with the source slot of a record whose sound had moved in, which the repair writes again. */
+    slot?: string;
     /** The one source file of the whole meeting the readers of one file read. */
     joinedFile?: string;
     backup?: string;
 }
 
 /**
- * A record joined before 2026-11-25 kept its later recording's sound in that recording's folder; this moves it into the
- * joined record's folder, as `join` does now (`join-sound.ts`), after cloning every folder it touches into a backup.
- * Runs once: a second run finds the sound moved and changes nothing.
+ * Brings a joined record to the shape `join` writes now (`join-sound.ts`), after cloning every folder it touches into a
+ * backup. A record joined before 2026-11-25 kept its later recording's sound in that recording's folder: it moves in.
+ * A record whose sound moved in but whose source slot no longer is the file of the whole meeting (a source-audio pass
+ * copied one recording over it) gets that slot written again. Idempotent: a record already in shape changes nothing.
  */
 export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepairResult> {
     const { store } = request;
@@ -854,8 +859,9 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             ...(source ? { source } : {}),
         });
     };
+    const merged = (record: MeetingRecord) => (record.join?.version ?? 1) >= JOIN_SOUND_MERGED;
     const done = (record: MeetingRecord): JoinRepairResult | undefined =>
-        record.join && record.join.version >= JOIN_SOUND_MERGED
+        merged(record) && !joinedSlotProblem(record)
             ? { meeting: record.id, dryRun, repaired: false, reason: "its sound is in its own folder already" }
             : undefined;
 
@@ -864,7 +870,13 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
     }
 
     if (dryRun) {
-        return { meeting: found.id, dryRun, repaired: false, sound: joinSoundSummary(planOf(found)) };
+        const slot = merged(found) ? joinedSlotProblem(found) : undefined;
+        return {
+            meeting: found.id,
+            dryRun,
+            repaired: false,
+            ...(slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
+        };
     }
 
     return store.withRecords({
@@ -880,7 +892,6 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 return done(record)!;
             }
 
-            const plan = planOf(record);
             const at = request.now ?? new Date();
             const backup = join(
                 request.backupRoot ?? genesisToolsDir("backups", "meetings"),
@@ -904,10 +915,33 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             }
 
             writeFileSync(join(backup, "README.md"), repairReadme({ ids, root: store.root, at }), { mode: 0o600 });
-            const joinedFile = await buildJoinedSourceFile(plan, {
-                ...(request.encode ? { encode: request.encode } : {}),
-                now: at,
-            });
+            const encode = request.encode ? { encode: request.encode } : {};
+            const source = sourceRefOf(record);
+
+            if (merged(record)) {
+                const slot = joinedSlotProblem(record)!;
+                const audio = await restoreJoinedSlot({ store, record, backup, ...encode, now: at });
+                await update(
+                    record.id,
+                    { command: "join", change: `repair: ${slot}; written again; backup ${backup}` },
+                    (next) => {
+                        if (audio && source) {
+                            next.audio = { sources: { ...next.audio?.sources, [source.sourceId]: audio } };
+                        }
+                    }
+                );
+                return {
+                    meeting: record.id,
+                    dryRun,
+                    repaired: true,
+                    slot,
+                    ...(audio?.pieces ? { joinedFile: audio.path } : {}),
+                    backup,
+                };
+            }
+
+            const plan = planOf(record);
+            const joinedFile = await buildJoinedSourceFile(plan, { ...encode, now: at });
             const moved = applyJoinSound(plan, {
                 backup,
                 keptId: record.id,

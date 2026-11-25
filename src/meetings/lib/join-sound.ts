@@ -3,7 +3,6 @@ import {
     appendFileSync,
     chmodSync,
     existsSync,
-    lstatSync,
     mkdirSync,
     readdirSync,
     readFileSync,
@@ -16,6 +15,7 @@ import { logger } from "@genesiscz/utils/logger";
 import {
     JOIN_PART_FILE,
     type JoinPart,
+    type MeetingRecord,
     type MeetingStore,
     type PreservedSourceAudio,
 } from "@genesiscz/utils/meetings/record";
@@ -31,6 +31,8 @@ import {
     type SoundClock,
     saveSoundClock,
 } from "./sound";
+import { present } from "./source-audio";
+import { sourceRefOf } from "./sources";
 
 /**
  * A joined record's sound in its own folder (`meetings join`, and `meetings join <id> --repair` for a join made before
@@ -99,16 +101,6 @@ function lines(path: string): string[] {
               .split("\n")
               .filter((line) => line.trim())
         : [];
-}
-
-/** The file the record says, when it is there with the size the record saved; a moved or edited file is no piece. */
-function present(audio: NonNullable<JoinPart["audio"]>): boolean {
-    try {
-        const file = lstatSync(audio.path);
-        return file.isFile() && file.size === audio.bytes;
-    } catch {
-        return false;
-    }
 }
 
 /**
@@ -328,6 +320,19 @@ export function applyJoinSound(
         }
     }
 
+    const audio = slotOf(plan, options.joined);
+    log.info(
+        { kept: options.keptId, ...joinSoundSummary(plan), joined: options.joined?.path },
+        "join: the later recordings' sound moved into the joined record's folder"
+    );
+    return { ...(audio ? { audio } : {}), moved };
+}
+
+/** The record's source slot after the move: the file of the whole meeting with a piece per recording, else the one recording. */
+function slotOf(
+    plan: JoinSoundPlan,
+    joined: Omit<PreservedSourceAudio, "sourceMeetingId" | "pieces"> | undefined
+): PreservedSourceAudio | undefined {
     const pieces = plan.recordings.map((one) => ({
         ...one.audio,
         path: one.to,
@@ -335,22 +340,92 @@ export function applyJoinSound(
         ...(one.part.channels ? { layout: one.part.channels.layout } : {}),
     }));
     const first = pieces[0];
-    const audio: PreservedSourceAudio | undefined = options.joined
-        ? { sourceMeetingId: plan.sourceMeetingId ?? first!.sourceMeetingId, ...options.joined, pieces }
-        : first
-          ? {
-                sourceMeetingId: first.sourceMeetingId,
-                path: first.path,
-                sha256: first.sha256,
-                bytes: first.bytes,
-                savedAt: first.savedAt,
-            }
-          : undefined;
-    log.info(
-        { kept: options.keptId, ...joinSoundSummary(plan), joined: options.joined?.path },
-        "join: the later recordings' sound moved into the joined record's folder"
+
+    if (joined) {
+        return { sourceMeetingId: plan.sourceMeetingId ?? first!.sourceMeetingId, ...joined, pieces };
+    }
+
+    return first
+        ? {
+              sourceMeetingId: first.sourceMeetingId,
+              path: first.path,
+              sha256: first.sha256,
+              bytes: first.bytes,
+              savedAt: first.savedAt,
+          }
+        : undefined;
+}
+
+/**
+ * Why a joined record's source slot is not what the join left (the file of the whole meeting with a piece per kept
+ * recording); undefined when it is, or when the record keeps no recording. A source-audio pass of a build before this
+ * fix copied one recording over it.
+ */
+export function joinedSlotProblem(record: MeetingRecord): string | undefined {
+    const ref = sourceRefOf(record);
+    const recordings = (record.join?.parts ?? []).filter((part) => part.audio && present(part.audio));
+
+    if (!ref || recordings.length === 0) {
+        return undefined;
+    }
+
+    const slot = record.audio?.sources[ref.sourceId];
+    const one = recordings.length === 1 && recordings[0]!.offsetMs === 0;
+
+    if (slot?.sourceMeetingId !== ref.sourceMeetingId) {
+        return `its source slot holds ${slot ? `the recording of ${slot.sourceMeetingId}` : "nothing"}, not the sound of the whole meeting`;
+    }
+
+    if (!present(slot)) {
+        return `its source file ${slot.path} is missing or changed`;
+    }
+
+    if (!one && !slot.pieces) {
+        return `its source slot holds the recording of ${slot.sourceMeetingId} alone, not the sound of the whole meeting`;
+    }
+
+    const missing = recordings.find(
+        (part) =>
+            !one && !slot.pieces?.some((piece) => piece.sourceMeetingId === part.sourceMeetingId && present(piece))
     );
-    return { ...(audio ? { audio } : {}), moved };
+    return missing ? `the recording of ${missing.record} is not a piece of its source file` : undefined;
+}
+
+/**
+ * Writes a joined record's source slot again from its parts' recordings (already in its folder): the file of the whole
+ * meeting encoded anew, its pieces, and every other file of `source-audio/` (a file of the whole meeting the slot lost)
+ * moved to `<backup>/derived/<id>/source-audio/`. Returns the slot to store.
+ */
+export async function restoreJoinedSlot(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    backup: string;
+    encode?: JoinedSoundEncoder;
+    now?: Date;
+}): Promise<PreservedSourceAudio | undefined> {
+    const { store, record } = options;
+    const source = sourceRefOf(record);
+    const plan = planJoinSound({
+        store,
+        keptId: record.id,
+        parts: record.join?.parts ?? [],
+        ...(source ? { source } : {}),
+    });
+    const joined = await buildJoinedSourceFile(plan, {
+        ...(options.encode ? { encode: options.encode } : {}),
+        ...(options.now ? { now: options.now } : {}),
+    });
+    const audio = slotOf(plan, joined);
+    const kept = new Set([audio?.path, ...(audio?.pieces ?? []).map((piece) => piece.path)]);
+    const folder = join(plan.keptFolder, SOURCE_AUDIO_FOLDER);
+
+    for (const name of existsSync(folder) ? readdirSync(folder) : []) {
+        if (!name.startsWith(".") && !kept.has(join(folder, name))) {
+            moveInto(join(folder, name), join(options.backup, "derived", record.id, SOURCE_AUDIO_FOLDER, name));
+        }
+    }
+
+    return audio;
 }
 
 /** A README for a repair's backup: what it holds and how to put the folders back. */

@@ -367,6 +367,15 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         return;
     }
 
+    if (result.slot) {
+        ui.ok(
+            `${result.dryRun ? "Would write" : "Wrote"} the source sound of ${result.meeting} again: ${result.slot}.`
+        );
+        result.joinedFile && ui.dim(`  the whole meeting as one file: ${result.joinedFile}`);
+        result.backup && ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
+        return;
+    }
+
     const sound = result.sound;
     ui.ok(
         `${result.dryRun ? "Would move" : "Moved"} the later recordings' sound into ${result.meeting}: ${sound?.pieces ?? 0} recorder files, ${sound?.rows ?? 0} index lines, ${sound?.levels ?? 0} level rows.`
