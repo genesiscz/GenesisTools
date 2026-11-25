@@ -40,6 +40,14 @@ import {
     toJoinedSec,
 } from "./join-clock";
 import {
+    LINE_ADDRESS_REPAIR,
+    plannedPassJudge,
+    RETIREMENTS_JUDGED_AGAIN,
+    type RetirementJudge,
+    staleRetirements,
+    withRetirementsUndone,
+} from "./join-retirements";
+import {
     applyJoinSound,
     buildJoinedSourceFile,
     type JoinedSoundEncoder,
@@ -920,6 +928,8 @@ export interface JoinRepairRequest {
     encode?: JoinedSoundEncoder;
     /** Opens one recording's own source (tests pass a fake); `recordingSource` by default. */
     open?: RecordingOpener;
+    /** Judges the ranges a naming pass set aside on a stale line address (tests pass a fake); a planned pass by default. */
+    judge?: RetirementJudge;
 }
 
 export interface JoinRepairResult {
@@ -927,8 +937,9 @@ export interface JoinRepairResult {
     dryRun: boolean;
     /**
      * False when there was nothing to do: the record's sound is in its own folder, its source slot is whole, it keeps
-     * its own copy of the joined transcript and its later recordings' line addresses count on the joined transcript, in
-     * its items and in its decision journal.
+     * its own copy of the joined transcript, its later recordings' line addresses count on the joined transcript, in
+     * its items and in its decision journal, and no range a naming pass set aside by a stale address waits to be judged
+     * again.
      */
     repaired: boolean;
     reason?: string;
@@ -949,6 +960,13 @@ export interface JoinRepairResult {
      * back, of the findings an `add` saved and of the lines an `assign` named.
      */
     journal?: { moved: number; unplaced: number };
+    /**
+     * The ranges a naming pass set aside for `speaker-eligibility` between the join and the address repair, when their
+     * stale address named another line (`staleRetirements`), judged again by a pass planned on their own line:
+     * `restored` are suggestions again, `stayed` that pass sets aside too. Ranges a person or an agent decided are
+     * never among them. A dry run judges them only on a record that keeps its own copy of the joined transcript.
+     */
+    retirements?: { restored: string[]; stayed: string[] };
     backup?: string;
 }
 
@@ -964,7 +982,11 @@ export interface JoinRepairResult {
  * - the line addresses a join before 2026-11-25 left on a later recording's own lines move onto the joined transcript's;
  * - the same addresses in the decision journal (the item snapshots an Undo puts back, the findings an `add` saved, the
  *   lines an `assign` named) move too, checked on every run against the joined transcript: the record's copy, or the
- *   recordings' reads when the repair is writing that copy.
+ *   recordings' reads when the repair is writing that copy;
+ * - the ranges a naming pass set aside for `speaker-eligibility` while those addresses were stale (it judged a later
+ *   recording's range by the line its stale address named) are judged again, once, by a naming pass planned (never
+ *   saved) on their own line, after the copy and the addresses are written; the ones it keeps are suggestions again
+ *   (`join-retirements.ts`).
  * The recordings are read before anything is written, so one that cannot be read changes nothing. Idempotent: a
  * record already in shape changes nothing.
  */
@@ -1001,8 +1023,19 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
     // In shape apart from its journal: its sound in its own folder, its items' addresses on the joined transcript and
     // its own copy of that transcript. A record without its copy needs the repair whatever its journal holds.
     const inShape = (record: MeetingRecord) => soundDone(record) && linesDone(record) && copied(record);
+    const judge = request.judge ?? plannedPassJudge;
+    // A planned naming pass on each range's own line says which of them come back; none is written here.
+    const judgedAgain = async (record: MeetingRecord, stale: readonly MeetingItem[]) => {
+        if (stale.length === 0) {
+            return undefined;
+        }
+
+        const ids = stale.map((item) => item.id);
+        const kept = await judge({ store, record, ids });
+        return { restored: ids.filter((id) => kept.has(id)), stayed: ids.filter((id) => !kept.has(id)) };
+    };
     const done = (record: MeetingRecord, journal: JoinedJournal): JoinRepairResult | undefined =>
-        inShape(record) && journal.moved === 0
+        inShape(record) && journal.moved === 0 && staleRetirements(record).length === 0
             ? {
                   meeting: record.id,
                   dryRun,
@@ -1056,14 +1089,35 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
 
         if (dryRun) {
             const slot = merged(found) ? joinedSlotProblem(found) : undefined;
+            const placed = linesDone(found) ? undefined : joinedLineAddresses(found, await transcript());
+            // The ranges are judged on the lines their addresses name once moved, as the repair would judge them. A
+            // naming pass reads the record's own copy of the joined transcript, so on a record without it the real
+            // run judges them, after it wrote that copy.
+            const judged = placed
+                ? {
+                      ...found,
+                      items: placed.items,
+                      join: {
+                          ...found.join,
+                          parts: found.join.parts.map((part, index) => ({
+                              ...part,
+                              firstLine: placed.parts[index]?.firstLine ?? 0,
+                          })),
+                      },
+                  }
+                : found;
+            const retirements = reads
+                ? undefined
+                : await judgedAgain(judged, staleRetirements(judged, { linesPending: placed !== undefined }));
             return {
                 meeting: found.id,
                 dryRun,
                 repaired: false,
                 ...(soundDone(found) ? {} : slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
                 ...(reads ? { transcript: { lines: joinedLines(reads) } } : {}),
-                ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await transcript())) }),
+                ...(placed ? { lines: linesOf(placed) } : {}),
                 ...(journal.moved > 0 ? { journal: linesOf(journal) } : {}),
+                ...(retirements ? { retirements } : {}),
             };
         }
     }
@@ -1171,7 +1225,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
 
             if (reads) {
                 const { lines } = saveJoinedCopy({ folder: store.folder(record.id), record: latest, reads });
-                await update(
+                latest = await update(
                     record.id,
                     {
                         command: "join",
@@ -1184,11 +1238,11 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
 
             if (joined) {
                 const lines = linesOf(joinedLineAddresses(record, joined));
-                await update(
+                latest = await update(
                     record.id,
                     {
                         command: "join",
-                        change: `repair: ${lines.moved} line addresses of the later recordings moved onto the joined transcript's lines (${lines.unplaced} name no line and stay); backup ${backup}`,
+                        change: `repair: ${lines.moved} ${LINE_ADDRESS_REPAIR} (${lines.unplaced} name no line and stay); backup ${backup}`,
                     },
                     (next) => {
                         const moved = joinedLineAddresses(next, joined);
@@ -1211,7 +1265,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             if (journal.moved > 0) {
                 const path = journalPath(record);
                 const written = readFileSync(path, "utf8");
-                await update(
+                latest = await update(
                     record.id,
                     {
                         command: "join",
@@ -1224,6 +1278,25 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                     }
                 );
                 result.journal = linesOf(journal);
+            }
+
+            // After the addresses moved and the copy was written: each range is judged on its own line now, on the
+            // record as the steps above left it (an update answers a new record; the one read under the lock is stale).
+            const retirements = await judgedAgain(latest, staleRetirements(latest));
+
+            if (retirements) {
+                const restored = new Set(retirements.restored);
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: ${RETIREMENTS_JUDGED_AGAIN}: ${restored.size} of ${restored.size + retirements.stayed.length} are suggestions again${restored.size ? ` (${retirements.restored.join(" ")})` : ""}; backup ${backup}`,
+                    },
+                    (next) => {
+                        next.items = withRetirementsUndone(next.items, restored);
+                    }
+                );
+                result.retirements = retirements;
             }
 
             return result;

@@ -23,8 +23,10 @@ import {
     JOINED_RECORD_VERSION,
     type MeetingRecord,
     MeetingStore,
+    meetingItemSchema,
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { makeWordTimingArtifact, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -33,6 +35,7 @@ import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { type cutClip, playClip } from "./audio";
 import { joinMeetings, repairJoin } from "./join-recordings";
+import { LINE_ADDRESS_REPAIR, type RetirementJudge } from "./join-retirements";
 import { questionClip, refineSplitClip, writeQuestionClips } from "./listen-clips";
 import {
     clipMoment,
@@ -1736,6 +1739,143 @@ describe("a joined meeting is one record of sound (join --repair moves the later
             channel: 1,
             fileFromSec: 20,
         });
+    });
+
+    test("a repair judges again, once, the ranges a pass set aside by a stale line address, and brings back those it keeps", async () => {
+        const fx = await oldJoin(`meetings-joined-retired-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-retired-"));
+        const minute = (n: number) => new Date(Date.parse("2026-11-25T03:00:00.000Z") + n * 60_000);
+        await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode, now: minute(0) });
+        const retired = (id: string, sec: number, line: number) =>
+            meetingItemSchema.parse({
+                id,
+                kind: "speaker-range",
+                status: "rejected",
+                label: "Speaker 1",
+                fromSec: sec,
+                toSec: sec,
+                speaker: "Carol Example",
+                rules: [MeetingRule.Attendance],
+                evidence: { transcriptLine: line, retired: "speaker-eligibility" },
+                suggestedAt: now,
+            });
+        // A pass while the later recording's addresses were stale, then the address repair.
+        await fx.store.update(
+            fx.record.id,
+            { command: "suggest", change: "suggest findings and questions" },
+            (next) => {
+                next.join = {
+                    ...next.join!,
+                    parts: next.join!.parts.map((part, index) => ({ ...part, firstLine: index === 0 ? 0 : 2 })),
+                };
+                next.items.push(retired("i901", 610, 3), retired("i902", 620, 4));
+            }
+        );
+        await fx.store.update(
+            fx.record.id,
+            { command: "join", change: `repair: 2 ${LINE_ADDRESS_REPAIR} (0 name no line and stay); backup /b` },
+            () => undefined
+        );
+        const asked: string[][] = [];
+        const judge: RetirementJudge = async ({ ids }) => {
+            asked.push([...ids]);
+            return new Set(["i901"]);
+        };
+        const status = (id: string) => fx.store.read(fx.record.id)!.items.find((item) => item.id === id);
+
+        const dry = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            open: fx.open,
+            backupRoot,
+            dryRun: true,
+            judge,
+        });
+        expect(dry.retirements).toEqual({ restored: ["i901"], stayed: ["i902"] });
+        expect(status("i901")?.status).toBe("rejected");
+
+        const done = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            open: fx.open,
+            backupRoot,
+            encode,
+            judge,
+            now: minute(1),
+        });
+        expect(done).toMatchObject({ repaired: true, retirements: { restored: ["i901"], stayed: ["i902"] } });
+        expect(status("i901")).toMatchObject({ status: "suggested", evidence: { transcriptLine: 3 } });
+        expect(status("i901")?.evidence?.retired).toBeUndefined();
+        expect(status("i902")).toMatchObject({ status: "rejected", evidence: { retired: "speaker-eligibility" } });
+
+        const again = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            open: fx.open,
+            backupRoot,
+            encode,
+            judge,
+            now: minute(2),
+        });
+        expect(again.repaired).toBe(false);
+        expect(asked).toEqual([
+            ["i901", "i902"],
+            ["i901", "i902"],
+        ]);
+    });
+
+    test("a repair that also copies the joined transcript judges the stale ranges in the same run, on the record it wrote; its dry run leaves them to it", async () => {
+        const fx = await oldJoin(`meetings-joined-retired-copy-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-retired-copy-"));
+        // A pass while the later recording's addresses were stale, then an address repair, all before the copy.
+        await fx.store.update(
+            fx.record.id,
+            { command: "suggest", change: "suggest findings and questions" },
+            (next) => {
+                next.join = {
+                    ...next.join!,
+                    parts: next.join!.parts.map((part, index) => ({ ...part, firstLine: index === 0 ? 0 : 2 })),
+                };
+                next.items.push(
+                    meetingItemSchema.parse({
+                        id: "i901",
+                        kind: "speaker-range",
+                        status: "rejected",
+                        label: "Speaker 1",
+                        fromSec: 610,
+                        toSec: 610,
+                        speaker: "Carol Example",
+                        rules: [MeetingRule.Attendance],
+                        evidence: { transcriptLine: 3, retired: "speaker-eligibility" },
+                        suggestedAt: now,
+                    })
+                );
+            }
+        );
+        await fx.store.update(
+            fx.record.id,
+            { command: "join", change: `repair: 1 ${LINE_ADDRESS_REPAIR} (0 name no line and stay); backup /b` },
+            () => undefined
+        );
+        const asked: string[][] = [];
+        const judge: RetirementJudge = async ({ record, ids }) => {
+            asked.push([...ids]);
+            // The planned pass reads the record's own copy, which the repair wrote before it judges.
+            expect(record.history.some((event) => event.change.includes("is now this record's own copy"))).toBe(true);
+            return new Set(ids);
+        };
+
+        // The planned pass reads the record's copy: without one, the dry run names the copy and judges nothing.
+        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, dryRun: true, judge });
+        expect(dry.transcript).toBeDefined();
+        expect(dry.retirements).toBeUndefined();
+        expect(asked).toEqual([]);
+
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode, judge });
+        expect(done).toMatchObject({ repaired: true, retirements: { restored: ["i901"], stayed: [] } });
+        expect(done.transcript).toBeDefined();
+        expect(fx.store.read(fx.record.id)!.items.find((item) => item.id === "i901")?.status).toBe("suggested");
+        expect(asked).toEqual([["i901"]]);
     });
 
     test("after the repair a range is cut from the recording that holds it, on its own seconds; one over the gap from the one file", async () => {
