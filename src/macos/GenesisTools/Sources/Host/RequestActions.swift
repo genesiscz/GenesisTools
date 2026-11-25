@@ -81,10 +81,20 @@ protocol RequestActionButton: AnyObject {
     var problem: RequestActionProblem? { get }
     /// Called when `link` or `problem` changed, so the window shows the new ones.
     var changed: (() -> Void)? { get set }
+    /// Called just before the button starts a clip, so the window stops the clip another button plays: a window plays
+    /// one clip at a time.
+    var willPlay: (() -> Void)? { get set }
     /// The window is on screen: check, without side effects, whether a click could work.
     func prepare()
+    /// Stop the clip this button plays, or the one it is starting; the button stays usable.
+    func stopPlaying()
     /// The window closed: stop what this button started.
     func close()
+}
+
+extension RequestActionButton {
+    /// A button that plays nothing has nothing to stop.
+    func stopPlaying() {}
 }
 
 /// Every kind of request action the window runs. A new kind is one maker here and its schema in
@@ -125,7 +135,8 @@ enum RequestActions {
 }
 
 /// `play-meeting`: plays the range with `tools meetings play <meeting> --at --to` (the cut the CLI plays, `--track` when
-/// the request names one); a second click stops the player, and the button turns back to Play when the clip ends.
+/// the request names one); a second click stops the player, and the button turns back to Play when the clip ends. Its
+/// Play stops the clip another button of the window plays first (`willPlay`).
 /// When the window opens it plans the same play with `--no-start`, so a range with no sound shows a dimmed button and
 /// its reason instead of failing on the click.
 @MainActor
@@ -134,8 +145,11 @@ final class PlayMeetingButton: RequestActionButton {
     private let context: RequestActionContext
     private var pid: Int32?
     private var starting = false
+    /// Another Play of the window came while this player started: its player stops the moment it starts.
+    private var stopWhenStarted = false
     private(set) var problem: RequestActionProblem?
     var changed: (() -> Void)?
+    var willPlay: (() -> Void)?
 
     init(_ action: RequestPresentParamsActionsItemOption0, context: RequestActionContext) {
         self.action = action
@@ -173,14 +187,23 @@ final class PlayMeetingButton: RequestActionButton {
 
     func play() {
         guard pid == nil, !starting, problem == nil else { return }
+        willPlay?()
         starting = true
+        stopWhenStarted = false
         changed?()
-        context.tools(argv) { [weak self] status, stdout, stderr in
-            guard let self else { return }
+        // The reply holds the button until the player started, so a start that a close or another Play overtook still
+        // stops its player.
+        context.tools(argv) { [self] status, stdout, stderr in
             starting = false
             guard status == 0, let pid = Self.pid(in: stdout) else {
                 problem = Self.problem(status: status, stderr: stderr)
                 HubPerf.log("request.action play-meeting failed: \(problem?.detail ?? "exit \(status)")")
+                changed?()
+                return
+            }
+            if stopWhenStarted {
+                stopWhenStarted = false
+                context.stop(pid)
                 changed?()
                 return
             }
@@ -201,9 +224,18 @@ final class PlayMeetingButton: RequestActionButton {
         changed?()
     }
 
+    func stopPlaying() {
+        if let pid {
+            stop(pid)
+        } else if starting {
+            stopWhenStarted = true
+        }
+    }
+
     func close() {
         changed = nil
-        if let pid { stop(pid) }
+        willPlay = nil
+        stopPlaying()
     }
 
     /// The player's pid from `play --json`; nil when the plan started no player.
@@ -254,6 +286,8 @@ final class OpenLinkButton: RequestActionButton {
     private let context: RequestActionContext
     let problem: RequestActionProblem? = nil
     var changed: (() -> Void)?
+    /// Opening a page plays nothing, so this is never called.
+    var willPlay: (() -> Void)?
 
     init(_ action: RequestPresentParamsActionsItemOption1, context: RequestActionContext) {
         self.action = action
@@ -281,5 +315,6 @@ final class OpenLinkButton: RequestActionButton {
 
     func close() {
         changed = nil
+        willPlay = nil
     }
 }
