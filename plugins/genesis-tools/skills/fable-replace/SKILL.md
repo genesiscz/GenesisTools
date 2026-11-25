@@ -22,39 +22,68 @@ In a REPL or a tool call, send the edits as data and read one JSON report. Do no
 heredoc, and do not parse the printed lines.
 
 1. **The MCP tool, when your session lists it** (`searchTools("genesis_replace")`; the
-   genesis-tools server with capability `replace`). `genesis_replace` takes `cwd` (absolute)
-   and exactly one of `edits` (FileEdit objects), `spec` (FRSPEC text) or `renameModule`
-   (`{file, symbol, to, roots}`), plus `dryRun`, `diff` (default `stat`), `verify` and
-   `verifyControl: "ts"`. Its `structuredContent` is the report below. `genesis_replace_find`
-   takes `cwd`, `pattern`, `regex`, `roots` and `exts`, and answers
-   `{total, files: [{file, count, declares}]}`. It writes nothing.
+   genesis-tools server with capability `replace`). In a REPL the call form is
+   `await tools["mcp__genesis-tools__genesis_replace"](input)`; the short name `genesis_replace`
+   does not resolve. It takes `cwd` (absolute) and exactly one of `edits` (FileEdit objects),
+   `spec` (FRSPEC text) or `renameModule` (`{file, symbol, to, roots}`), plus `dryRun`, `diff`,
+   `verify` and `verifyControl: "ts"`. A landed run arrives as the report in a JSON string, so
+   `JSON.parse` it. A failure (exit 1, 2 or 3, or a refused call) throws, and `e.detail` is the
+   report, parsed, with a `summary` sentence that names the rollback command after exit 3. A call
+   refused before the run is `{v, ok: false, exitCode: 2, error, summary}`.
+
+   ```js
+   const replace = tools["mcp__genesis-tools__genesis_replace"];
+   let report;
+   try {
+       report = JSON.parse(await replace({ cwd: repo, edits, dryRun: true }));
+   } catch (e) {
+       report = e.detail; // ok false, exitCode, files[].ops[].reason, written, backupDir, summary
+   }
+   ```
+
+   `genesis_replace_find` (`tools["mcp__genesis-tools__genesis_replace_find"]`) takes `cwd`,
+   `pattern`, `regex`, `flags`, `roots` and `exts`, and answers `{total, files: [{file, count,
+   declares}]}`. `count` and `total` count occurrences, not lines. It writes nothing.
 2. **The CLI with `--json`.** One door per call: `--edits <file|->` (FileEdit[] JSON),
    `--spec <file>`, `--rename-module <file|->` (the same object as `renameModule`) or
-   `--find <literal|/regex/flags>`. stdout holds exactly one JSON object on one line, and every
-   other line goes to stderr. A shell that merges the two (the REPL's `$`) can print a stderr
-   line after it (the exit prune), so parse the line that starts with `{"v":`:
+   `--find <literal|/regex/flags>`. The process prints one JSON object on one line and nothing
+   else, on stdout or stderr (a crash stack is the only exception), so the REPL's `$`, which
+   merges the two streams, parses it with `.json()`:
 
    ```js
    const cli = "${CLAUDE_PLUGIN_ROOT}/skills/fable-replace/scripts/cli.ts";
    const edits = [{ file: "src/a.ts", ops: [{ find: "oldName", replace: "newName", count: "all" }] }];
-   const out = await $`printf '%s' ${JSON.stringify(edits)} | bun ${cli} --edits - --json --dry --cwd ${repo}`.nothrow();
-   const report = JSON.parse(out.stdout.split("\n").findLast((line) => line.startsWith('{"v":'))); // ok, exitCode, files[].ops
+   const report = await $`printf '%s' ${JSON.stringify(edits)} | bun ${cli} --edits - --json --dry --cwd ${repo}`.nothrow().json();
    ```
 
    A regex field is `{ source, flags }`. An unknown key is refused (exit 2) and named by its
    path. A refusal is a report too: `ok: false`, `exitCode`, `error`.
 
-- **Diff levels** (`--diff <level>`, or `diff` on a FileEdit and on the MCP call): `none` prints
-  each file's header line, `stat` adds `+N -M`, `full` adds the diff. Unset: `full` on a dry
-  run, `none` on a real run; `--quiet` alone gives `stat`. A module rename always shows `full`.
+- **The report** of both doors: `ok`, `exitCode` (0 landed, 1 a MISS and nothing written, 2
+  refused, 3 written but the verify failed), `written`, `backupDir`, `verify`, `warnings`, and
+  `files`. Each file has `file`, `renamedTo` (the new path of a renamed file, relative like
+  `file`), `action`, `sha256Before` (the hash of the content the run read), `diffStat`, `diff`
+  and `ops`. Each op has `status` (OK, MISS or SKIP), `found`, `expected`, `reason`, `lines`, and
+  on a rewrite MISS `currentSha256`.
+- **Diff levels** (`--diff <level>`, or `diff` on a FileEdit and on the MCP call): in the printed
+  output `none` gives each file's header line, `stat` adds `+N -M`, and `full` adds the diff. In
+  the report every changed file carries `diffStat`, and `full` adds its `diff` text. Unset on the
+  CLI: `full` on a dry run, `none` on a real run; `--quiet` alone gives `stat`, and a bare `--diff`
+  gives `full` on a real run. Unset on the MCP tool: `stat`, on a dry run and a real run alike. A
+  FileEdit's own `diff` wins, and a module rename asks `full` for each file.
 - **Rewrite a whole file** with `{ kind: "rewrite", content, expectSha256 }`, the only op of its
-  file. `expectSha256` is `shasum -a 256 <file>` of the content you read; when the file changed
-  since, it is a MISS that names the current hash.
+  file. In code mode, dry-run it without `expectSha256` first: that report's `sha256Before` for
+  the file is the hash, so send it as `expectSha256` on the real run. A real run without the hash
+  is refused (exit 2). In a shell, `shasum -a 256 <file>` gives the same hash. When the file
+  changed since, the op is a MISS, and its `currentSha256` is the hash now.
 - **`absentInChange: ["oldName("]`** on a FileEdit: the text must not be in a line the ops added
   or changed. Untouched lines may keep it.
-- **`--verify-control ts`** beside `--verify "tsc-rs --noEmit -p tsconfig.json"` puts a probe
-  with one type error beside the first written file. A verify that does not report it ends
-  `unknown` (exit 3), not a green pass.
+- **`--verify-control ts`** beside `--verify "tsc-rs --noEmit -p tsconfig.json"` (on the MCP tool
+  `verifyControl: "ts"` beside `verify`) puts a probe with one type error beside the first
+  written file. The report's `verify.control` says what happened: `caught` (the verify reported
+  the probe, so its pass or fail counts) or `missed` (it did not, so the real verify never ran and
+  the run ends `unknown`, exit 3). No `control` key means no control was asked, or the probe run
+  could not be measured, and then `verify.status` is `unknown`.
 - **Backups** go to the session's scratch folder: `/tmp/cc/<project>/<session>/fable-replace/`
   in a Claude session, `/tmp/codex/…` in Codex. `tools rm` clears it with the session.
 
