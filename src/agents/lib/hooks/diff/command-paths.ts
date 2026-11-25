@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
@@ -249,7 +249,7 @@ const SHORT_DIR_FLAG = "-C";
 /**
  * A folder the command names, in order. `cd` moves the shell there. `flag` and `argument` hand it to the program of
  * their element: a folder flag (`--cwd <dir>`, `-C <dir>`), or an argument of a script runner, which counts only when
- * it is a repository's top folder (`programDirs`).
+ * it is a folder inside a git repository (`programDirs`).
  */
 interface DirTarget {
     kind: "cd" | "flag" | "argument";
@@ -339,7 +339,7 @@ function rawWords(scanned: ShellScan, from: number, element: Span): string[] {
 
 /**
  * The folders one element hands its program: the value of each folder flag, and, for a script runner (`bun x.ts <dir>`),
- * every path-shaped argument, which `programDirs` keeps only when it is a repository's top folder. The words are read
+ * every path-shaped argument, which `programDirs` keeps only when it is a folder inside a git repository. The words are read
  * from the original text one after another, because the scanner blanks a quoted word and leaves it no token: in
  * `bun '/x/renames.ts' '<checkout>'`, the checkout is the second quoted word in a row.
  */
@@ -414,14 +414,17 @@ export function commandDirs(command: string, cwd: string): string[] {
 
 /**
  * The folders the command hands a program to work in, which no `cd` reaches: the value of a folder flag
- * (`fable-replace --cwd <checkout>`, `git -C <checkout> apply`, `make -C <dir>`), and a repository's top folder given
- * to a script runner (`bun renames.ts <checkout>`). Session a1523c66 on 2026-11-24 edited a second checkout both ways
- * from a cwd in the first, and the hook watched only the first: the `renames.ts` edit printed nothing.
+ * (`fable-replace --cwd <checkout>`, `git -C <checkout> apply`, `make -C <dir>`), and the repository of a folder given
+ * to a script runner (`bun renames.ts <checkout>`, `bun x.ts <checkout>/packages/a`), as its top folder. Session a1523c66
+ * on 2026-11-24 edited a second checkout both ways from a cwd in the first, and the hook watched only the first: the
+ * `renames.ts` edit printed nothing.
  *
  * A relative value is read from the folder the command is in at that point, then from the cwd. A flag's value must be
- * a directory; an argument must hold a `.git`, because any other folder a script names (an output folder, a cache) is
- * not where it edits tracked files, and each root costs a `git rev-parse` and a `git status`. The cwd and the `cd`
- * targets are left out: `commandDirs` has them.
+ * a directory. An argument must be a folder inside a git repository, found by `stat` alone, and a folder inside a
+ * repository the command already works in (an output folder, a cache) adds nothing, because each root costs a
+ * `git rev-parse` and a `git status`. A non-script program's folder argument counts nowhere: on three days of real
+ * commands (2026-11-25), 539 `find`, `tools hub link --repo` and `tools rm -n` calls would have watched 139 more
+ * repositories for no edit. The cwd and the `cd` targets are left out: `commandDirs` has them.
  */
 export function programDirs(command: string, cwd: string): string[] {
     const walked = walkDirs(command, cwd, true);
@@ -451,6 +454,8 @@ function isDirectory(path: string): boolean {
 function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: string[]; programs: string[] } {
     const dirs = [cwd];
     const programs: string[] = [];
+    // The repositories a script got a folder inside of, which the shell's own folders may already cover.
+    const within: string[] = [];
     // A relative `cd` moves from wherever the PREVIOUS one landed: `cd packages && cd api` works
     // in `<cwd>/packages/api`, which resolving both against the session cwd never finds. The
     // session cwd stays the fallback for a `cd` that ran in a subshell, which the text alone
@@ -467,11 +472,17 @@ function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: 
                 continue;
             }
 
-            const fits = target.kind === "flag" ? isDirectory : (dir: string) => existsSync(resolve(dir, ".git"));
-            const dir = candidates.find(fits);
+            const dir =
+                target.kind === "flag"
+                    ? candidates.find(isDirectory)
+                    : candidates.map(repositoryTop).find((top) => top !== null);
 
             if (dir && !programs.includes(dir)) {
                 programs.push(dir);
+            }
+
+            if (dir && target.kind === "argument" && !candidates.includes(dir)) {
+                within.push(dir);
             }
 
             continue;
@@ -494,7 +505,30 @@ function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: 
         dirs.push(current);
     }
 
-    return { dirs, programs };
+    if (within.length === 0) {
+        return { dirs, programs };
+    }
+
+    const watched = new Set(dirs.map(repositoryTop));
+
+    return { dirs, programs: programs.filter((dir) => !(within.includes(dir) && watched.has(dir))) };
+}
+
+/** The top folder of the git repository that holds `dir`: the nearest folder up with a `.git`, by `stat` alone. */
+function repositoryTop(dir: string): string | null {
+    if (!isDirectory(dir)) {
+        return null;
+    }
+
+    for (let at = dir; ; at = dirname(at)) {
+        if (existsSync(resolve(at, ".git"))) {
+            return at;
+        }
+
+        if (dirname(at) === at) {
+            return null;
+        }
+    }
 }
 
 /** `~` and `~/x` only. `~user` is a different lookup and is left alone. */
