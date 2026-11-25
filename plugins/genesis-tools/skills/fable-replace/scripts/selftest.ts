@@ -66,6 +66,12 @@ const check = (name: string, cond: boolean, detail = ""): void => {
 const hermeticRoot = scratchDir("selftest-home");
 process.env.GENESIS_TOOLS_HOME = hermeticRoot;
 process.env.TMPDIR = hermeticRoot;
+// Inside a harness session the scratch folder follows the session to /tmp/<agent dir>/<project>/<session>/, which
+// ignores TMPDIR; the explicit root keeps every scratchDir of this file and of its CLIs under the hermetic one.
+process.env.FABLE_REPLACE_SCRATCH_ROOT = path.join(hermeticRoot, "fable-replace");
+// The CLIs this file spawns are its children: with no session named, their folder would be keyed by this pid while
+// ours is keyed by our parent's, and the --prune check would look in a folder the child never sweeps.
+process.env.FABLE_REPLACE_SESSION ||= scratchSessionKey();
 // Bun does not forward process.env mutations to spawned children (measured: a child of a
 // process that set X after startup sees X empty), so every CLI this file spawns gets the
 // hermetic env explicitly. Three standalone runs once wrote 48 lines into the real journal.
@@ -1418,6 +1424,32 @@ console.log("nearestHint");
         nearestHint({ content: "a = b;", needle: "a=b;" }).includes("whitespace")
     );
     check("nothing similar → re-read", nearestHint({ content: src, needle: "zebra crossing" }).includes("Re-read"));
+    // A short replacement occurs by chance ("e" twice in src): only the count the op declares reads as a re-run.
+    check(
+        "a replacement found by chance is not 'already applied'",
+        !nearestHint({ content: src, needle: "nope-not-there", replacement: "e" }).includes("already")
+    );
+    const twice = "x = 2;\nx = 2;\n";
+    const hintAt = (expected?: number | "all"): string =>
+        nearestHint({ content: twice, needle: "x = 1;", replacement: "x = 2;", expected });
+    check(
+        "the declared count decides: twice is 'already applied' at count 2, not at 1 or all",
+        hintAt(2).includes("already") && !hintAt(1).includes("already") && !hintAt("all").includes("already")
+    );
+    check(
+        "a replacement inside a longer word is not 'already applied'",
+        !nearestHint({ content: 'export const newName = "a";\n', needle: "nope-not-there", replacement: "x" }).includes(
+            "already"
+        )
+    );
+    check(
+        "a replacement that stands as its own token once is 'already applied', with its line",
+        nearestHint({ content: "// one\nconst x = 1;\n", needle: "nope-not-there", replacement: "x" }).includes(
+            "already in the file (first at line 2)"
+        )
+    );
+    const chance = applyOps(src, [{ find: "nope-not-there", replace: "e" }]);
+    check("a literal op hands its count to the hint", !(chance.results[0].reason ?? "").includes("REPLACEMENT"));
     const r = applyOps(src, [{ find: "two = 3;", replace: "two = 4;" }]);
     check("literal MISS reason carries the hint", (r.results[0].reason ?? "").includes("needle not found."));
 }
@@ -1930,7 +1962,8 @@ console.log("round 2: cli");
         "cli: --api has no duplicate entries and no function bodies",
         apiLines.filter((l) => l.startsWith("scratchDir = ")).length === 1 &&
             !api.stdout.includes("mkdtempSync") &&
-            apiLines.length < 900,
+            // A leaked function body adds hundreds of lines; the whole API printed 1012 lines on 2026-11-25.
+            apiLines.length < 1200,
         String(apiLines.length)
     );
     const apiQ = spawnSync("bun", [cli, "--api", "rollback"], { encoding: "utf8" });
@@ -2267,6 +2300,11 @@ console.log("scratchDir() root + pruneScratch()");
     const root = scratchRoot();
     const ownRoot = sessionScratchRoot();
     const fresh = scratchDir("probe");
+    check(
+        "FABLE_REPLACE_SCRATCH_ROOT is the shared root, ahead of a harness session",
+        root === process.env.FABLE_REPLACE_SCRATCH_ROOT && root === path.join(os.tmpdir(), "fable-replace"),
+        root
+    );
     check(
         "scratchDir lands in this session's folder, <tmp>/fable-replace/<session>/",
         ownRoot === path.join(root, scratchSessionKey()) &&
@@ -2615,7 +2653,7 @@ console.log("review round 1 regressions");
         cwd: spaceDir,
         input: "@@ s.ts\n<<<\nconst s = 1;\n===\nconst s = 2;\n>>>\n",
         encoding: "utf8",
-        env: { ...hermeticEnv, TMPDIR: spaceTmp },
+        env: { ...hermeticEnv, TMPDIR: spaceTmp, FABLE_REPLACE_SCRATCH_ROOT: path.join(spaceTmp, "fable-replace") },
     });
     const quoted = `${red.stdout}\n${red.stderr}`.match(/--rollback "([^"]+)"/)?.[1];
     const undone =
@@ -2690,12 +2728,17 @@ check(
 }
 {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const spaced = f("dir with space/scripts");
+    // The plugin's layout, because the scripts import the plugin's hooks/ and lib/ (the scratch folder of a session).
+    const spacedPlugin = f("dir with space/plugin");
+    const spaced = path.join(spacedPlugin, "skills", "fable-replace", "scripts");
     fs.mkdirSync(spaced, { recursive: true });
     for (const name of fs.readdirSync(here)) {
         if (name.endsWith(".ts")) {
             fs.copyFileSync(path.join(here, name), path.join(spaced, name));
         }
+    }
+    for (const shared of ["hooks", "lib"]) {
+        fs.symlinkSync(path.resolve(here, "..", "..", "..", shared), path.join(spacedPlugin, shared));
     }
     const api = spawnSync("bun", [path.join(spaced, "cli.ts"), "--api", "run"], { encoding: "utf8", env: hermeticEnv });
     const count = Number(api.stdout.match(/fable-replace API — (\d+) entr/)?.[1] ?? -1);

@@ -17,16 +17,17 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { backupDirInUse, recordPostWriteHashes, rollback, writeBackup } from "./backup-and-rollback";
+import { backupDirInUse, recordGitMove, recordPostWriteHashes, rollback, writeBackup } from "./backup-and-rollback";
 import { scanComments } from "./comments";
 import { applyOps } from "./edit-one-file";
 import { COLORS, changedOnDisk, FableReplaceError, paint, preview } from "./internal";
 import { expandMoves } from "./move-blocks";
 import { leftovers } from "./recon";
-import type { FileEdit, FileResult, RunParams, RunReport, SimpleDiffParams, VerifyResult } from "./types";
+import type { DiffLevel, FileEdit, FileResult, RunParams, RunReport, SimpleDiffParams, VerifyResult } from "./types";
 import { checkVerifyCommand, runVerifyCommand, verifyUnknownReason } from "./verify-command";
 
 /**
@@ -34,6 +35,8 @@ import { checkVerifyCommand, runVerifyCommand, verifyUnknownReason } from "./ver
  * Those still hold the rejected content, so the caller must name them: an exit code
  * alone reads as a routine failure, and the user trusts "or not at all".
  */
+const sha256Of = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
+
 const strandedByRollback = ({ backupDir, touched }: { backupDir: string; touched: string[] }): string[] => {
     // Only the paths this sweep wrote. A file the changed-on-disk guard refused holds someone
     // else's write, and a file after the failure was never touched: restoring either from
@@ -85,13 +88,21 @@ const printVerifyFailure = ({
     }
 };
 
+/** One changed region of a line diff: `removed` left `before` at line `aStart`, `added` entered `after` at `bStart` (0-based). */
+interface Hunk {
+    aStart: number;
+    bStart: number;
+    removed: string[];
+    added: string[];
+}
+
 /**
  * Line diff for dry runs. Patience-style: it trims the common prefix/suffix, then
  * splits the remaining window on lines that occur exactly once on BOTH sides and
  * recurses. That keeps two edits 40 lines apart as two small hunks instead of one
  * 40-line block, which used to overstate the blast radius of a multi-hit sweep.
  */
-const diffRegion = (a: string[], b: string[], aStart: number, out: string[], depth = 0): void => {
+const diffRegion = (a: string[], b: string[], start: { a: number; b: number }, out: Hunk[], depth = 0): void => {
     let prefix = 0;
     while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) {
         prefix += 1;
@@ -109,7 +120,7 @@ const diffRegion = (a: string[], b: string[], aStart: number, out: string[], dep
     if (aMid.length === 0 && bMid.length === 0) {
         return;
     }
-    const midStart = aStart + prefix;
+    const mid = { a: start.a + prefix, b: start.b + prefix };
 
     // find a unique common anchor line to split on (patience diff)
     if (depth < 40 && aMid.length > 0 && bMid.length > 0) {
@@ -134,24 +145,29 @@ const diffRegion = (a: string[], b: string[], aStart: number, out: string[], dep
             break;
         }
         if (anchorA !== -1 && anchorB !== -1) {
-            diffRegion(aMid.slice(0, anchorA), bMid.slice(0, anchorB), midStart, out, depth + 1);
-            diffRegion(aMid.slice(anchorA + 1), bMid.slice(anchorB + 1), midStart + anchorA + 1, out, depth + 1);
+            diffRegion(aMid.slice(0, anchorA), bMid.slice(0, anchorB), mid, out, depth + 1);
+            const after = { a: mid.a + anchorA + 1, b: mid.b + anchorB + 1 };
+            diffRegion(aMid.slice(anchorA + 1), bMid.slice(anchorB + 1), after, out, depth + 1);
             return;
         }
     }
 
-    out.push(`@@ line ${midStart + 1} (−${aMid.length} +${bMid.length}) @@`);
-    for (const l of aMid) {
-        out.push(`- ${l}`);
-    }
-    for (const l of bMid) {
-        out.push(`+ ${l}`);
-    }
+    out.push({ aStart: mid.a, bStart: mid.b, removed: aMid, added: bMid });
 };
 
-export const simpleDiff = ({ before, after, maxLines = 200 }: SimpleDiffParams): string => {
-    const out: string[] = [];
-    diffRegion(before.split("\n"), after.split("\n"), 0, out);
+const diffHunks = (before: string, after: string): Hunk[] => {
+    const out: Hunk[] = [];
+    diffRegion(before.split("\n"), after.split("\n"), { a: 0, b: 0 }, out);
+    return out;
+};
+
+/** The hunks as the printed diff, cut after `maxLines` lines. */
+const formatHunks = (hunks: Hunk[], maxLines: number): string => {
+    const out = hunks.flatMap((h) => [
+        `@@ line ${h.aStart + 1} (−${h.removed.length} +${h.added.length}) @@`,
+        ...h.removed.map((l) => `- ${l}`),
+        ...h.added.map((l) => `+ ${l}`),
+    ]);
     if (out.length === 0) {
         return "(no line-level change)";
     }
@@ -160,6 +176,108 @@ export const simpleDiff = ({ before, after, maxLines = 200 }: SimpleDiffParams):
         return [...out.slice(0, maxLines), `… (${hidden} more diff lines)`].join("\n");
     }
     return out.join("\n");
+};
+
+export const simpleDiff = ({ before, after, maxLines = 200 }: SimpleDiffParams): string =>
+    formatHunks(diffHunks(before, after), maxLines);
+
+/** The `+N -M` of a file: the line counts of its hunks, so the stat and the printed diff agree. */
+const diffStatOf = (hunks: Hunk[]): { added: number; removed: number } => ({
+    added: hunks.reduce((sum, h) => sum + h.added.length, 0),
+    removed: hunks.reduce((sum, h) => sum + h.removed.length, 0),
+});
+
+/**
+ * The first line of `after` (1-based) that the ops added or changed and that holds `text`, or null. A line the
+ * patience diff found no anchor for comes back on both sides of its hunk although it did not change, so an added line
+ * equal to a removed line of the same hunk is skipped. A text with a newline is searched in each hunk's added lines.
+ */
+const changedLineHolding = (hunks: Hunk[], text: string): number | null => {
+    for (const hunk of hunks) {
+        if (text.includes("\n")) {
+            if (hunk.added.join("\n").includes(text)) {
+                return hunk.bStart + 1;
+            }
+
+            continue;
+        }
+
+        const unchanged = new Map<string, number>();
+        for (const line of hunk.removed) {
+            unchanged.set(line, (unchanged.get(line) ?? 0) + 1);
+        }
+        for (const [index, line] of hunk.added.entries()) {
+            const left = unchanged.get(line) ?? 0;
+            if (left > 0) {
+                unchanged.set(line, left - 1);
+                continue;
+            }
+
+            if (line.includes(text)) {
+                return hunk.bStart + index + 1;
+            }
+        }
+    }
+
+    return null;
+};
+
+/** Each diff level's width; a merge keeps the wider one. */
+const DIFF_RANK: Record<DiffLevel, number> = { none: 0, stat: 1, full: 2 };
+
+const isDiffLevel = (value: unknown): value is DiffLevel =>
+    typeof value === "string" && Object.hasOwn(DIFF_RANK, value);
+
+const widerDiff = (a: DiffLevel | undefined, b: DiffLevel | undefined): DiffLevel | undefined => {
+    if (a === undefined || b === undefined) {
+        return a ?? b;
+    }
+
+    return DIFF_RANK[b] > DIFF_RANK[a] ? b : a;
+};
+
+/** Deadline of one git call of a gitMove: each is a local index operation, so a hang means a broken repository. */
+const GIT_TIMEOUT_MS = 30_000;
+
+/**
+ * Stage a renameTo as a git rename (`gitMove`), before its content is written. Only when git tracks the old path and
+ * nothing of it is staged: `git mv` moves the index entry by itself, while staging both paths by hand would also stage
+ * the user's own edit, and the rollback's `git reset` would drop a staged change of the user. Returns null after the
+ * move, else why it did not run; then nothing was changed and the caller renames the file as before.
+ */
+const gitMoveRefusal = ({ from, to }: { from: string; to: string }): string | null => {
+    // Paths relative to the source's folder: git resolves an absolute path against its real work tree, and a temp
+    // folder reached through a symlink (/var -> /private/var) could read as outside the repository.
+    const dir = path.dirname(from);
+    const name = path.basename(from);
+    const git = (args: string[]): { status: number | null; detail: string } => {
+        const result = spawnSync("git", ["--literal-pathspecs", ...args], {
+            cwd: dir,
+            encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const detail = result.stderr?.trim() || String(result.error ?? `git exited ${String(result.status)}`);
+        return { status: result.status, detail: detail.split("\n")[0] };
+    };
+    if (fs.existsSync(to)) {
+        return "the target already exists";
+    }
+
+    const tracked = git(["ls-files", "--error-unmatch", "--", name]);
+    if (tracked.status !== 0) {
+        return tracked.status === 1 ? "git does not track it" : `git ls-files: ${tracked.detail}`;
+    }
+
+    const staged = git(["diff", "--cached", "--quiet", "--", name]);
+    if (staged.status !== 0) {
+        return staged.status === 1
+            ? "it has staged changes, which a rollback's git reset would unstage"
+            : `git diff --cached: ${staged.detail}`;
+    }
+
+    const moved = git(["mv", "--", name, path.relative(dir, to)]);
+    return moved.status === 0 ? null : `git mv: ${moved.detail}`;
 };
 
 // A sweep that edits generated output looks perfect and typechecks, then vanishes on
@@ -342,6 +460,16 @@ const validateEdit = (edit: FileEdit): string | null => {
             return `op ${index + 1} has a RegExp \`find\` ${String(find)} but no \`kind: "regex"\` (a literal op takes a string)`;
         }
     }
+    const ops = edit.ops ?? [];
+    if (ops.length > 1 && ops.some((op) => op.kind === "rewrite")) {
+        return `a rewrite is the only op of its file, and this edit has ${ops.length} ops: the rewrite replaces the whole content, so another op would edit text it discards. Put the change into the rewrite's content.`;
+    }
+    if (edit.gitMove === true && edit.renameTo === undefined) {
+        return "gitMove: true without renameTo: there is no rename to stage";
+    }
+    if (edit.diff !== undefined && !isDiffLevel(edit.diff)) {
+        return `diff "${String(edit.diff)}" is not a level. Known: ${Object.keys(DIFF_RANK).join(", ")}`;
+    }
     return null;
 };
 
@@ -373,6 +501,8 @@ const KNOWN_RUN_KEYS = [
     "verifyTimeoutMs",
     "onWritten",
     "leftoversCheck",
+    "diff",
+    "verifyControl",
 ];
 
 /** A known key sharing a prefix or a substring with the typo, for the "did you mean" hint. */
@@ -384,6 +514,12 @@ const closestRunKey = (typo: string): string | undefined => {
 };
 
 export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunReport> => {
+    // Every WARNING line also lands in the report: a --json caller prints nothing else and still reads them.
+    const warnings: string[] = [];
+    const warn = (message: string): void => {
+        warnings.push(message);
+        console.error(paint(COLORS.skip, `WARNING: ${message}`));
+    };
     // A move is two ordinary edits (cut here, paste there) that must land together, so it is
     // expanded up front and then carried by the same transaction as everything else.
     // A move's paste and an ordinary edit on the SAME target is the normal case: move a function
@@ -399,7 +535,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 [
                     ...expandMoves(moves, {
                         ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
-                        onWarning: (message) => console.error(`WARNING: ${message}`),
+                        onWarning: warn,
                     }),
                     ...allEdits,
                 ],
@@ -425,6 +561,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     // terminal or log you would `tail`, and a truncated tail reads as a finished report.
     let diffBudget = opts.maxTotalDiffLines ?? 2000;
     let diffsSuppressed = 0;
+    // The library default ignores `verbose`: a quiet caller that asks for diffs still gets them (the selftest's
+    // diff-budget case), and the CLI maps --quiet to "stat" itself. A FileEdit's own level wins.
+    const runDiff: DiffLevel = opts.diff ?? (dryRun || opts.showDiff === true ? "full" : "none");
 
     // Absolute whatever `cwd` is: a relative --cwd used to persist "sub/file.ts" in the
     // manifest, so the printed undo command restored against the caller's directory.
@@ -432,6 +571,12 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
 
     // ── pre-flight validation ──────────────────────────────────────────────
     const preflightErrors: string[] = [...moveErrors];
+    // A refusal that names one file is data too: the report lists that file as "refused" with its reason.
+    const refusedFiles = new Map<string, string[]>();
+    const refuseFile = (file: string, reason: string): void => {
+        preflightErrors.push(`${file}: ${reason}`);
+        refusedFiles.set(file, [...(refusedFiles.get(file) ?? []), reason]);
+    };
     // An unknown option is a typo that would otherwise do nothing: `dry: true` instead of
     // `dryRun: true` once nearly turned a preview into a real write.
     for (const key of Object.keys(opts)) {
@@ -447,63 +592,74 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     for (const edit of allEdits) {
         const abs = resolve(edit.file);
         if (seen.has(abs)) {
-            preflightErrors.push(
-                `${edit.file}: listed twice in one batch — merge the ops into one FileEdit, or wrap the batch in mergeFileEdits()`
+            refuseFile(
+                edit.file,
+                "listed twice in one batch — merge the ops into one FileEdit, or wrap the batch in mergeFileEdits()"
             );
         }
         seen.add(abs);
         if (!opts.allowNodeModules && abs.includes(`${path.sep}node_modules${path.sep}`)) {
-            preflightErrors.push(
-                `${edit.file}: refusing to edit inside node_modules (set allowNodeModules to override)`
-            );
+            refuseFile(edit.file, "refusing to edit inside node_modules (set allowNodeModules to override)");
         }
         if (opts.allowGenerated !== true && edit.allowGenerated !== true && !edit.delete) {
             const why = looksGenerated(abs);
             if (why !== null) {
-                preflightErrors.push(
-                    `${edit.file}: refusing to edit a GENERATED file (${why}) — the next codegen run discards the change. Fix the generator, or pass allowGenerated: true.`
+                refuseFile(
+                    edit.file,
+                    `refusing to edit a GENERATED file (${why}) — the next codegen run discards the change. Fix the generator, or pass allowGenerated: true.`
                 );
             }
         }
         const structural = validateEdit(edit);
         if (structural) {
-            preflightErrors.push(`${edit.file}: ${structural}`);
+            refuseFile(edit.file, structural);
+        }
+
+        // The hash guards the write, and a code-mode caller has no hasher: its dry run hands back sha256Before.
+        if (!dryRun && edit.ops?.some((op) => op.kind === "rewrite" && op.expectSha256 === undefined)) {
+            refuseFile(
+                edit.file,
+                "a rewrite needs expectSha256 on a real run. Dry-run it first, then send that report's sha256Before for this file as expectSha256."
+            );
         }
         if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
             // Reading it threw a bare EISDIR from deep inside the runner.
-            preflightErrors.push(`${edit.file}: is a directory, not a file`);
+            refuseFile(edit.file, "is a directory, not a file");
         }
         if (edit.renameTo) {
             const target = resolve(edit.renameTo);
             const claimedBy = renameTargets.get(target);
             if (claimedBy !== undefined) {
-                preflightErrors.push(`${edit.file}: renames to ${edit.renameTo}, which ${claimedBy} also claims`);
+                refuseFile(edit.file, `renames to ${edit.renameTo}, which ${claimedBy} also claims`);
             }
             renameTargets.set(target, edit.file);
             // The destination is a write to a protected path as much as the source is.
             if (!opts.allowNodeModules && target.includes(`${path.sep}node_modules${path.sep}`)) {
-                preflightErrors.push(
-                    `${edit.file}: refusing to rename into node_modules (${edit.renameTo}; set allowNodeModules to override)`
+                refuseFile(
+                    edit.file,
+                    `refusing to rename into node_modules (${edit.renameTo}; set allowNodeModules to override)`
                 );
             }
             if (opts.allowGenerated !== true && edit.allowGenerated !== true && target !== abs) {
                 const why = looksGenerated(target);
                 if (why !== null) {
-                    preflightErrors.push(
-                        `${edit.file}: refusing to rename onto a GENERATED path ${edit.renameTo} (${why}) — pass allowGenerated: true.`
+                    refuseFile(
+                        edit.file,
+                        `refusing to rename onto a GENERATED path ${edit.renameTo} (${why}) — pass allowGenerated: true.`
                     );
                 }
             }
             if (target !== abs && fs.existsSync(target) && !edit.overwrite) {
-                preflightErrors.push(
-                    `${edit.file}: renameTo target already exists: ${edit.renameTo} — set overwrite: true to replace it`
+                refuseFile(
+                    edit.file,
+                    `renameTo target already exists: ${edit.renameTo} — set overwrite: true to replace it`
                 );
             }
         }
     }
     for (const [target, claimedBy] of renameTargets) {
         if (seen.has(target)) {
-            preflightErrors.push(`${claimedBy}: renameTo target is also edited in this batch: ${target}`);
+            refuseFile(claimedBy, `renameTo target is also edited in this batch: ${target}`);
         }
     }
     if (opts.backupDir !== undefined && opts.backupOverwrite !== true && !dryRun) {
@@ -519,8 +675,17 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         if (refusal !== undefined) {
             preflightErrors.push(refusal);
         } else if (warning !== undefined) {
-            console.error(paint(COLORS.skip, `WARNING: ${warning}`));
+            warn(warning);
         }
+    }
+
+    if (opts.verifyControl !== undefined && opts.verifyCommand === undefined) {
+        preflightErrors.push(
+            "verifyControl without verifyCommand: the probe runs through the verify command, so alone it proves nothing. Pass both, or drop verifyControl."
+        );
+    }
+    if (opts.diff !== undefined && !isDiffLevel(opts.diff)) {
+        preflightErrors.push(`diff "${String(opts.diff)}" is not a level. Known: ${Object.keys(DIFF_RANK).join(", ")}`);
     }
 
     if (dryRun && opts.verifyCommand !== undefined) {
@@ -532,7 +697,24 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         for (const e of preflightErrors) {
             console.error(paint(COLORS.miss, `PRE-FLIGHT: ${e}`));
         }
-        bail(`fable-replace pre-flight failed:\n${preflightErrors.join("\n")}`, 2);
+        const refused = [...refusedFiles].map(
+            ([file, reasons]): FileResult => ({
+                file,
+                action: "refused",
+                reason: reasons.join("; "),
+                ops: [],
+                postConditionFailures: [],
+                changed: false,
+            })
+        );
+        bail(`fable-replace pre-flight failed:\n${preflightErrors.join("\n")}`, 2, {
+            ok: false,
+            files: refused,
+            written: [],
+            writtenPaths: [],
+            missCount: 0,
+            warnings,
+        });
     }
 
     // ── phase 1: apply everything in memory ────────────────────────────────
@@ -544,6 +726,8 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         after: string | null;
         /** The bytes read from disk, so the write phase can prove they are still there. */
         diskBefore: string | null;
+        /** The line diff of `before` and `after`, when both exist. */
+        hunks: Hunk[] | null;
     }
     const planned: Planned[] = [];
 
@@ -568,8 +752,18 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 fileResult.action = "deleted";
                 fileResult.changed = true;
                 bytesAtPlan = fs.readFileSync(abs, "utf8");
+                fileResult.sha256Before = sha256Of(bytesAtPlan);
+                fileResult.diffStat = diffStatOf(diffHunks(bytesAtPlan, ""));
             }
-            planned.push({ edit, abs, result: fileResult, before: null, after: null, diskBefore: bytesAtPlan });
+            planned.push({
+                edit,
+                abs,
+                result: fileResult,
+                before: null,
+                after: null,
+                diskBefore: bytesAtPlan,
+                hunks: null,
+            });
             continue;
         }
 
@@ -583,7 +777,15 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 fileResult.postConditionFailures.push(
                     'createWith ("<<< create") refuses to overwrite an existing file. Use replace ops on it instead.'
                 );
-                planned.push({ edit, abs, result: fileResult, before: null, after: null, diskBefore: null });
+                planned.push({
+                    edit,
+                    abs,
+                    result: fileResult,
+                    before: null,
+                    after: null,
+                    diskBefore: null,
+                    hunks: null,
+                });
                 continue;
             }
 
@@ -593,13 +795,22 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             // still reporting OK. A file we cannot represent exactly is a file we must not
             // rewrite at all.
             const raw = fs.readFileSync(abs);
+            fileResult.sha256Before = sha256Of(raw);
             before = raw.toString("utf8");
             if (!Buffer.from(before, "utf8").equals(raw)) {
                 fileResult.action = "failed-read";
                 fileResult.postConditionFailures.push(
                     "not valid UTF-8 — refusing to rewrite it, because every invalid byte would silently become U+FFFD. Fix the encoding first (iconv), or edit it with a byte-aware tool."
                 );
-                planned.push({ edit, abs, result: fileResult, before: null, after: null, diskBefore: null });
+                planned.push({
+                    edit,
+                    abs,
+                    result: fileResult,
+                    before: null,
+                    after: null,
+                    diskBefore: null,
+                    hunks: null,
+                });
                 continue;
             }
 
@@ -610,7 +821,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         } else {
             fileResult.action = "failed-read";
             fileResult.postConditionFailures.push("file does not exist (use createWith to create)");
-            planned.push({ edit, abs, result: fileResult, before: null, after: null, diskBefore: null });
+            planned.push({ edit, abs, result: fileResult, before: null, after: null, diskBefore: null, hunks: null });
             continue;
         }
 
@@ -621,6 +832,18 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             fileResult.action = edit.renameTo ? "renamed" : fileResult.changed ? "edited" : "unchanged";
         }
 
+        if (fileResult.action === "renamed") {
+            fileResult.renamedTo = edit.renameTo;
+        }
+
+        // A created file's "before" for the diff is the empty file, not its own seed: the
+        // dry run must show what lands on disk.
+        const diffBefore = fileResult.action === "created" ? "" : before;
+        const hunks = diffHunks(diffBefore, after);
+        if (fileResult.changed) {
+            fileResult.diffStat = diffStatOf(hunks);
+        }
+
         for (const expected of edit.expectAfter ?? []) {
             if (!after.includes(expected)) {
                 fileResult.postConditionFailures.push(`expectAfter not satisfied: "${preview(expected)}"`);
@@ -629,6 +852,14 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         for (const absent of edit.absentAfter ?? []) {
             if (after.includes(absent)) {
                 fileResult.postConditionFailures.push(`absentAfter violated, still present: "${preview(absent)}"`);
+            }
+        }
+        for (const text of edit.absentInChange ?? []) {
+            const line = changedLineHolding(hunks, text);
+            if (line !== null) {
+                fileResult.postConditionFailures.push(
+                    `absentInChange violated at line ${line}, a line the ops added or changed: "${preview(text)}"`
+                );
             }
         }
         if (opts.syntaxCheck !== false) {
@@ -651,22 +882,17 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             }
         }
 
-        // A created file's "before" for the diff is the empty file, not its own seed: the
-        // dry run must show what lands on disk.
-        planned.push({
-            edit,
-            abs,
-            result: fileResult,
-            before: fileResult.action === "created" ? "" : before,
-            after,
-            diskBefore,
-        });
+        planned.push({ edit, abs, result: fileResult, before: diffBefore, after, diskBefore, hunks });
     }
 
     // ── phase 2: report ────────────────────────────────────────────────────
     let missCount = 0;
     for (const plan of planned) {
-        const header = `${paint(COLORS.bold, plan.edit.file)} ${paint(COLORS.dim, `(${plan.result.action})`)}`;
+        const level = plan.edit.diff ?? runDiff;
+        const stat = plan.result.diffStat;
+        const statText =
+            level === "stat" && stat !== undefined ? ` ${paint(COLORS.dim, `+${stat.added} -${stat.removed}`)}` : "";
+        const header = `${paint(COLORS.bold, plan.edit.file)} ${paint(COLORS.dim, `(${plan.result.action})`)}${statText}`;
         console.log(header);
         for (const op of plan.result.ops) {
             if (op.status === "OK") {
@@ -692,17 +918,19 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             console.log(`  ${paint(COLORS.miss, "POST")} ${failure}`);
         }
         if (
-            (dryRun || opts.showDiff === true) &&
+            level === "full" &&
+            plan.hunks !== null &&
             plan.before !== null &&
             plan.after !== null &&
             plan.before !== plan.after
         ) {
+            // The report keeps the file's diff under its own cap; the total budget limits only what is printed.
+            plan.result.diff = formatHunks(plan.hunks, maxDiffLines);
             if (diffBudget > 0) {
-                const text = simpleDiff({
-                    before: plan.before,
-                    after: plan.after,
-                    maxLines: Math.min(maxDiffLines, diffBudget),
-                });
+                const text =
+                    diffBudget >= maxDiffLines
+                        ? plan.result.diff
+                        : formatHunks(plan.hunks, Math.min(maxDiffLines, diffBudget));
                 diffBudget -= text.split("\n").length;
                 console.log(paint(COLORS.dim, text));
             } else {
@@ -715,6 +943,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
 
     // ── phase 3: write (or not) ────────────────────────────────────────────
     const written: string[] = [];
+    const writtenPaths: string[] = [];
+    /** opts.backupDir once a file is backed up into it: a run that backs nothing up reports no backupDir. */
+    let backedUpTo: string | undefined;
     const touched: string[] = [];
     // A new file is created exclusively and joins `touched` the moment its descriptor
     // exists: a write that fails after creation (ENOSPC) leaves a partial file the recovery
@@ -734,6 +965,8 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     };
     let leftoverProse = 0;
     let verify: VerifyResult | undefined;
+    /** The verify control's probe goes here: the folder of the first file written, so the probe sits beside the edit. */
+    let firstWrittenDir: string | undefined;
     // The hashes are metadata about a sweep that IS on disk. A failure here (a verify
     // command that turned a tracked path into a directory, a manifest the disk refuses)
     // used to surface as a generic exit 1 with no undo command, as if nothing was written.
@@ -762,9 +995,11 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     ok: false,
                     files: planned.map((p) => p.result),
                     written,
+                    writtenPaths,
                     missCount,
-                    backupDir: opts.backupDir,
+                    backupDir: backedUpTo,
                     verify,
+                    warnings,
                 }
             );
         }
@@ -807,6 +1042,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 return targets;
             });
             writeBackup({ dir: opts.backupDir, files: paths, overwrite: opts.backupOverwrite === true });
+            backedUpTo = opts.backupDir;
             console.log(paint(COLORS.dim, `\nBacked up ${paths.length} path(s) to ${opts.backupDir}`));
         }
         try {
@@ -825,6 +1061,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     touched.push(plan.abs);
                     fs.rmSync(plan.abs);
                     written.push(`${plan.edit.file} (deleted)`);
+                    writtenPaths.push(plan.edit.file);
                     continue;
                 }
 
@@ -833,22 +1070,45 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 // world-readable and no longer executable. Carry the source's mode over.
                 const sourceMode = fs.existsSync(plan.abs) ? fs.statSync(plan.abs).mode : undefined;
                 fs.mkdirSync(path.dirname(target), { recursive: true });
-                // The plan proved a created file and a non-overwriting rename target absent.
-                // "wx" proves it again at the write itself: a path that appeared in between,
-                // or a dangling symlink existsSync cannot see, fails with EEXIST instead of
-                // being truncated, and stays out of `touched`, so the recovery never deletes it.
-                const mustBeNew =
-                    plan.result.action === "created" || (target !== plan.abs && plan.edit.overwrite !== true);
-                if (mustBeNew) {
-                    writeNew(target, plan.after ?? "");
-                } else {
-                    touched.push(target);
-                    fs.writeFileSync(target, plan.after ?? "");
+                // A git move runs before the content write, so git shows the rename and the content change (RM).
+                let gitMoved = false;
+                if (plan.edit.gitMove === true && target !== plan.abs) {
+                    const refusal = gitMoveRefusal({ from: plan.abs, to: target });
+                    gitMoved = refusal === null;
+                    if (refusal !== null) {
+                        warn(`${plan.edit.file}: renamed without git mv (${refusal}).`);
+                    }
                 }
 
-                if (target !== plan.abs) {
-                    touched.push(plan.abs);
+                if (gitMoved) {
+                    // Both paths join `touched` before anything else can fail: the source is already gone from disk.
+                    // The moved file exists now, so its content overwrites it instead of the exclusive create.
+                    touched.push(target, plan.abs);
+                    if (opts.backupDir !== undefined) {
+                        recordGitMove(opts.backupDir, { from: plan.abs, to: target });
+                    }
+
+                    fs.writeFileSync(target, plan.after ?? "");
+                } else {
+                    // The plan proved a created file and a non-overwriting rename target absent.
+                    // "wx" proves it again at the write itself: a path that appeared in between,
+                    // or a dangling symlink existsSync cannot see, fails with EEXIST instead of
+                    // being truncated, and stays out of `touched`, so the recovery never deletes it.
+                    const mustBeNew =
+                        plan.result.action === "created" || (target !== plan.abs && plan.edit.overwrite !== true);
+                    if (mustBeNew) {
+                        writeNew(target, plan.after ?? "");
+                    } else {
+                        touched.push(target);
+                        fs.writeFileSync(target, plan.after ?? "");
+                    }
+
+                    if (target !== plan.abs) {
+                        touched.push(plan.abs);
+                    }
                 }
+
+                firstWrittenDir ??= path.dirname(target);
                 if (plan.edit.renameTo && target !== plan.abs && fs.existsSync(plan.abs)) {
                     if (sourceMode !== undefined) {
                         fs.chmodSync(target, sourceMode & 0o7777);
@@ -857,6 +1117,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     fs.rmSync(plan.abs);
                 }
                 written.push(plan.edit.renameTo ? `${plan.edit.file} → ${plan.edit.renameTo}` : plan.edit.file);
+                writtenPaths.push(plan.edit.renameTo ?? plan.edit.file);
             }
         } catch (err) {
             // An I/O failure (EACCES, ENOSPC, a read-only file) leaves the batch half
@@ -898,11 +1159,18 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 );
             } else {
                 console.log(paint(COLORS.dim, `verify: ${opts.verifyCommand}`));
+                const probeDir = firstWrittenDir ?? cwd;
+                if (opts.verifyControl !== undefined) {
+                    console.log(paint(COLORS.dim, `verify control: ${opts.verifyControl.probeName} in ${probeDir}`));
+                }
+
                 const result = runVerifyCommand({
                     command: opts.verifyCommand,
                     cwd,
                     backupDir: opts.backupDir,
                     timeoutMs: opts.verifyTimeoutMs,
+                    control: opts.verifyControl,
+                    probeDir,
                 });
                 verify = result;
                 // The check may have rewritten files (a formatter, codegen). The hashes the
@@ -923,9 +1191,11 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                             ok: false,
                             files: planned.map((p) => p.result),
                             written,
+                            writtenPaths,
                             missCount,
-                            backupDir: opts.backupDir,
+                            backupDir: backedUpTo,
                             verify: result,
+                            warnings,
                         }
                     );
                 }
@@ -951,7 +1221,8 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
 
         if (!failed && leftoverProse === 0) {
             const opsOk = planned.reduce((sum, p) => sum + p.result.ops.filter((o) => o.status === "OK").length, 0);
-            const verified = verify !== undefined ? ", verify passed (exit 0)" : "";
+            const control = verify?.control === "caught" ? ", control caught" : "";
+            const verified = verify !== undefined ? `, verify passed (exit 0)${control}` : "";
             console.log(
                 paint(COLORS.ok, `SWEEP COMPLETE: ${written.length} file(s) written, ${opsOk} op(s) OK${verified}.`)
             );
@@ -969,9 +1240,11 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         ok: !failed && leftoverProse === 0,
         files: planned.map((p) => p.result),
         written,
+        writtenPaths,
         missCount,
-        backupDir: opts.backupDir,
+        backupDir: backedUpTo,
         verify,
+        warnings,
     };
 
     if (failed || leftoverProse > 0) {
@@ -1000,7 +1273,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
  *   ]))
  *
  * Without this, a file appearing in both lists is two FileEdits and pre-flight
- * refuses the batch. Ops are concatenated in order and post-conditions are unioned.
+ * refuses the batch. Ops are concatenated in order and post-conditions are unioned
+ * (`absentInChange` without repeats); a `gitMove: true` on either side wins, and so does
+ * the wider `diff` level.
  * Anything that cannot be merged unambiguously (two different `renameTo`, a delete
  * beside ops) throws rather than guessing. Merging is by the resolved path, so `./a.ts`
  * and `a.ts` are one file; the first spelling is kept.
@@ -1027,14 +1302,29 @@ export const mergeFileEdits = (edits: FileEdit[], options: { cwd?: string } = {}
         if ((existing.delete === true && edit.ops?.length) || (edit.delete === true && existing.ops?.length)) {
             throw new Error(`mergeFileEdits: ${edit.file} is both deleted and edited in the same batch`);
         }
-        byFile.set(key, {
+        const merged: FileEdit = {
             ...existing,
             ...Object.fromEntries(Object.entries(edit).filter(([, v]) => v !== undefined)),
             file: existing.file,
             ops: [...(existing.ops ?? []), ...(edit.ops ?? [])],
             expectAfter: [...(existing.expectAfter ?? []), ...(edit.expectAfter ?? [])],
             absentAfter: [...(existing.absentAfter ?? []), ...(edit.absentAfter ?? [])],
-        });
+        };
+        const absentInChange = [...new Set([...(existing.absentInChange ?? []), ...(edit.absentInChange ?? [])])];
+        if (absentInChange.length > 0) {
+            merged.absentInChange = absentInChange;
+        }
+
+        if (existing.gitMove === true || edit.gitMove === true) {
+            merged.gitMove = true;
+        }
+
+        const diff = widerDiff(existing.diff, edit.diff);
+        if (diff !== undefined) {
+            merged.diff = diff;
+        }
+
+        byFile.set(key, merged);
     }
     return [...byFile.values()];
 };

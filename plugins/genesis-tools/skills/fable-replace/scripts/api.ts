@@ -11,10 +11,12 @@ import * as path from "node:path";
 const MODULES = [
     "types.ts",
     "spec.ts",
+    "report-json.ts",
     "sweep-many-files.ts",
     "edit-one-file.ts",
     "comments.ts",
     "rename-symbols.ts",
+    "rename-module.ts",
     "recon.ts",
     "backup-and-rollback.ts",
     "verify-command.ts",

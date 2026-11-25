@@ -20,6 +20,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { TOOL_GROUPS } from "./groups";
 import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
+    GENESIS_REPLACE_DESCRIPTION,
+    GENESIS_REPLACE_FIND_DESCRIPTION,
+    GENESIS_REPLACE_FIND_INPUT_SCHEMA,
+    GENESIS_REPLACE_INPUT_SCHEMA,
+    handleGenesisReplace,
+    handleGenesisReplaceFind,
+} from "./tools/genesis-replace";
+import {
     HANDOFF_ACTION_DESCRIPTION,
     HANDOFF_ACTION_INPUT_SCHEMA,
     HANDOFF_GET_DESCRIPTION,
@@ -270,6 +278,18 @@ function buildToolRegistry(context: InstructionContext): Record<string, ToolEntr
             inputSchema: ANNOTATE_IMAGE_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleAnnotateImage(args as unknown as AnnotateImageArgs),
         },
+        genesis_replace: {
+            description: GENESIS_REPLACE_DESCRIPTION,
+            inputSchema: GENESIS_REPLACE_INPUT_SCHEMA,
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+            handler: async (args, call) => handleGenesisReplace(args, { signal: call?.signal }),
+        },
+        genesis_replace_find: {
+            description: GENESIS_REPLACE_FIND_DESCRIPTION,
+            inputSchema: GENESIS_REPLACE_FIND_INPUT_SCHEMA,
+            annotations: { readOnlyHint: true, openWorldHint: false },
+            handler: async (args, call) => handleGenesisReplaceFind(args, { signal: call?.signal }),
+        },
     };
 }
 
@@ -306,6 +326,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     handoff: (name) => name.startsWith("handoff_"),
     decision: (name) => DECISION_TOOLS.has(name),
     annotate: (name) => name.startsWith("annotate_"),
+    replace: (name) => name.startsWith("genesis_replace"),
     // One row per tool group (groups.ts): its capability is its id, its tools are the ones named with its prefix.
     ...Object.fromEntries(
         TOOL_GROUPS.map((row): [string, (name: string) => boolean] => [row.id, (name) => name.startsWith(row.prefix)])
