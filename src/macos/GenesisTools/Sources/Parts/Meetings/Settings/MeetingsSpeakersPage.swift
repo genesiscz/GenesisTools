@@ -57,6 +57,8 @@ struct MeetingsSpeakersPage: View {
                 .nativeSettingsAnchor("voiceLibrary")
             MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: model.settingsRaw)) { path, value in model.set(path, value) }
                 .nativeSettingsAnchor("voiceNaming")
+            MeetingsSpeakerEvidenceCard(evidence: MeetingsSpeakerEvidence(raw: model.settingsRaw)) { path, value in model.set(path, value) }
+                .nativeSettingsAnchor("speakerEvidence")
             MeetingsVoicePassCard(compute: MeetingsVoiceCompute(raw: model.settingsRaw), autoNow: autoNow) { path, value in
                 model.set(path, value)
             }
@@ -256,6 +258,103 @@ struct MeetingsVoiceNamingCard: View {
 
     /// One key of `voice.exclusion`, written as the config spells it.
     func chooseExclusion(_ key: String, _ value: Any) { set(MeetingsVoiceNaming.Exclusion.path + [key], value) }
+}
+
+/// How findings about one line combine (`global.speakerLabels.fusion` and `global.speakerLabels.seat.retire` of the
+/// meetings config) as this side reads them. A missing key, or a value the config refuses, reads as the engine's default
+/// in src/utils/meetings/config.ts.
+struct MeetingsSpeakerEvidence: Equatable {
+    /// `seat.retire`: when a pass sets aside a seat name that the calibrated audio no longer puts on that seat.
+    enum Retire: String, CaseIterable {
+        case calibration, contradicted
+
+        var title: String {
+            switch self {
+            case .calibration: "Always, when calibration moves the line"
+            case .contradicted: "Only when something else names another person"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .calibration:
+                "The name is set aside whenever the calibrated audio puts the line on the other seat. The line then waits for another answer."
+            case .contradicted:
+                "The name is set aside only when another range or the speaking indicator names someone else on the line. Otherwise it stays."
+            }
+        }
+    }
+
+    static let fusionPath = ["global", "speakerLabels", "fusion"]
+    static let retirePath = ["global", "speakerLabels", "seat", "retire"]
+    static let voiceMarginRange = 0.0...1.0
+    /// `fusion.mode`: `independent` adds up findings that rest on different evidence and name the same person; `off` keeps
+    /// each finding's own confidence.
+    var countsAgreementTogether = true
+    var voiceMargin = 0.15
+    var retire = Retire.calibration
+
+    init() {}
+
+    init(raw: JSONValue?) {
+        let fusion = raw?.at(Self.fusionPath) ?? .null
+        if case .string(let mode) = fusion.at(["mode"]) {
+            if mode == "independent" { countsAgreementTogether = true }
+            if mode == "off" { countsAgreementTogether = false }
+        }
+        if case .number(let value) = fusion.at(["voiceMargin"]), Self.voiceMarginRange.contains(value) { voiceMargin = value }
+        if case .string(let text) = raw?.at(Self.retirePath) ?? .null, let read = Retire(rawValue: text) { retire = read }
+    }
+}
+
+/// The evidence card: how findings that name the same person on a line add up, and when an older seat name steps aside.
+struct MeetingsSpeakerEvidenceCard: View {
+    let evidence: MeetingsSpeakerEvidence
+    let set: ([String], Any) -> Void
+    /// The slider's value while it is dragged; written once at the end of the gesture.
+    @State private var draftMargin: Double?
+
+    /// The lead only matters while agreeing findings are counted together.
+    var voiceMarginEnabled: Bool { evidence.countsAgreementTogether }
+
+    var body: some View {
+        NativeSettingsCard("Combining evidence", subtitle: "How the engine settles who spoke a line when more than one finding speaks to it. "
+                            + "Turning the switch off shows each finding's own confidence at once; the other changes apply from the next speakers pass.") {
+            NativeSettingsToggle("Count agreeing evidence together",
+                                 detail: "Findings from different evidence that name the same person add up, so two agreeing guesses show the name plainly. "
+                                    + "When off, each finding keeps its own confidence.",
+                                 identifier: "meetings.fusion.mode",
+                                 isOn: Binding(get: { evidence.countsAgreementTogether }, set: chooseCounting))
+            Divider()
+            NativeSettingsSlider("Lead a voice match needs",
+                                 detail: "How far ahead of the next person a voice match must be before it counts as agreeing with another finding.",
+                                 identifier: "meetings.fusion.voiceMargin",
+                                 value: Binding(get: { draftMargin ?? evidence.voiceMargin }, set: { draftMargin = $0 }),
+                                 in: MeetingsSpeakerEvidence.voiceMarginRange, step: 0.05, format: VoiceScore.text, onCommit: { committed in
+                draftMargin = nil
+                chooseVoiceMargin(committed)
+            })
+            .disabled(!voiceMarginEnabled)
+            Divider()
+            NativeSettingsPicker("Replace an older seat name",
+                                 detail: "A seat name written before calibration can land on a line that the calibrated audio puts on the other seat. "
+                                    + "Choose when it is set aside.",
+                                 identifier: "meetings.seat.retire",
+                                 options: MeetingsSpeakerEvidence.Retire.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                                 selection: Binding(get: { evidence.retire }, set: chooseRetire), width: 380)
+        }
+    }
+
+    /// On writes `independent`, off writes `off`, as the config spells them.
+    func chooseCounting(_ on: Bool) { set(MeetingsSpeakerEvidence.fusionPath + ["mode"], on ? "independent" : "off") }
+
+    /// Rounded to the slider's step grid, so a drag never saves 0.15000000000000002.
+    func chooseVoiceMargin(_ value: Double) {
+        let rounded = (value * 100).rounded() / 100
+        if MeetingsSpeakerEvidence.voiceMarginRange.contains(rounded) { set(MeetingsSpeakerEvidence.fusionPath + ["voiceMargin"], rounded) }
+    }
+
+    func chooseRetire(_ choice: MeetingsSpeakerEvidence.Retire) { set(MeetingsSpeakerEvidence.retirePath, choice.rawValue) }
 }
 
 /// The voice pass card: its priority and its worker count, each choice explained with what it costs on a real meeting.

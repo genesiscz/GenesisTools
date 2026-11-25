@@ -55,6 +55,67 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes, ["global.speakerLabels.voice.skipUnsampledNeverSpeaking": "true"])
     }
 
+    /// The agreeing-evidence settings are controls on the Speakers page: they read the engine's defaults, refuse what the
+    /// config refuses, and each control writes its own key, as the config spells it.
+    func testAgreeingEvidenceControlsReadTheirDefaultsAndWriteEachKey() throws {
+        let defaults = MeetingsSpeakerEvidence(raw: nil)
+        XCTAssertTrue(defaults.countsAgreementTogether, "fusion.mode defaults to independent")
+        XCTAssertEqual(defaults.voiceMargin, 0.15)
+        XCTAssertEqual(defaults.retire, .calibration)
+        XCTAssertEqual(MeetingsSpeakerEvidence(raw: try raw(#"{"global":{"language":"cs"}}"#)), defaults,
+                       "a config written before the keys reads as the defaults")
+
+        let set = try raw(#"{"global":{"speakerLabels":{"fusion":{"mode":"off","voiceMargin":0.3},"seat":{"retire":"contradicted"}}}}"#)
+        let read = MeetingsSpeakerEvidence(raw: set)
+        XCTAssertFalse(read.countsAgreementTogether)
+        XCTAssertEqual(read.voiceMargin, 0.3)
+        XCTAssertEqual(read.retire, .contradicted)
+
+        let wrong = try raw(#"{"global":{"speakerLabels":{"fusion":{"mode":"sometimes","voiceMargin":1.5},"seat":{"retire":"never"}}}}"#)
+        XCTAssertEqual(MeetingsSpeakerEvidence(raw: wrong), defaults, "a value the config refuses reads as the default")
+
+        var writes = [String: String]()
+        func card(_ evidence: MeetingsSpeakerEvidence) -> MeetingsSpeakerEvidenceCard {
+            MeetingsSpeakerEvidenceCard(evidence: evidence) { path, value in writes[path.joined(separator: ".")] = "\(value)" }
+        }
+        XCTAssertFalse(card(read).voiceMarginEnabled, "the lead is greyed out while agreement is not counted together")
+        XCTAssertTrue(card(defaults).voiceMarginEnabled)
+        card(read).chooseCounting(true)
+        XCTAssertEqual(writes, ["global.speakerLabels.fusion.mode": "independent"])
+        card(defaults).chooseCounting(false)
+        XCTAssertEqual(writes["global.speakerLabels.fusion.mode"], "off")
+        // Three steps of 0.05 from the slider's lower bound: the saved number is 0.15, not 0.15000000000000002.
+        card(defaults).chooseVoiceMargin(3 * 0.05)
+        card(defaults).chooseVoiceMargin(1.5)
+        card(defaults).chooseRetire(.contradicted)
+        XCTAssertEqual(writes, [
+            "global.speakerLabels.fusion.mode": "off",
+            "global.speakerLabels.fusion.voiceMargin": "0.15",
+            "global.speakerLabels.seat.retire": "contradicted",
+        ])
+        XCTAssertEqual(MeetingsSpeakerEvidence.Retire.allCases.map(\.rawValue), ["calibration", "contradicted"],
+                       "the two values SEAT_RETIRE_MODES holds")
+    }
+
+    /// The evidence card draws its title, its three rows and the lead's value; the lead is the only row that dims.
+    func testTheEvidenceCardDrawsItsRowsWithTheirDefaults() throws {
+        let view = MeetingsSpeakerEvidenceCard(evidence: MeetingsSpeakerEvidence(raw: nil)) { _, _ in }
+            .frame(width: 680).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
+            .environment(\.nativeSettingsTheme, .graphite)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try recognizeText(in: image, with: request)
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        for word in ["Combining evidence", "Count agreeing evidence together", "Lead a voice match needs", "0.15",
+                     "Replace an older seat name", "Always, when calibration moves the line"] {
+            XCTAssertTrue(text.contains(word), "drawn: \(word) in\n\(text)")
+        }
+    }
+
     /// w_pg962cdp: the five voice exclusion settings read the engine's defaults, refuse values the config refuses, and
     /// each control writes its own key under `global.speakerLabels.voice.exclusion`.
     func testVoiceExclusionReadsItsDefaultsAndWritesEachKey() throws {
