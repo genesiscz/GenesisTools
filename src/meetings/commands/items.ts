@@ -507,7 +507,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
 
     if (opts.plan) {
         try {
-            const transcript = await localMeetingTranscript(record);
+            const transcript = await localMeetingTranscript(record, store);
             out.result(
                 planFindings({
                     findings: parsed.data,

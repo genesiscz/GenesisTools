@@ -58,6 +58,8 @@ import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 import * as screenBoxes from "./screen-boxes";
 import { preservedSourceAudio, preserveSourceAudio, recordSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
+import { readSourceCopy } from "./source-copy";
+import { localMeetingTranscript } from "./sources";
 import { resolveToneSound } from "./tone-sound";
 import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
 import { meetingWordTimingCache } from "./word-timings";
@@ -1529,6 +1531,41 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         });
     const clock = (correctionSec: number) =>
         SafeJSON.stringify({ version: 1, sources: { mic: { correctionSec, pieces: 4, clear: 3 } } });
+    /** The joined record's own copy: the first recording's source and both meeting ids. */
+    const joinedRef = { sourceId: "wisprflow", sourceMeetingId: "abc+def" };
+
+    /** One recording's own source: "def" speaks with labels of its own, so the two recordings may join. */
+    function recordingFake(sourceMeetingId: string): TranscriptSource {
+        const entries =
+            sourceMeetingId === "abc"
+                ? transcript
+                : transcript.map((entry) => ({ ...entry, speaker: entry.speaker.replace("Speaker", "Host") }));
+        const startedAt = at(sourceMeetingId === "abc" ? 0 : 600);
+        return {
+            ...fakeSource("", entries),
+            load: async () => ({
+                sourceMeetingId,
+                title: "Planning",
+                start: startedAt,
+                participants: [],
+                speakers: [],
+                transcript: entries,
+                folders: [],
+            }),
+            evidence: async () => ({ selfName: "Alice Example", segments: [], speaking: [], files: [] }),
+            recordingClock: async () => ({ startedAt }),
+        };
+    }
+
+    /** Opens each recording's fake source and counts the opens: a read of a joined record must make none. */
+    function recordingOpener() {
+        const opened: string[] = [];
+        const open = async (recording: { sourceMeetingId: string }) => {
+            opened.push(recording.sourceMeetingId);
+            return recordingFake(recording.sourceMeetingId);
+        };
+        return { open, opened };
+    }
 
     /**
      * A meeting joined the way the join wrote it before 2026-11-25: the earlier recording's sound in the joined folder,
@@ -1600,7 +1637,15 @@ describe("a joined meeting is one record of sound (join --repair moves the later
             [keptFolder, laterFolder].flatMap((folder) =>
                 readdirSync(folder, { recursive: true }).map((name) => join(folder, String(name)))
             );
-        return { store, record, keptFolder, laterFolder, files: { earlier: earlier.path, later: later.path }, listing };
+        return {
+            store,
+            record,
+            keptFolder,
+            laterFolder,
+            files: { earlier: earlier.path, later: later.path },
+            listing,
+            ...recordingOpener(),
+        };
     }
 
     const encodes: Array<{ inputs: ReadonlyArray<{ path: string; offsetMs: number }> }> = [];
@@ -1617,15 +1662,15 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         await expect(OpenedMeeting.of(fx.store, fx.record).audioPath()).rejects.toThrow(
             `join ${fx.record.id} --repair`
         );
-        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, dryRun: true });
+        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, dryRun: true });
         expect(dry).toMatchObject({
             repaired: false,
             sound: { pieces: 1, rows: 1, recordings: [{ offsetMs: 0 }, { record: LATER, offsetMs: 600_000 }] },
         });
         expect(fx.listing()).toEqual(before);
 
-        const done = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
-        const again = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
+        const again = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
         const record = fx.store.read(fx.record.id)!;
         const moved = (name: string) => join(fx.keptFolder, "source-audio", `${name.repeat(64)}.ogg`);
 
@@ -1634,7 +1679,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
             meeting: fx.record.id,
             dryRun: false,
             repaired: false,
-            reason: "its sound is in its own folder already",
+            reason: "its sound and its transcript are in its own folder already",
         });
         expect(encodes.at(-1)?.inputs).toEqual([
             { path: fx.files.earlier, offsetMs: 0 },
@@ -1663,6 +1708,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         const done = await repairJoin({
             store: fx.store,
             ref: fx.record.id,
+            open: fx.open,
             backupRoot: mkdtempSync(join(tmpdir(), "joined-layout-")),
             encode,
         });
@@ -1772,7 +1818,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
     test("after the repair a range is cut from the recording that holds it, on its own seconds; one over the gap from the one file", async () => {
         const fx = await oldJoin(`meetings-joined-clip-${process.pid}`);
         const backupRoot = mkdtempSync(join(tmpdir(), "joined-clip-"));
-        const done = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
         const record = fx.store.read(fx.record.id)!;
         const joined = [
             ...transcript,
@@ -1848,6 +1894,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         await repairJoin({
             store: fx.store,
             ref: fx.record.id,
+            open: fx.open,
             backupRoot: mkdtempSync(join(tmpdir(), "joined-watch-")),
             encode,
         });
@@ -1880,10 +1927,116 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(before);
     });
 
+    test("the repair keeps the joined transcript as the record's own copy: no read asks a recording, a second repair writes nothing", async () => {
+        const fx = await oldJoin(`meetings-joined-copy-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-copy-"));
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
+        const copy = readSourceCopy(fx.keptFolder, "meeting", joinedRef);
+
+        expect(done.transcript).toEqual({ lines: 10 });
+        expect(copy?.value.transcript.map((line) => [line.speaker, line.startSec, line.sourceMeetingId])).toEqual([
+            ...transcript.map((line) => [line.speaker, line.startSec, "abc"]),
+            ...transcript.map((line) => [line.speaker.replace("Speaker", "Host"), (line.startSec ?? 0) + 600, "def"]),
+        ]);
+        expect(readSourceCopy(fx.keptFolder, "evidence", joinedRef)?.value?.selfName).toBe("Alice Example");
+        expect(readSourceCopy(fx.keptFolder, "clock", joinedRef)?.value).toEqual({ startedAt: at(0) });
+
+        const record = fx.store.read(fx.record.id)!;
+        const opens = fx.opened.length;
+        expect((await OpenedMeeting.of(fx.store, record).meeting()).transcript).toEqual(copy!.value.transcript);
+        expect(await localMeetingTranscript(record, fx.store)).toEqual(copy!.value.transcript);
+        expect(fx.opened).toHaveLength(opens);
+        expect(record.history.at(-1)?.change).toContain("the joined transcript (10 lines)");
+
+        const listing = fx.listing();
+        const again = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
+        expect(again).toMatchObject({
+            repaired: false,
+            reason: "its sound and its transcript are in its own folder already",
+        });
+        expect(readSourceCopy(fx.keptFolder, "meeting", joinedRef)?.savedAt).toBe(copy?.savedAt);
+        expect(fx.listing()).toEqual(listing);
+        expect(fx.store.read(fx.record.id)?.history).toEqual(record.history);
+    });
+
+    test("a recording that cannot be read leaves the record as it was: the repair writes nothing", async () => {
+        const fx = await oldJoin(`meetings-joined-unread-${process.pid}`);
+        const before = fx.listing();
+        const gone = async (recording: { sourceMeetingId: string }) =>
+            recording.sourceMeetingId === "def"
+                ? { ...recordingFake("def"), load: () => Promise.reject(new Error("the provider lost def")) }
+                : recordingFake(recording.sourceMeetingId);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-unread-"));
+
+        await expect(
+            repairJoin({ store: fx.store, ref: fx.record.id, open: gone, backupRoot, encode })
+        ).rejects.toThrow("the provider lost def");
+        expect(fx.listing()).toEqual(before);
+        expect(readdirSync(backupRoot)).toEqual([]);
+    });
+
+    test("join reads each recording once and keeps the joined transcript as the record's own copy", async () => {
+        const store = new MeetingStore(new Storage(`meetings-join-copy-${process.pid}`));
+        const recorded = async (meetingId: string, startSec: number, sha: string) => {
+            const created = await store.create(
+                { title: "Planning", start: at(startSec), createdBy: "new", sources: { wisprflow: { meetingId } } },
+                { command: "new", change: "test" }
+            );
+            const folder = store.folder(created.id);
+            const body = `the recording of ${meetingId}`;
+            mkdirSync(join(folder, "source-audio"), { recursive: true });
+            const path = join(folder, "source-audio", `${sha}.ogg`);
+            writeFileSync(path, body);
+            return store.update(created.id, { command: "audio preserve", change: "test" }, (next) => {
+                const audio = {
+                    sourceMeetingId: meetingId,
+                    path,
+                    sha256: sha,
+                    bytes: Buffer.byteLength(body),
+                    savedAt: now,
+                };
+                next.audio = { sources: { wisprflow: audio } };
+            });
+        };
+        const earlier = await recorded("abc", 0, "a".repeat(64));
+        const later = await recorded("def", 600, "b".repeat(64));
+        const { open: own, opened } = recordingOpener();
+        // Both recordings number their speakers alike: the later one's labels read as "Speaker 1 (2)" once joined.
+        const open = async (recording: { sourceMeetingId: string }) => {
+            const source = await own(recording);
+            const meeting = await source.load(recording.sourceMeetingId);
+            return { ...source, load: async () => ({ ...meeting, transcript }) };
+        };
+        const result = await joinMeetings({
+            store,
+            ids: [earlier.id, later.id],
+            backupRoot: mkdtempSync(join(tmpdir(), "join-copy-")),
+            encode,
+            open,
+        });
+        const copy = readSourceCopy(store.folder(earlier.id), "meeting", joinedRef);
+
+        expect(result.transcript).toEqual({ lines: 10, copied: true });
+        expect(copy?.value.transcript.map((line) => line.startSec)).toEqual([
+            10, 20, 30, 40, 60, 610, 620, 630, 640, 660,
+        ]);
+        const joined = store.read(earlier.id)!;
+        // The copy carries the joined numbering (the later recording's first line is line 5) and the joined labels.
+        expect(joined.join?.parts.map((part) => part.firstLine)).toEqual([0, 5]);
+        expect(copy?.value.transcript.slice(4, 6).map((line) => [line.speaker, line.sourceMeetingId])).toEqual([
+            ["Speaker 1", "abc"],
+            ["Speaker 1 (2)", "def"],
+        ]);
+        const opens = opened.length;
+        expect((await OpenedMeeting.of(store, joined).meeting()).transcript).toEqual(copy!.value.transcript);
+        expect(opened).toHaveLength(opens);
+        expect(await repairJoin({ store, ref: joined.id, open, encode })).toMatchObject({ repaired: false });
+    });
+
     test("repair writes a source slot a recording was copied over again, once, and keeps the lost file in the backup", async () => {
         const fx = await oldJoin(`meetings-joined-slot-${process.pid}`);
         const backupRoot = mkdtempSync(join(tmpdir(), "joined-slot-"));
-        const first = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const first = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
         const merged = fx.store.read(fx.record.id)!;
         const later = merged.audio!.sources.wisprflow!.pieces![1]!;
         // What the source-audio pass of the earlier build left: the later recording alone in the slot.
@@ -1903,21 +2056,32 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         ).rejects.toThrow("--repair");
         expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(broken);
 
-        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, dryRun: true, encode });
+        const dry = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            open: fx.open,
+            backupRoot,
+            dryRun: true,
+            encode,
+        });
         expect(dry).toMatchObject({ repaired: false, slot: expect.stringContaining("the recording of def") });
         expect(SafeJSON.stringify(fx.store.read(fx.record.id))).toBe(broken);
 
         const done = await repairJoin({
             store: fx.store,
             ref: fx.record.id,
+            open: fx.open,
             backupRoot,
             encode,
             now: new Date(Date.parse(now) + 120_000),
         });
-        const again = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const again = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
         const slot = fx.store.read(fx.record.id)!.audio!.sources.wisprflow!;
         expect(done).toMatchObject({ repaired: true, slot: expect.stringContaining("the recording of def") });
-        expect(again).toMatchObject({ repaired: false, reason: "its sound is in its own folder already" });
+        expect(again).toMatchObject({
+            repaired: false,
+            reason: "its sound and its transcript are in its own folder already",
+        });
         expect(slot).toMatchObject({ sourceMeetingId: "abc", path: done.joinedFile });
         expect(slot.pieces?.map((piece) => [piece.sourceMeetingId, piece.offsetMs])).toEqual([
             ["abc", 0],

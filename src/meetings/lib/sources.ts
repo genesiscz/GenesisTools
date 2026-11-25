@@ -1,7 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
-import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { JoinPart, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import {
     MEETING_SOURCE_IDS,
     type MeetingSourceId,
@@ -9,9 +9,16 @@ import {
     type TranscriptSource,
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { joinedSource, joinedTranscript } from "./joined-source";
+import { joinedCopyRef, joinedSource, joinedTranscript, type RecordingRef } from "./joined-source";
 import type { LocalSourceAudio } from "./source-audio-discovery";
-import { copyBackedSource, copyOnlySource } from "./source-copy";
+import {
+    copyBackedSource,
+    copyOnlySource,
+    hasSourceCopy,
+    ownedCopySource,
+    readSourceCopy,
+    type SourceCopyRef,
+} from "./source-copy";
 
 const { log } = logger.scoped("meetings-sources");
 
@@ -104,11 +111,12 @@ export interface LinkedSource {
 }
 
 /**
- * The first linked source that names a meeting of its own, with that meeting's id; on a joined record, the joined
- * source of all its recordings on one clock. Throws a message ready to print.
+ * The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print.
  * With the record's `store`, the source keeps the record's own copy of its answers (source-copy.ts) and answers from
  * that copy when it cannot read: its source code cannot be opened, or a read fails. `saveCopy: false` still answers from
  * the copy but never writes it (a probe).
+ * A joined record answers from its own copy of the joined meeting (`joinedRecordSource`), with the first recording's
+ * meeting id, which that source does not read.
  */
 export async function linkedSource(
     record: MeetingRecord,
@@ -117,7 +125,7 @@ export async function linkedSource(
 ): Promise<LinkedSource> {
     if (record.join) {
         return {
-            source: await joinedSource(record, meetingSource),
+            source: await joinedRecordSource(record, store),
             sourceMeetingId: record.join.parts[0]!.sourceMeetingId,
         };
     }
@@ -135,13 +143,16 @@ export async function linkedSource(
         return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
     }
 
-    const folder = store.folder(record.id);
+    return {
+        source: await backedSource(ref, store.folder(record.id), { save: options.saveCopy }),
+        sourceMeetingId: ref.sourceMeetingId,
+    };
+}
 
+/** The source behind the copy kept in `folder`; the copy alone when the running code cannot open the source. */
+async function backedSource(ref: SourceRef, folder: string, options: { save?: boolean }): Promise<TranscriptSource> {
     try {
-        return {
-            source: copyBackedSource(await meetingSource(ref.sourceId), folder, { save: options.saveCopy }),
-            sourceMeetingId: ref.sourceMeetingId,
-        };
+        return copyBackedSource(await meetingSource(ref.sourceId), folder, options);
     } catch (error) {
         const copy = isMeetingSourceId(ref.sourceId)
             ? copyOnlySource(ref.sourceId, folder, ref.sourceMeetingId)
@@ -151,9 +162,61 @@ export async function linkedSource(
             throw error;
         }
 
-        log.warn({ error, meeting: record.id }, "the source cannot be opened; the record's own copy answers");
-        return { source: copy, sourceMeetingId: ref.sourceMeetingId };
+        log.warn({ error, folder }, "the source cannot be opened; the record's own copy answers");
+        return copy;
     }
+}
+
+/**
+ * One recording of a joined record as its own source: its source meeting, with the copy that recording kept in the
+ * folder of the record it was behind it. The copy answers when the provider lost the meeting and is never written,
+ * so reading one recording (the join, its repair, a polished file's part) never changes the joined record's folder.
+ */
+export function recordingSource(store: MeetingStore, recording: RecordingRef): Promise<TranscriptSource> {
+    return backedSource(recording, store.folder(recording.record), { save: false });
+}
+
+/**
+ * A joined record's source: its own copy of the joined meeting (`saveJoinedCopy`, written by `join` and
+ * `join --repair`), so no read loads a recording's source meeting. The live source answers only the source's own
+ * reads (its word list, calendar). A record joined before the copy existed, or read without its store, is composed
+ * from its recordings' sources on every read until `join --repair` writes the copy.
+ */
+async function joinedRecordSource(record: MeetingRecord, store: MeetingStore | undefined): Promise<TranscriptSource> {
+    const owned = store ? ownedJoinedCopy(record, store) : undefined;
+
+    if (!owned) {
+        return joinedSource(record, meetingSource);
+    }
+
+    const base = await meetingSource(owned.ref.sourceId).catch((error: unknown) => {
+        log.warn({ error, meeting: record.id }, "the source cannot be opened; the joined record's own copy answers");
+        return isMeetingSourceId(owned.ref.sourceId)
+            ? copyOnlySource(owned.ref.sourceId, owned.folder, owned.ref.sourceMeetingId)
+            : undefined;
+    });
+
+    if (!base) {
+        throw new Error(`Unknown source "${owned.ref.sourceId}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
+    }
+
+    return ownedCopySource({ ...owned, base }) ?? joinedSource(record, meetingSource);
+}
+
+/** Where a joined record keeps its own copy, when it keeps one. */
+function ownedJoinedCopy(
+    record: MeetingRecord,
+    store: MeetingStore
+): { folder: string; ref: SourceCopyRef } | undefined {
+    const parts: JoinPart[] = record.join?.parts ?? [];
+
+    if (parts.length === 0) {
+        return undefined;
+    }
+
+    const folder = store.folder(record.id);
+    const ref = joinedCopyRef(parts);
+    return hasSourceCopy(folder, ref) ? { folder, ref } : undefined;
 }
 
 /** The linked source's transcript, on its own labels; with `store`, the record's copy answers when the source cannot. */
@@ -166,8 +229,18 @@ function composedTranscript(entries: TranscriptEntry[]): TranscriptEntry[] {
     return entries.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") }));
 }
 
-/** Explicit local-only read for previews: the source registry owns the capability and no remote fallback runs. */
-export async function localMeetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
+/**
+ * Explicit local-only read for previews: the source registry owns the capability and no remote fallback runs. A joined
+ * record with its `store` reads its own copy.
+ */
+export async function localMeetingTranscript(record: MeetingRecord, store?: MeetingStore): Promise<TranscriptEntry[]> {
+    const owned = store ? ownedJoinedCopy(record, store) : undefined;
+    const copy = owned ? readSourceCopy(owned.folder, "meeting", owned.ref) : undefined;
+
+    if (copy) {
+        return copy.value.transcript;
+    }
+
     if (record.join) {
         const parts = await Promise.all(
             record.join.parts.map(async (part) => {

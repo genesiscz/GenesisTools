@@ -34,7 +34,7 @@ import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./pla
 import { missingProjectWarning } from "./project";
 import { loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
 import { recordSourceAudio, withPreservedSourceAudio } from "./source-audio";
-import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
+import { type LinkedSource, linkedSource, recordingSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
@@ -217,6 +217,8 @@ export class OpenedMeeting {
     private soundInputsOnce?: Promise<SoundInputs>;
     /** A platform's attendance per choice (spec and id): one read serves the statistics and the evidence alike. */
     private readonly attendanceOnce = new Map<string, ReturnType<typeof loadPresence>>();
+    /** Opens the source on the first read: the record's linked source, or one recording's own (`recordingReading`). */
+    private openLinked: () => Promise<LinkedSource> = () => linkedSource(this.current, this.store);
 
     private constructor(
         readonly store: MeetingStore,
@@ -288,7 +290,7 @@ export class OpenedMeeting {
 
     /** The linked source and its meeting id. Throws a message ready to print when none is linked. */
     linked(): Promise<LinkedSource> {
-        this.linkedOnce ??= linkedSource(this.current, this.store);
+        this.linkedOnce ??= this.openLinked();
         return this.linkedOnce;
     }
 
@@ -685,6 +687,11 @@ export class OpenedMeeting {
 
         const opened = new OpenedMeeting(new JoinedPartStore(this.store), partRecord(this.current, part), undefined);
         opened.configOnce = this.config();
+        // The recording's own source meeting: reading it never writes a copy into the joined record's folder.
+        opened.openLinked = async () => ({
+            source: await recordingSource(this.store, part),
+            sourceMeetingId: part.sourceMeetingId,
+        });
         const next = parts[index + 1];
         return this.readingOf({
             part,

@@ -109,7 +109,7 @@ export async function openScreenRecord(
         return undefined;
     }
 
-    return readScreenRecord({ store, record, zeroMs: (await CallTimeline.forRecord(record)).zeroMs });
+    return readScreenRecord({ store, record, zeroMs: (await CallTimeline.forRecord(record, store)).zeroMs });
 }
 
 export function screenRecordFacts(options: {

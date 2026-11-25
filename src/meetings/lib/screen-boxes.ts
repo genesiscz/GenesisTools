@@ -330,7 +330,7 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
         throw new Error("give a transcript time (atSec) or a text to match");
     }
 
-    const read = readScreenRecord({ store, record, zeroMs: (await CallTimeline.forRecord(record)).zeroMs });
+    const read = readScreenRecord({ store, record, zeroMs: (await CallTimeline.forRecord(record, store)).zeroMs });
     const { zeroMs, rows, pending, spans } = read;
     const picked =
         request.atSec === undefined

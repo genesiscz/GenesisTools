@@ -95,7 +95,7 @@ export async function screenTimeline(options: {
         throw new Error(`${record.id} has no screen recording (no frames.jsonl or ocr.jsonl)`);
     }
 
-    const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
+    const zeroMs = (await CallTimeline.forRecord(record, store)).zeroMs;
     const recorder = readRecorderState(store);
     const live =
         recorder.running && recorder.state?.meetingId === record.id && !recorder.state.paused
