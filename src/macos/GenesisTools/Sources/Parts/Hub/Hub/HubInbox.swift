@@ -1573,34 +1573,6 @@ private struct InboxSessionRow: View, Equatable {
     }
 }
 
-/// A task performs only task actions, including in the focus and table Inbox layouts.
-struct InboxTaskCard: View {
-    @ObservedObject var store: WidgetTasksStore
-    let task: WidgetTask
-    let session: InboxSession
-
-    var body: some View {
-        let busy = store.mutatingIDs.contains(task.id)
-        VStack(alignment: .leading, spacing: 6) {
-            Text(task.title).font(.headline).textSelection(.enabled)
-            HStack(spacing: 6) {
-                Text(task.addressee + " · " + task.statusLabel)
-                if busy { ProgressView("Saving…").controlSize(.small) }
-            }.font(.caption).foregroundStyle(.secondary)
-            if task.summary != task.title { Text(task.summary).textSelection(.enabled) }
-            if task.sendUncertain == true { Text("Check the session before sending this task again.") }
-            WrapLayout(spacing: 6, lineSpacing: 4) {
-                ForEach(task.actions, id: \.self) { action in
-                    Button(action.title) { store.perform(action, on: task, sourceHome: session.sourceHome) }
-                        .buttonStyle(.genHover()).accessibilityLabel(action.title + ": " + task.title)
-                }
-            }.disabled(busy)
-        }
-        .padding(.vertical, 6)
-        .accessibilityIdentifier("hub.inbox.task." + task.id)
-    }
-}
-
 struct InboxAddTaskButton: View {
     let model: HubModel
     @ObservedObject var tasks: WidgetTasksStore
@@ -1649,7 +1621,7 @@ struct InboxAddTaskButton: View {
                         Toggle("Send to the session now", isOn: $sendImmediately)
                     }
                     if triedToAdd, let error = tasks.error {
-                        InboxTaskFailure(report: tasks.createFailureReport, message: error)
+                        WidgetTaskFailureRow(report: tasks.createFailureReport, message: error, area: "hub", identifier: "hub.inbox.taskFailure")
                     }
                     HStack {
                         Spacer()
@@ -1674,18 +1646,6 @@ struct InboxAddTaskButton: View {
     }
 }
 
-/// A task mutation's failure in the widget's words: its headline and next step, with the tool's own output behind
-/// Details. The generic report stands in only when the store kept no report for the message.
-private struct InboxTaskFailure: View {
-    let report: FailureReport?
-    let message: String
-    var body: some View {
-        FailureInline(report ?? FailureReport(title: "Task update", headline: "The task update could not be confirmed.",
-                                              summary: "Check the saved task before trying again.", action: "Update task",
-                                              log: message, area: "hub"), form: .compact, identifier: "hub.inbox.taskFailure")
-    }
-}
-
 struct InboxTaskFeedback: View {
     @ObservedObject var store: WidgetTasksStore
     let saved: () -> Void
@@ -1694,7 +1654,7 @@ struct InboxTaskFeedback: View {
         Group {
             if let error = store.error {
                 HStack {
-                    InboxTaskFailure(report: store.latestFailureReport, message: error)
+                    WidgetTaskFailureRow(report: store.latestFailureReport, message: error, area: "hub", identifier: "hub.inbox.taskFailure")
                     IconButton(systemName: "xmark", tooltip: "Dismiss task feedback", action: store.clearFeedback)
                 }.padding(.horizontal)
             } else if let receipt = store.receipt {
@@ -1907,7 +1867,7 @@ struct InboxMain: View {
         case .card(let session, let item):
             Group {
                 if let task = item.task {
-                    InboxTaskCard(store: inbox.tasks, task: task, session: session)
+                    WidgetTaskActionsCard(store: inbox.tasks, task: task, style: .card, sourceHome: session.sourceHome, identifier: "hub.inbox.task." + task.id)
                 } else if item.kind == "message" || item.kind == "answer" {
                     VStack(alignment: .leading) {
                         Text(item.kind.capitalized).font(.caption).foregroundStyle(.secondary)
