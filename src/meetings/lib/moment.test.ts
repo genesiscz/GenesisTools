@@ -1900,6 +1900,81 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         expect(fx.store.read(fx.record.id)?.history).toEqual(record.history);
     });
 
+    test("a record without its copy and with journal addresses on the later recording's own lines is repaired in one run", async () => {
+        const fx = await oldJoin(`meetings-joined-journal-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-journal-"));
+        // Saved before the join moved addresses: the later recording's line at 620 s is its own line 1, the joined line 6.
+        const snapshot = (status: string) => ({
+            id: "i9",
+            kind: "speaker-range",
+            status,
+            label: "Host 1",
+            fromSec: 620,
+            toSec: 620,
+            rules: [],
+            suggestedAt: now,
+            evidence: { transcriptLine: 1 },
+        });
+        const journalPath = join(fx.keptFolder, "decisions.ndjson");
+        const entries = [
+            {
+                token: "t1",
+                at: at(700),
+                changes: [{ id: "i9", before: snapshot("suggested"), after: snapshot("rejected") }],
+            },
+            {
+                token: "t2",
+                at: at(710),
+                action: { kind: "assign", person: "Dana Example", lines: [{ atSec: 630, line: 2 }] },
+            },
+        ];
+        writeFileSync(journalPath, `${entries.map((entry) => SafeJSON.stringify(entry)).join("\n")}\n`);
+        const journal = () =>
+            readFileSync(journalPath, "utf8")
+                .trim()
+                .split("\n")
+                .map((line) => SafeJSON.parse(line));
+        const before = fx.listing();
+
+        // The record keeps no transcript to read yet: the journal is checked against the recordings' reads.
+        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, dryRun: true, encode });
+        expect(dry).toMatchObject({ repaired: false, transcript: { lines: 10 }, journal: { moved: 3, unplaced: 0 } });
+        expect(fx.listing()).toEqual(before);
+
+        const opens = fx.opened.length;
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });
+        expect(done).toMatchObject({ repaired: true, transcript: { lines: 10 }, journal: { moved: 3, unplaced: 0 } });
+        expect(fx.opened.slice(opens).sort()).toEqual(["abc", "def"]);
+        expect(readSourceCopy(fx.keptFolder, "meeting", joinedRef)?.value.transcript).toHaveLength(10);
+        expect(journal()).toMatchObject([
+            { changes: [{ before: { evidence: { transcriptLine: 6 } }, after: { evidence: { transcriptLine: 6 } } }] },
+            { action: { lines: [{ atSec: 630, line: 7 }] } },
+        ]);
+        expect(readFileSync(join(done.backup!, "before", fx.record.id, "decisions.ndjson"), "utf8")).toContain(
+            '"transcriptLine":1'
+        );
+
+        // A second run reads the copy, finds every address on its line and writes nothing.
+        const record = fx.store.read(fx.record.id)!;
+        const listing = fx.listing();
+        const reason = "its sound and its transcript are in its own folder already";
+        expect(await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, dryRun: true, encode })).toEqual({
+            meeting: fx.record.id,
+            dryRun: true,
+            repaired: false,
+            reason,
+        });
+        expect(await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode })).toEqual({
+            meeting: fx.record.id,
+            dryRun: false,
+            repaired: false,
+            reason,
+        });
+        expect(fx.opened).toHaveLength(opens + 2);
+        expect(fx.listing()).toEqual(listing);
+        expect(fx.store.read(fx.record.id)?.history).toEqual(record.history);
+    });
+
     test("a recording that cannot be read leaves the record as it was: the repair writes nothing", async () => {
         const fx = await oldJoin(`meetings-joined-unread-${process.pid}`);
         const before = fx.listing();

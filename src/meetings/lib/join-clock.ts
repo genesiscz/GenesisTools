@@ -1,3 +1,4 @@
+import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import {
     type JoinPart,
     type MeetingItem,
@@ -230,18 +231,21 @@ export interface JoinedLines {
     unplaced: number;
 }
 
+/** The line an address names: its item's seconds and, for a speaker range or a label item, its label. */
+interface LineSite {
+    fromSec: number;
+    toSec: number;
+    label?: string;
+}
+
+type PlaceLine = (line: number, site: LineSite) => number;
+
 /**
- * Brings a record joined before line addresses moved with the join onto the joined transcript's lines: each part's
- * first line there, and every item's line address (`transcriptLine`, a spelling reach's `line`) that still counts
- * from its own recording's first line. A pass on the joined record wrote some addresses on the joined lines already,
- * so each one is checked against the line it names: the line of the item's recording, of its label (a speaker range or
- * a label item) and of its seconds. An address that names such a line stays; one whose line is `firstLine` lines on
- * moves; one that fits neither stays and is counted as unplaced.
+ * The check every line address of a record joined before addresses moved with the join goes through: an address that
+ * names a line of its item's recording, label and seconds stays; one whose line is `firstLine` lines on moves; one
+ * that fits neither stays and is counted as unplaced.
  */
-export function joinedLineAddresses(
-    record: Pick<MeetingRecord, "join" | "items">,
-    transcript: readonly TranscriptEntry[]
-): JoinedLines {
+function linePlacer(record: Pick<MeetingRecord, "join">, transcript: readonly TranscriptEntry[]) {
     let before = 0;
     const parts = joinParts(record).map((part) => {
         const firstLine = before;
@@ -249,7 +253,7 @@ export function joinedLineAddresses(
         return { ...part, firstLine };
     });
     const counts = { moved: 0, unplaced: 0 };
-    const placed = (line: number, at: { fromSec: number; toSec: number; label?: string }): number => {
+    const place: PlaceLine = (line, at) => {
         const found = joinPartAt(record, at.fromSec);
         const part = found ? parts[found.index] : undefined;
 
@@ -280,35 +284,180 @@ export function joinedLineAddresses(
         counts.unplaced++;
         return line;
     };
-    const items = record.items.map((item): MeetingItem => {
-        const fromSec = "fromSec" in item ? item.fromSec : item.atSec;
-        const toSec = "toSec" in item ? item.toSec : item.atSec;
-        const label = item.kind === "speaker-range" || item.kind === "label" ? item.label : undefined;
-        const line = item.evidence?.transcriptLine;
-        let next = item;
 
-        if (typeof line === "number" && fromSec !== undefined && toSec !== undefined) {
-            const moved = placed(line, { fromSec, toSec, label });
-            next = moved === line ? next : { ...next, evidence: { ...next.evidence, transcriptLine: moved } };
+    return { parts, counts, place };
+}
+
+/** An item, or an item as a journal entry saved it, with only the fields its line addresses are read from. */
+interface AddressedItem {
+    kind?: unknown;
+    fromSec?: unknown;
+    toSec?: unknown;
+    atSec?: unknown;
+    label?: unknown;
+    evidence?: unknown;
+    reach?: unknown;
+}
+
+function numberOf(value: unknown): number | undefined {
+    return typeof value === "number" ? value : undefined;
+}
+
+/** A copy of `item` with its own address (`transcriptLine`) and its spelling reach's lines placed; the same object when none moves. */
+function placedItem<T extends AddressedItem>(item: T, place: PlaceLine): T {
+    let next = item;
+    const evidence = isRecord(item.evidence) ? item.evidence : undefined;
+    const line = numberOf(evidence?.transcriptLine);
+    const fromSec = numberOf(item.fromSec) ?? numberOf(item.atSec);
+    const toSec = numberOf(item.toSec) ?? numberOf(item.atSec);
+    const label =
+        (item.kind === "speaker-range" || item.kind === "label") && typeof item.label === "string"
+            ? item.label
+            : undefined;
+
+    if (evidence && line !== undefined && fromSec !== undefined && toSec !== undefined) {
+        const moved = place(line, { fromSec, toSec, label });
+        next = moved === line ? next : { ...next, evidence: { ...evidence, transcriptLine: moved } };
+    }
+
+    const reach = item.kind === "term" && isRecord(item.reach) ? item.reach : undefined;
+
+    if (reach && Array.isArray(reach.lines)) {
+        const old: unknown[] = reach.lines;
+        const lines = old.map((one) => {
+            const at = isRecord(one) ? numberOf(one.atSec) : undefined;
+            const address = isRecord(one) ? numberOf(one.line) : undefined;
+            return !isRecord(one) || at === undefined || address === undefined
+                ? one
+                : { ...one, line: place(address, { fromSec: at, toSec: at }) };
+        });
+
+        if (lines.some((one, index) => isRecord(one) && isRecord(old[index]) && one.line !== old[index].line)) {
+            next = { ...next, reach: { ...reach, lines } };
+        }
+    }
+
+    return next;
+}
+
+/**
+ * Brings a record joined before line addresses moved with the join onto the joined transcript's lines: each part's
+ * first line there, and every item's line address (`transcriptLine`, a spelling reach's `line`) that still counts
+ * from its own recording's first line. A pass on the joined record wrote some addresses on the joined lines already,
+ * so each one is checked against the line it names: the line of the item's recording, of its label (a speaker range or
+ * a label item) and of its seconds. An address that names such a line stays; one whose line is `firstLine` lines on
+ * moves; one that fits neither stays and is counted as unplaced.
+ */
+export function joinedLineAddresses(
+    record: Pick<MeetingRecord, "join" | "items">,
+    transcript: readonly TranscriptEntry[]
+): JoinedLines {
+    const placer = linePlacer(record, transcript);
+    const items = record.items.map((item) => placedItem(item, placer.place));
+    return { parts: placer.parts, items, ...placer.counts };
+}
+
+export interface JoinedJournal {
+    /** The journal's lines, each the same object when none of its addresses moved. */
+    entries: unknown[];
+    moved: number;
+    unplaced: number;
+}
+
+/** Each line address of the journal entries placed by `place`; every other value stays as the entry wrote it. */
+function placedJournal(entries: readonly unknown[], place: PlaceLine): unknown[] {
+    const seconds = (value: unknown) => (typeof value === "string" ? parseClock(value) : numberOf(value));
+    const placedLine = (point: unknown, site: (point: Record<string, unknown>) => LineSite | undefined): unknown => {
+        const line = isRecord(point) ? numberOf(point.line) : undefined;
+        const at = isRecord(point) ? site(point) : undefined;
+
+        if (!isRecord(point) || line === undefined || at === undefined) {
+            return point;
         }
 
-        const reach = next.kind === "term" ? next.reach : undefined;
+        const moved = place(line, at);
+        return moved === line ? point : { ...point, line: moved };
+    };
+    const findingSite = (finding: Record<string, unknown>): LineSite | undefined => {
+        const fromSec = seconds(finding.from) ?? seconds(finding.at);
+        const toSec = seconds(finding.to) ?? seconds(finding.at);
+        const label = finding.kind === "speaker-range" && typeof finding.label === "string" ? finding.label : undefined;
+        return fromSec === undefined || toSec === undefined ? undefined : { fromSec, toSec, label };
+    };
+    const pointSite = (point: Record<string, unknown>): LineSite | undefined => {
+        const at = numberOf(point.atSec);
+        return at === undefined ? undefined : { fromSec: at, toSec: at };
+    };
+    const changed = (next: unknown[], old: unknown[]) => next.some((one, index) => one !== old[index]);
 
-        if (next.kind === "term" && reach?.lines) {
-            const old = reach.lines;
-            const lines = old.map((one) =>
-                one.line === undefined
-                    ? one
-                    : { ...one, line: placed(one.line, { fromSec: one.atSec, toSec: one.atSec }) }
-            );
+    return entries.map((entry) => {
+        if (!isRecord(entry)) {
+            return entry;
+        }
 
-            if (lines.some((one, index) => one.line !== old[index]?.line)) {
-                next = { ...next, reach: { ...reach, lines } };
+        let next = entry;
+
+        if (Array.isArray(entry.changes)) {
+            const old: unknown[] = entry.changes;
+            const changes = old.map((change) => {
+                if (!isRecord(change)) {
+                    return change;
+                }
+
+                const before = isRecord(change.before) ? placedItem(change.before, place) : change.before;
+                const after = isRecord(change.after) ? placedItem(change.after, place) : change.after;
+                return before === change.before && after === change.after ? change : { ...change, before, after };
+            });
+
+            if (changed(changes, old)) {
+                next = { ...next, changes };
             }
         }
 
-        return next;
-    });
+        const action = isRecord(entry.action) ? entry.action : undefined;
+        let nextAction = action;
 
-    return { parts, items, ...counts };
+        for (const [key, site] of [
+            ["findings", findingSite],
+            ["lines", pointSite],
+        ] as const) {
+            const old = nextAction?.[key];
+
+            if (!nextAction || !Array.isArray(old)) {
+                continue;
+            }
+
+            const points = old.map((point: unknown) => placedLine(point, site));
+
+            if (changed(points, old)) {
+                nextAction = { ...nextAction, [key]: points };
+            }
+        }
+
+        return nextAction === action ? next : { ...next, action: nextAction };
+    });
+}
+
+/**
+ * The decision journal's line addresses of a record joined before addresses moved with the join, each checked as an
+ * item's is (`joinedLineAddresses`): the item snapshots of each entry's changes, which an Undo puts back, the `line` of
+ * each finding an `add` saved and of each line an `assign` named. Every other value stays as the entry wrote it.
+ */
+export function joinedJournalAddresses(
+    record: Pick<MeetingRecord, "join">,
+    transcript: readonly TranscriptEntry[],
+    entries: readonly unknown[]
+): JoinedJournal {
+    const placer = linePlacer(record, transcript);
+    return { entries: placedJournal(entries, placer.place), ...placer.counts };
+}
+
+/** Whether a journal entry holds a line address of a recording after the first: only then is the journal checked. */
+export function hasLaterJournalAddresses(record: Pick<MeetingRecord, "join">, entries: readonly unknown[]): boolean {
+    let later = false;
+    placedJournal(entries, (line, site) => {
+        later ||= (joinPartAt(record, site.fromSec)?.index ?? 0) > 0;
+        return line;
+    });
+    return later;
 }
