@@ -581,7 +581,7 @@ test("a shell block's file of 20 lines draws whole, with no line button", async 
 
 test("a code-mode script's shell call folds and draws like a Bash call, and its row sets the mark the announce could not", async ($, on) => {
     // Claude Code adds a REPL script's calls to the transcript as tool calls of their own (`repl_<uuid>`), so the
-    // diff hook may leave their diffs to this mod once a row proved it (col-fe session, 2026-11-25: a fable-replace run
+    // diff hook may leave their diffs to this mod once a row proved it (a project session, 2026-11-25: a fable-replace run
     // inside a REPL script printed the hook's own text diff, because the hook believed such a call had no row).
     const SCRIPT = "/home/test/.genesis-tools/agents/hook-diffs/repl_1b2c3d4e-0000-4000-8000-000000000001.md";
     engine(on, { [SCRIPT]: longNote(25) });
