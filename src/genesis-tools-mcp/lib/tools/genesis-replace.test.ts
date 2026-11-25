@@ -131,13 +131,19 @@ describe("genesis_replace with a fake spawner", () => {
             ok: false,
             exitCode: 3,
             dryRun: false,
-            written: ["a.ts"],
+            written: ["Bar.ts", "a.ts"],
+            files: [
+                { file: "Foo.ts", renamedTo: "Bar.ts", action: "renamed", ops: [], postConditionFailures: [] },
+                { file: "a.ts", action: "edited", ops: [], postConditionFailures: [] },
+            ],
             backupDir: "/tmp/fixture-backup",
             verify: { command: "false", status: "fail", exitCode: 1, timedOut: false, control: "caught", shown: [] },
         });
         const redSpawner = fakeSpawner({ exitCode: 3, stdout: SafeJSON.stringify(red) });
         const written = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: redSpawner.spawn }));
-        expect(written).toMatchObject({ exitCode: 3, written: ["a.ts"], backupDir: "/tmp/fixture-backup" });
+        expect(written).toMatchObject({ exitCode: 3, written: ["Bar.ts", "a.ts"], backupDir: "/tmp/fixture-backup" });
+        // written is plain paths; the summary a person reads shows the rename as its pair.
+        expect(String(written.summary)).toContain("keep the sweep: Foo.ts → Bar.ts, a.ts.");
         expect(String(written.summary)).toContain("verify fail (control caught)");
         expect(String(written.summary)).toContain(`bun "${FABLE_REPLACE_CLI_PATH}" --rollback "/tmp/fixture-backup"`);
     });
@@ -403,13 +409,14 @@ describe("genesis_replace with the real CLI", () => {
                 const missEdits = [{ file: "a.ts", ops: [{ find: "nope-not-there", replace: "e" }] }];
                 const miss = detailOf(await handleGenesisReplace({ cwd: repo, edits: missEdits }));
                 expect(miss).toMatchObject({ ok: false, exitCode: 1, written: [], files: [{ file: "a.ts" }] });
+                expect("backupDir" in miss).toBe(false);
                 expect(String(miss.summary)).toContain("needle not found");
                 expect(String(miss.summary)).not.toContain("REPLACEMENT");
 
                 const redEdits = [{ file: "c.ts", ops: [{ find: "newName", replace: "laterName" }] }];
                 const red = detailOf(await handleGenesisReplace({ cwd: repo, edits: redEdits, verify: "false" }));
                 expect(red).toMatchObject({ ok: false, exitCode: 3, written: ["c.ts"], verify: { status: "fail" } });
-                expect(typeof red.backupDir).toBe("string");
+                expect(existsSync(join(String(red.backupDir), "fable-replace-manifest.json"))).toBe(true);
                 expect(String(red.summary)).toContain(`--rollback "${String(red.backupDir)}"`);
             } finally {
                 env.testing.unset("FABLE_REPLACE_SCRATCH_ROOT");
