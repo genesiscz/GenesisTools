@@ -84,14 +84,17 @@ struct WidgetItemStagingHost: DecisionStagingHost {
     let sendsAll: Bool
     /// What the surface does after its send (the alert leaves for the session when its setting says so).
     var afterSend: (() -> Void)?
+    /// The surface's own Open, in place of opening the item in its session (the alert's, which flashes the card).
+    var opens: (() -> Void)?
 
     init(model: WidgetModel, item: WidgetInboxItem, surface: WidgetSurfaceID?, sendsAll: Bool,
-         afterSend: (() -> Void)? = nil) {
+         afterSend: (() -> Void)? = nil, opens: (() -> Void)? = nil) {
         self.model = model
         self.item = item
         self.surface = surface
         self.sendsAll = sendsAll
         self.afterSend = afterSend
+        self.opens = opens
     }
 
     private var others: [WidgetInboxItem] { model.stagedForLeave.filter { $0.sourceId != item.sourceId } }
@@ -121,5 +124,7 @@ struct WidgetItemStagingHost: DecisionStagingHost {
     /// Writes the dismissal of the item's card at once, when the session's cards are cached; no surface calls it yet.
     func dismiss() { model.card(for: item).map { model.ledger($0, state: "dismissed") } }
     func undoDismiss() { model.card(for: item).map { model.ledger($0, state: "open") } }
-    func open() { model.openInboxItem(item, on: surface) }
+    func open() {
+        if let opens { opens() } else { model.openInboxItem(item, on: surface) }
+    }
 }

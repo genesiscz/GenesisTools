@@ -500,33 +500,21 @@ struct WidgetStagedDecisionRow: View {
         .modifier(RowHover(cornerRadius: WidgetDecisionChrome.cornerRadius))
     }
 
+    /// The decision on the shared decision body: the card's text when its session is cached, the options and this one
+    /// decision's Send and Unstage under them, and Open in its session as the footer.
     private var detail: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let body = model.card(for: item)?.fullText, !body.isEmpty {
-                WidgetMarkdown(text: body)
-            }
-            if let options = item.options, !options.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                        WidgetOptionButton(model: model, item: item, index: index, option: option)
-                    }
-                    // This one decision's Send and Unstage sit under its options.
-                    WidgetStagedActions(
-                        host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false),
-                        placement: .row,
-                        identifier: (item.takesSeveral ? "widget.staged.sendSet." : "widget.staged.sendStaged.")
-                            + item.sourceId,
-                        unstageIdentifier: "widget.staged.unstage." + item.sourceId,
-                        unstageTooltip: "Clears the staged pick and note. Undo brings them back.")
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: model.card(for: item)), surface: .staged,
+            host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false),
+            ownAnswer: { EmptyView() },
+            footer: {
+                Button("Open in its session") {
+                    model.stagedLeavePrompt = false
+                    model.openInboxItem(item)
                 }
-            }
-            Button("Open in its session") {
-                model.stagedLeavePrompt = false
-                model.openInboxItem(item)
-            }
-            .buttonStyle(.genHoverPlain()).font(.system(size: 11))
-            .instantTooltip("Opens the decision in its session, with its own answer field")
-        }
+                .buttonStyle(.genHoverPlain()).font(.system(size: 11))
+                .instantTooltip("Opens the decision in its session, with its own answer field")
+            })
     }
 }
 
