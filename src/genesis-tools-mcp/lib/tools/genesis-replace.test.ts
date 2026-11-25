@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { answerText } from "@genesiscz/utils/mcp/tool-entry";
 import {
     FABLE_REPLACE_CLI_PATH,
@@ -58,6 +58,19 @@ function answerOf(answer: Awaited<ReturnType<typeof handleGenesisReplace>>) {
     return answer;
 }
 
+/** A failure's one text block, parsed: what a code-mode REPL hands its caller as e.detail when the call throws. */
+function detailOf(answer: Awaited<ReturnType<typeof handleGenesisReplace>>): Record<string, unknown> {
+    const object = answerOf(answer);
+    expect(object.isError).toBe(true);
+    const detail: unknown = SafeJSON.parse(object.text, { strict: true });
+    if (!isJsonObject(detail)) {
+        throw new Error(`the failure text is not one JSON object: ${object.text}`);
+    }
+
+    expect(object.structuredContent).toEqual(detail);
+    return detail;
+}
+
 describe("genesis_replace with a fake spawner", () => {
     test("a dry edits call sends the edits on stdin and answers the child's report as structuredContent", async () => {
         const report = runReport();
@@ -80,44 +93,90 @@ describe("genesis_replace with a fake spawner", () => {
         expect(answer.text).toBe("genesis_replace: ok, exit 0, dry run, 1 file(s), 0 MISS\n\nspec: 1 file(s)");
     });
 
-    test("isError follows ok, and the text keeps at most 60 stderr lines", async () => {
+    test("a failed run answers isError with ONE text block: the report as JSON, its summary keeping the stderr tail", async () => {
         const report = runReport({ ok: false, exitCode: 1, dryRun: false, missCount: 1 });
         const stderr = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join("\n");
         const { spawn } = fakeSpawner({ exitCode: 1, stdout: SafeJSON.stringify(report), stderr });
-        const answer = answerOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn }));
-        const lines = answer.text.split("\n");
+        const detail = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn }));
+        const lines = String(detail.summary).split("\n");
 
-        expect(answer.isError).toBe(true);
-        expect(answer.structuredContent).toEqual(report);
+        expect(detail).toMatchObject(report);
         expect(lines[0]).toBe("genesis_replace: FAILED, exit 1, 1 file(s), 0 written, 1 MISS");
         expect(lines.slice(2)).toHaveLength(60);
         expect(lines[2]).toBe("… 41 earlier stderr line(s) cut");
         expect(lines.at(-1)).toBe("line 100");
-        expect(answer.text).not.toContain("line 41\n");
+        expect(String(detail.summary)).not.toContain("line 41\n");
     });
 
-    test("a child without one JSON report is an error answer with its exit code and stderr tail", async () => {
-        const crashed = fakeSpawner({ exitCode: 2, stdout: "spec: 1 file(s)\n", stderr: "TypeError: boom\n" });
-        const crash = answerOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: crashed.spawn }));
+    test("a MISS names its reason in the summary, and exit 3 keeps written, backupDir and the rollback command", async () => {
+        const missed = runReport({
+            ok: false,
+            exitCode: 1,
+            dryRun: false,
+            missCount: 1,
+            files: [
+                {
+                    file: "a.ts",
+                    action: "unchanged",
+                    ops: [{ status: "MISS", desc: 'replace "oldName"', reason: "needle not found." }],
+                    postConditionFailures: [],
+                },
+            ],
+        });
+        const missSpawner = fakeSpawner({ exitCode: 1, stdout: SafeJSON.stringify(missed) });
+        const miss = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: missSpawner.spawn }));
+        expect(String(miss.summary)).toContain('MISS a.ts: replace "oldName": needle not found.');
 
-        expect(crash.isError).toBe(true);
-        expect(crash.structuredContent).toBeUndefined();
-        expect(crash.text).toContain(
+        const red = runReport({
+            ok: false,
+            exitCode: 3,
+            dryRun: false,
+            written: ["a.ts"],
+            backupDir: "/tmp/fixture-backup",
+            verify: { command: "false", status: "fail", exitCode: 1, timedOut: false, control: "caught", shown: [] },
+        });
+        const redSpawner = fakeSpawner({ exitCode: 3, stdout: SafeJSON.stringify(red) });
+        const written = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: redSpawner.spawn }));
+        expect(written).toMatchObject({ exitCode: 3, written: ["a.ts"], backupDir: "/tmp/fixture-backup" });
+        expect(String(written.summary)).toContain("verify fail (control caught)");
+        expect(String(written.summary)).toContain(`bun "${FABLE_REPLACE_CLI_PATH}" --rollback "/tmp/fixture-backup"`);
+    });
+
+    test("a stray stdout line before the report does not hide it", async () => {
+        const report = runReport();
+        const { spawn } = fakeSpawner({ stdout: `a stray line\n${SafeJSON.stringify(report)}\n` });
+        const answer = answerOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS, dryRun: true }, { spawn }));
+
+        expect(answer.isError).toBe(false);
+        expect(answer.structuredContent).toEqual(report);
+    });
+
+    test("a child without one JSON report is a failure report with its exit code and the ends of its output", async () => {
+        const crashed = fakeSpawner({ exitCode: 2, stdout: "spec: 1 file(s)\n", stderr: "TypeError: boom\n" });
+        const crash = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: crashed.spawn }));
+
+        expect(crash).toMatchObject({
+            v: 1,
+            ok: false,
+            exitCode: 2,
+            error: "the fable-replace CLI exited 2 without a JSON report on stdout",
+        });
+        expect(String(crash.summary)).toContain(
             "genesis_replace: the fable-replace CLI exited 2 without a JSON report on stdout."
         );
-        expect(crash.text).toContain("spec: 1 file(s)");
-        expect(crash.text).toContain("TypeError: boom");
+        expect(String(crash.summary)).toContain("spec: 1 file(s)");
+        expect(String(crash.summary)).toContain("TypeError: boom");
 
         const otherShape = fakeSpawner({ stdout: '{"v":2,"ok":true}' });
-        const wrong = answerOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: otherShape.spawn }));
-        expect(wrong.isError).toBe(true);
+        detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: otherShape.spawn }));
 
         const stopped = fakeSpawner({ exitCode: null, stoppedBy: "deadline" });
-        const late = answerOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: stopped.spawn }));
-        expect(late.text).toContain("was stopped after 16 minutes");
+        const late = detailOf(await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn: stopped.spawn }));
+        expect(late).toMatchObject({ exitCode: null, stoppedBy: "deadline" });
+        expect(String(late.summary)).toContain("was stopped after 16 minutes");
     });
 
-    test("a bad call is refused before any spawn", async () => {
+    test("a bad call is refused before any spawn, as an exit 2 report", async () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(runReport()) });
         const refusals: Array<[Record<string, unknown>, string]> = [
             [{ cwd: "repo", edits: EDITS }, "cwd must be an absolute path"],
@@ -133,7 +192,10 @@ describe("genesis_replace with a fake spawner", () => {
         ];
 
         for (const [args, message] of refusals) {
-            await expect(handleGenesisReplace(args, { spawn })).rejects.toThrow(message);
+            const detail = detailOf(await handleGenesisReplace(args, { spawn }));
+            expect(detail).toMatchObject({ v: 1, ok: false, exitCode: 2 });
+            expect(String(detail.error)).toContain(message);
+            expect(detail.summary).toBe(detail.error);
         }
 
         expect(calls).toHaveLength(0);
@@ -254,17 +316,39 @@ describe("genesis_replace_find with a fake spawner", () => {
         }
     });
 
-    test("flags without regex, and a missing pattern, are refused before any spawn", async () => {
+    test("flags without regex, a missing pattern and a root with a comma are refused before any spawn", async () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(recon) });
+        const refusals: Array<[Record<string, unknown>, string]> = [
+            [{ cwd: CWD, pattern: "x", flags: "i" }, "flags needs regex: true"],
+            [{ cwd: CWD }, "pattern is required"],
+            [{ cwd: CWD, pattern: "x", roots: ["a,b"] }, "without a comma"],
+        ];
 
-        await expect(handleGenesisReplaceFind({ cwd: CWD, pattern: "x", flags: "i" }, { spawn })).rejects.toThrow(
-            "flags needs regex: true"
-        );
-        await expect(handleGenesisReplaceFind({ cwd: CWD }, { spawn })).rejects.toThrow("pattern is required");
-        await expect(handleGenesisReplaceFind({ cwd: CWD, pattern: "x", roots: ["a,b"] }, { spawn })).rejects.toThrow(
-            "without a comma"
-        );
+        for (const [args, message] of refusals) {
+            const detail = detailOf(await handleGenesisReplaceFind(args, { spawn }));
+            expect(detail).toMatchObject({ v: 1, ok: false, exitCode: 2 });
+            expect(String(detail.error)).toContain(message);
+        }
+
         expect(calls).toHaveLength(0);
+    });
+
+    test("a failure report of the CLI answers isError, and its text is that report", async () => {
+        const failed = {
+            v: 1,
+            ok: false,
+            exitCode: 1,
+            dryRun: false,
+            missCount: 0,
+            written: [],
+            files: [],
+            error: "boom",
+        };
+        const { spawn } = fakeSpawner({ exitCode: 1, stdout: SafeJSON.stringify(failed) });
+        const detail = detailOf(await handleGenesisReplaceFind({ cwd: CWD, pattern: "x" }, { spawn }));
+
+        expect(detail).toMatchObject(failed);
+        expect(detail.summary).toBe("genesis_replace_find: FAILED, exit 1, error: boom");
     });
 });
 
@@ -291,29 +375,45 @@ describe("the default spawner", () => {
 const cliHasJsonDoor = readFileSync(FABLE_REPLACE_CLI_PATH, "utf8").includes('"--edits"');
 
 describe("genesis_replace with the real CLI", () => {
-    test.skipIf(!cliHasJsonDoor)("one call writes a fixture and genesis_replace_find counts the result", async () => {
-        const base = mkdtempSync(join(tmpdir(), "genesis-replace-"));
-        const repo = join(base, "repo");
-        mkdirSync(repo);
-        env.testing.set("FABLE_REPLACE_SCRATCH_ROOT", join(base, "scratch"));
-        try {
-            for (const name of ["a.ts", "b.ts", "c.ts"]) {
-                writeFileSync(join(repo, name), `export const oldName = "${name}";\n`);
+    test.skipIf(!cliHasJsonDoor)(
+        "one call writes a fixture, genesis_replace_find counts it, and a MISS and a red verify answer their report",
+        async () => {
+            const base = mkdtempSync(join(tmpdir(), "genesis-replace-"));
+            const repo = join(base, "repo");
+            mkdirSync(repo);
+            env.testing.set("FABLE_REPLACE_SCRATCH_ROOT", join(base, "scratch"));
+            try {
+                for (const name of ["a.ts", "b.ts", "c.ts"]) {
+                    writeFileSync(join(repo, name), `export const oldName = "${name}";\n`);
+                }
+
+                const edits = ["a.ts", "b.ts", "c.ts"].map((file) => ({
+                    file,
+                    ops: [{ find: "oldName", replace: "newName" }],
+                }));
+                const written = answerOf(await handleGenesisReplace({ cwd: repo, edits }));
+                expect(written.isError).toBe(false);
+                expect(written.structuredContent).toMatchObject({ v: 1, ok: true, exitCode: 0 });
+                expect(readFileSync(join(repo, "b.ts"), "utf8")).toBe('export const newName = "b.ts";\n');
+
+                const found = answerOf(await handleGenesisReplaceFind({ cwd: repo, pattern: "newName" }));
+                expect(found.structuredContent).toMatchObject({ v: 1, total: 3 });
+
+                // "e" occurs three times in "export const newName", so a one-letter replacement found by chance is no earlier run.
+                const missEdits = [{ file: "a.ts", ops: [{ find: "nope-not-there", replace: "e" }] }];
+                const miss = detailOf(await handleGenesisReplace({ cwd: repo, edits: missEdits }));
+                expect(miss).toMatchObject({ ok: false, exitCode: 1, written: [], files: [{ file: "a.ts" }] });
+                expect(String(miss.summary)).toContain("needle not found");
+                expect(String(miss.summary)).not.toContain("REPLACEMENT");
+
+                const redEdits = [{ file: "c.ts", ops: [{ find: "newName", replace: "laterName" }] }];
+                const red = detailOf(await handleGenesisReplace({ cwd: repo, edits: redEdits, verify: "false" }));
+                expect(red).toMatchObject({ ok: false, exitCode: 3, written: ["c.ts"], verify: { status: "fail" } });
+                expect(typeof red.backupDir).toBe("string");
+                expect(String(red.summary)).toContain(`--rollback "${String(red.backupDir)}"`);
+            } finally {
+                env.testing.unset("FABLE_REPLACE_SCRATCH_ROOT");
             }
-
-            const edits = ["a.ts", "b.ts", "c.ts"].map((file) => ({
-                file,
-                ops: [{ find: "oldName", replace: "newName" }],
-            }));
-            const written = answerOf(await handleGenesisReplace({ cwd: repo, edits }));
-            expect(written.isError).toBe(false);
-            expect(written.structuredContent).toMatchObject({ v: 1, ok: true, exitCode: 0 });
-            expect(readFileSync(join(repo, "b.ts"), "utf8")).toBe('export const newName = "b.ts";\n');
-
-            const found = answerOf(await handleGenesisReplaceFind({ cwd: repo, pattern: "newName" }));
-            expect(found.structuredContent).toMatchObject({ v: 1, total: 3 });
-        } finally {
-            env.testing.unset("FABLE_REPLACE_SCRATCH_ROOT");
         }
-    });
+    );
 });

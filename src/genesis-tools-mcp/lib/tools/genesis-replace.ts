@@ -319,20 +319,28 @@ function tail(text: string, max: number, what: string): string[] {
     return [`… ${lines.length - kept.length} earlier ${what} line(s) cut`, ...kept];
 }
 
-/** The child's one JSON object (`v: 1`), or undefined when its stdout is anything else. */
+/**
+ * The child's JSON object (`v: 1`), or undefined when its stdout holds none. Under --json the CLI prints that object
+ * and nothing else; its last line is tried too, so a stray line printed before it cannot hide the report.
+ */
 function childReport(stdout: string): Record<string, unknown> | undefined {
     const text = stdout.trim();
     if (text.length === 0) {
         return undefined;
     }
 
-    try {
-        const value: unknown = SafeJSON.parse(text, { strict: true });
-        return isJsonObject(value) && value.v === 1 ? value : undefined;
-    } catch (error) {
-        log.debug({ error }, "the fable-replace CLI's stdout is not one JSON object");
-        return undefined;
+    for (const candidate of new Set([text, text.slice(text.lastIndexOf("\n") + 1)])) {
+        try {
+            const value: unknown = SafeJSON.parse(candidate, { strict: true });
+            if (isJsonObject(value) && value.v === 1) {
+                return value;
+            }
+        } catch (error) {
+            log.debug({ error }, "the fable-replace CLI's stdout is not one JSON object");
+        }
     }
+
+    return undefined;
 }
 
 function howItEnded(result: ReplaceChildResult): string {
@@ -347,12 +355,13 @@ function howItEnded(result: ReplaceChildResult): string {
     return result.exitCode === null ? "was ended by a signal" : `exited ${result.exitCode}`;
 }
 
-/** A child that gave no report: its exit, the end of its stdout and its stderr tail. */
+/** A child that gave no report: its exit, the end of its stdout and its stderr tail, as a failure report. */
 function childFailure(tool: string, result: ReplaceChildResult): ToolAnswer {
     log.warn({ tool, exitCode: result.exitCode, stoppedBy: result.stoppedBy }, "the fable-replace CLI gave no report");
+    const error = `the fable-replace CLI ${howItEnded(result)} without a JSON report on stdout`;
     const stdout = tail(result.stdout, STDOUT_TAIL_LINES, "stdout");
     const stderr = tail(result.stderr, STDERR_TAIL_LINES, "stderr");
-    const lines = [`${tool}: the fable-replace CLI ${howItEnded(result)} without a JSON report on stdout.`];
+    const lines = [`${tool}: ${error}.`];
     if (stdout.length > 0) {
         lines.push("", "stdout (end):", ...stdout);
     }
@@ -361,7 +370,8 @@ function childFailure(tool: string, result: ReplaceChildResult): ToolAnswer {
         lines.push("", "stderr (end):", ...stderr);
     }
 
-    return { text: lines.join("\n"), isError: true };
+    const stopped = result.stoppedBy ? { stoppedBy: result.stoppedBy } : {};
+    return failure({ v: 1, ok: false, exitCode: result.exitCode, ...stopped, error }, lines.join("\n"));
 }
 
 function count(value: unknown): number | undefined {
@@ -406,14 +416,67 @@ function runSummary(report: Record<string, unknown>): string {
 }
 
 /**
- * `genesis_replace`: one fable-replace run through the CLI's JSON door. The answer's structured content is the CLI's
- * RunReportJson as it printed it; `isError` follows its `ok`.
+ * A failed call: isError, and ONE text block that is the JSON report plus a `summary` sentence, the same object as the
+ * structured content. A code-mode REPL throws on isError and puts a JSON body, parsed, into the error's `detail`, so
+ * the caller reads exitCode, written and backupDir as data instead of parsing a sentence.
  */
-export async function handleGenesisReplace(
-    args: Record<string, unknown>,
-    deps: GenesisReplaceDeps = {}
-): Promise<ToolAnswer> {
-    const tool = "genesis_replace";
+function failure(report: Record<string, unknown>, summary: string): ToolAnswer {
+    const body = { ...report, summary };
+    return { text: SafeJSON.stringify(body, { strict: true }), structuredContent: body, isError: true };
+}
+
+/** A call refused before the CLI ran (an unknown key, a bad value): exit 2, the shape of the CLI's own refusals. */
+function usageFailure(error: unknown): ToolAnswer {
+    const message = error instanceof Error ? error.message : String(error);
+    return failure({ v: 1, ok: false, exitCode: 2, error: message }, message);
+}
+
+function objects(value: unknown): Record<string, unknown>[] {
+    return Array.isArray(value) ? value.filter(isJsonObject) : [];
+}
+
+/** What a person reads of a failed run: the summary line, each MISS with its reason, and after exit 3 the undo. */
+function failureSummary(report: Record<string, unknown>, stderr: string[]): string {
+    const lines = [runSummary(report)];
+    for (const entry of objects(report.files)) {
+        for (const op of objects(entry.ops).filter((candidate) => candidate.status === "MISS")) {
+            lines.push(`MISS ${String(entry.file)}: ${String(op.desc)}: ${String(op.reason ?? "")}`);
+        }
+
+        const failed = Array.isArray(entry.postConditionFailures) ? entry.postConditionFailures : [];
+        for (const reason of failed) {
+            lines.push(`FAILED ${String(entry.file)}: ${String(reason)}`);
+        }
+    }
+
+    if (report.exitCode === 3) {
+        const written = Array.isArray(report.written) ? report.written.map(String) : [];
+        lines.push(`The ${written.length} written file(s) keep the sweep: ${written.join(", ")}.`);
+        lines.push(
+            typeof report.backupDir === "string"
+                ? `Undo everything with: bun "${FABLE_REPLACE_CLI_PATH}" --rollback "${report.backupDir}"`
+                : "No backup was taken, so there is nothing to roll back."
+        );
+        lines.push("Fix forward with a new call, or roll back. Never resend the same edits.");
+    }
+
+    if (stderr.length > 0) {
+        lines.push("", ...stderr);
+    }
+
+    return lines.join("\n");
+}
+
+/** What one call hands the CLI. */
+interface CliCall {
+    flags: string[];
+    cwd: string;
+    stdin?: string;
+    sessionId?: string;
+}
+
+/** The CLI flags, cwd, stdin and session of one genesis_replace call; throws on an argument it refuses. */
+function replaceCall(tool: string, args: Record<string, unknown>): CliCall {
     refuseUnknownKeys(tool, args, REPLACE_KEYS);
     const cwd = requireCwd(tool, args);
     const door = replaceDoor(args);
@@ -433,15 +496,39 @@ export async function handleGenesisReplace(
         ...(verify ? ["--verify", verify] : []),
         ...(verifyControl ? ["--verify-control", verifyControl] : []),
     ];
-    const result = await runCli({ tool, flags, cwd, stdin: door.stdin, sessionId, deps });
+    return { flags, cwd, stdin: door.stdin, sessionId };
+}
+
+/**
+ * `genesis_replace`: one fable-replace run through the CLI's JSON door. A landed run answers the CLI's RunReportJson
+ * as the structured content. Every failure (a MISS, a refusal, a red verify, a CLI that gave no report) answers
+ * isError with that report as JSON in the one text block, plus a summary sentence.
+ */
+export async function handleGenesisReplace(
+    args: Record<string, unknown>,
+    deps: GenesisReplaceDeps = {}
+): Promise<ToolAnswer> {
+    const tool = "genesis_replace";
+    let call: CliCall;
+    try {
+        call = replaceCall(tool, args);
+    } catch (error) {
+        return usageFailure(error);
+    }
+
+    const result = await runCli({ tool, ...call, deps });
     const report = childReport(result.stdout);
     if (!report || typeof report.ok !== "boolean") {
         return childFailure(tool, result);
     }
 
     const stderr = tail(result.stderr, STDERR_TAIL_LINES, "stderr");
+    if (!report.ok) {
+        return failure(report, failureSummary(report, stderr));
+    }
+
     const text = stderr.length > 0 ? [runSummary(report), "", ...stderr].join("\n") : runSummary(report);
-    return { text, structuredContent: report, isError: !report.ok };
+    return { text, structuredContent: report, isError: false };
 }
 
 /**
@@ -460,12 +547,8 @@ function findArgument(pattern: string, regex: boolean, flags: string | undefined
     return pattern;
 }
 
-/** `genesis_replace_find`: the recon of a pattern under roots, the CLI's ReconReport as the structured content. */
-export async function handleGenesisReplaceFind(
-    args: Record<string, unknown>,
-    deps: GenesisReplaceDeps = {}
-): Promise<ToolAnswer> {
-    const tool = "genesis_replace_find";
+/** The CLI flags and cwd of one genesis_replace_find call; throws on an argument it refuses. */
+function findCall(tool: string, args: Record<string, unknown>): CliCall {
     refuseUnknownKeys(tool, args, FIND_KEYS);
     const cwd = requireCwd(tool, args);
     const pattern = optionalString(tool, args, "pattern");
@@ -481,18 +564,43 @@ export async function handleGenesisReplaceFind(
 
     const roots = optionalList(tool, args, "roots") ?? ["."];
     const exts = optionalList(tool, args, "exts");
-    const flagsArgv = [
-        "--find",
-        findArgument(pattern, regex, flags),
-        "--roots",
-        roots.join(","),
-        ...(exts ? ["--ext", exts.join(",")] : []),
-        "--cwd",
+    return {
+        flags: [
+            "--find",
+            findArgument(pattern, regex, flags),
+            "--roots",
+            roots.join(","),
+            ...(exts ? ["--ext", exts.join(",")] : []),
+            "--cwd",
+            cwd,
+            "--json",
+        ],
         cwd,
-        "--json",
-    ];
-    const result = await runCli({ tool, flags: flagsArgv, cwd, deps });
+    };
+}
+
+/**
+ * `genesis_replace_find`: the recon of a pattern under roots, the CLI's ReconReport as the structured content. A
+ * failure answers isError with a JSON report in the text, as genesis_replace does.
+ */
+export async function handleGenesisReplaceFind(
+    args: Record<string, unknown>,
+    deps: GenesisReplaceDeps = {}
+): Promise<ToolAnswer> {
+    const tool = "genesis_replace_find";
+    let call: CliCall;
+    try {
+        call = findCall(tool, args);
+    } catch (error) {
+        return usageFailure(error);
+    }
+
+    const result = await runCli({ tool, ...call, deps });
     const report = childReport(result.stdout);
+    if (report?.ok === false) {
+        return failure(report, `${tool}: FAILED, exit ${String(report.exitCode)}, error: ${String(report.error)}`);
+    }
+
     if (!report || typeof report.total !== "number" || !Array.isArray(report.files)) {
         return childFailure(tool, result);
     }
@@ -505,18 +613,28 @@ export async function handleGenesisReplaceFind(
 
 export const GENESIS_REPLACE_DESCRIPTION =
     "Verified, transactional find/replace across files (fable-replace) as structured data: JSON in, a JSON report " +
-    "out, nothing to parse. Pass cwd (absolute) and exactly ONE of: edits (an array of FileEdit objects, e.g. " +
+    'out. In a code-mode REPL call it as await tools["mcp__genesis-tools__genesis_replace"](input) (the short name ' +
+    "does not resolve); a landed run arrives as the report in a JSON string, so JSON.parse it. Pass cwd (absolute) " +
+    "and exactly ONE of: edits (an array of FileEdit objects, e.g. " +
     '[{ "file": "src/a.ts", "ops": [{ "find": "oldName", "replace": "newName", "count": "all" }] }]; a regex op is ' +
     '{ "kind": "regex", "find": { "source": "foo([0-9]+)", "flags": "g" }, "replace": "bar$1" }; a whole-file rewrite ' +
-    'is { "kind": "rewrite", "content": "…", "expectSha256": "<sha256 of the current file>" }), spec (FRSPEC text, ' +
-    "the heredoc format of the fable-replace skill), or renameModule ({ file, symbol, to, roots } renames a type or " +
-    "function, its file and every import of it, staged as a git rename). Every op must match exactly as declared; the " +
-    "batch is all-or-nothing, with a backup in the session's scratch folder. dryRun: true previews and writes nothing. " +
-    'diff: "none" | "stat" (default) | "full". verify: a command run in cwd after the write; verifyControl: "ts" ' +
-    "first proves that command catches a planted type error. structuredContent is the run report: ok, exitCode " +
-    "(0 landed, 1 a MISS and nothing written, 2 refused, 3 written but the verify failed), files with each op's " +
-    "status (OK | MISS | SKIP), reason and lines, written, backupDir, verify. A MISS names the line to re-read: fix " +
-    "the op and run again; never resend the same edits after exit 3.";
+    'is { "kind": "rewrite", "content": "…", "expectSha256": "<sha256>" }: dry-run it without expectSha256, then send ' +
+    "that report's sha256Before for the file as expectSha256, because a real run without it is refused), spec " +
+    "(FRSPEC text, the heredoc format of the fable-replace skill), or renameModule ({ file, symbol, to, roots } " +
+    "renames a type or function, its file and every import of it, staged as a git rename). Every op must match " +
+    "exactly as declared; the batch is all-or-nothing, with a backup in the session's scratch folder. dryRun: true " +
+    'previews and writes nothing. diff: "none" | "stat" | "full", default "stat" on a dry run and a real run alike: ' +
+    "full adds each changed file's diff text, and every changed file carries diffStat at any level (a FileEdit's " +
+    'own diff wins; renameModule asks full). verify: a command run in cwd after the write; verifyControl: "ts" ' +
+    "first plants a type error and runs that command on it, and the report's verify.control says what happened: " +
+    "caught (it reported the probe, so the verify verdict counts) or missed (it did not, so the real verify never " +
+    "ran and its status is unknown, exit 3); no control key means none was asked or it could not be measured. The " +
+    "report: ok, exitCode (0 landed, 1 a MISS and nothing written, 2 refused, 3 written but the verify failed), " +
+    "files with sha256Before (the hash of the content the run read), renamedTo on a renamed file and each op's " +
+    "status (OK | MISS | SKIP), found, expected, reason and lines, written, backupDir, verify, warnings. A failure " +
+    "THROWS in the REPL, and e.detail is the report, parsed, with a summary sentence that names the rollback command " +
+    "after exit 3; a refusal before the run is { v, ok: false, exitCode: 2, error, summary }. A MISS names the line " +
+    "to re-read: fix the op and run again; never resend the same edits after exit 3.";
 
 export const GENESIS_REPLACE_INPUT_SCHEMA: Record<string, unknown> = {
     type: "object",
@@ -550,7 +668,9 @@ export const GENESIS_REPLACE_INPUT_SCHEMA: Record<string, unknown> = {
         diff: {
             type: "string",
             enum: [...DIFF_LEVELS],
-            description: "how much of each change the report carries: none, stat (+N -M, the default) or full",
+            description:
+                "how much of each change the report carries: none or stat (diffStat only) or full (the diff text too); " +
+                "default stat, on a dry run and a real run alike; a FileEdit's own diff wins",
         },
         verify: {
             type: "string",
@@ -572,9 +692,11 @@ export const GENESIS_REPLACE_INPUT_SCHEMA: Record<string, unknown> = {
 };
 
 export const GENESIS_REPLACE_FIND_DESCRIPTION =
-    "Recon before an edit (read-only): where a literal or a regex occurs under roots, as JSON. structuredContent is " +
-    "{ v, pattern, roots, total, files: [{ file, count, declares }] }; declares marks a file that declares an " +
-    "identifier-shaped pattern (its own symbol of that name). Use it to size a genesis_replace before you write one.";
+    "Recon before an edit (read-only): where a literal or a regex occurs under roots, as JSON. In a code-mode REPL " +
+    'call it as await tools["mcp__genesis-tools__genesis_replace_find"](input) and JSON.parse the result: ' +
+    "{ v, pattern, roots, total, files: [{ file, count, declares }] }. count and total count occurrences, not lines; " +
+    "declares marks a file that declares an identifier-shaped pattern (its own symbol of that name). A failure " +
+    "throws, with the report in e.detail. Use it to size a genesis_replace before you write one.";
 
 export const GENESIS_REPLACE_FIND_INPUT_SCHEMA: Record<string, unknown> = {
     type: "object",
