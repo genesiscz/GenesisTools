@@ -28,6 +28,13 @@ test("channel provenance and the call-majority and naming thresholds agree on a 
         [{ energyMic: 0.7, micShare: 0.2 }, "mixed", "both", false, false],
         [{ energyMic: Number.NaN, micShare: 0.25 }, "call", "segments", true, true],
         [{ energyMic: 0.1, micShare: 0.4 }, "call", "both", true, false],
+        // An uncalibrated recording: the raw energy only breaks the segments' side, never decides one.
+        [{ micShare: 0.7, energyMicRaw: 0.01 }, "mixed", "both", false, false],
+        [{ micShare: 0, energyMicRaw: 0.56 }, "mixed", "both", false, false],
+        [{ micShare: 0.2, energyMicRaw: 0.3 }, "call", "segments", true, true],
+        [{ micShare: 0.3, energyMicRaw: 0.5 }, "call", "segments", true, true],
+        [{ energyMicRaw: 0.1 }, "unknown", "none", false, false],
+        [{ energyMic: 0.3, micShare: 0.2, energyMicRaw: 0.9 }, "call", "both", true, true],
     ] as const) {
         const result = speakersFor(line, { ...facts, ...readings, muted: [remote] });
         expect(result.channel).toMatchObject({ side, source });
@@ -36,6 +43,22 @@ test("channel provenance and the call-majority and naming thresholds agree on a 
         expect(result.choices.includes(remote)).toBe(!majority);
         expect(result.reviewOnly).toBe(true);
     }
+});
+
+test("an uncalibrated line whose raw energy contradicts its segments excludes nobody by occupancy", async () => {
+    const { speakersFor } = await eligibility();
+    // Mic segments, but the microphone barely heard the line: the remote voice stays a choice.
+    const quietMic = speakersFor(line, { ...facts, micShare: 0.7, energyMicRaw: 0.01 });
+    expect(quietMic.channel).toMatchObject({ side: "mixed", strong: false });
+    expect(quietMic.choices).toEqual(expect.arrayContaining([room, remote]));
+    expect(quietMic.reviewOnly).toBe(true);
+    // Call segments, but the microphone carried most of the energy: the room voice stays a choice.
+    const loudMic = speakersFor(line, { ...facts, micShare: 0, energyMicRaw: 0.56 });
+    expect(loudMic.choices).toEqual(expect.arrayContaining([room, remote]));
+    // Agreeing raw energy keeps the segments' decision: the remote voice is outside the microphone's occupancy.
+    const sureMic = speakersFor(line, { ...facts, micShare: 0.98, energyMicRaw: 0.98 });
+    expect(sureMic.choices).toEqual([room]);
+    expect(sureMic.excluded.map((row) => row.person)).toContain(remote);
 });
 
 test("a muted room voice remains eligible on the mic before, during and after its call stay", async () => {
