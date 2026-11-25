@@ -304,6 +304,19 @@ final class MarkdownPageExtrasWebTests: XCTestCase {
                        "the tags show as typed, and neither the placeholders nor the open span reach a later block")
     }
 
+    /// A line holding only `<b>` is a raw HTML block, which the page keeps as written, and the HTML parser carried its
+    /// open tag into every block after it. A formatting tag now ends with its block; a wrapper such as `<div>` stays open.
+    func testAFormattingTagAnHTMLBlockLeavesOpenEndsWithThatBlock() async throws {
+        try await render("<b>\n\nNext must be plain.\n\n<div class=\"w\"><em>open\n\nLast")
+        let probe = try await eval("""
+            (function(){var a=document.getElementById('gn-article');
+            var p=Array.prototype.filter.call(a.querySelectorAll('p'),function(n){return n.textContent==='Next must be plain.'||n.textContent==='Last';});
+            return p.length+'|'+p.map(function(n){return n.closest('b,em')?n.closest('b,em').localName:'plain';}).join(',')+'|'+(p[1]&&p[1].closest('div.w')?'wrapped':'bare');})()
+            """) as? String
+        XCTAssertEqual(probe, "2|plain,plain|wrapped",
+                       "neither the open <b> nor the open <em> reaches a later block, and the open <div> still wraps one")
+    }
+
     // MARK: Through the app's coordinator
 
     private func coordinatorPage(_ view: MarkdownWebView, markdown: String? = nil) async throws -> (WKWebView, MarkdownWebView.Coordinator) {

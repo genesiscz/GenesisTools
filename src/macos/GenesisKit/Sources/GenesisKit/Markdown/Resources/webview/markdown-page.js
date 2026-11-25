@@ -204,6 +204,55 @@
         }
     });
 
+    // A raw HTML block stays as written (CommonMark), but a formatting tag it leaves open ends with it: the page parses
+    // the whole note at once, so a line holding only `<b>` made every block after it bold. A structural tag (`<a href>`,
+    // `<div>`, `<details>`) may wrap the blocks after it, as CommonMark allows, and is left open.
+    var GN_BLOCK_FORMATTING = { b: 1, i: 1, em: 1, strong: 1, u: 1, s: 1, code: 1, span: 1 };
+    // A comment, and the text of an element whose content is raw text, hold no tags.
+    var GN_BLOCK_TAG =
+        /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea)\b[\s\S]*?(?:<\/\1\s*>|$)|<(\/?)([A-Za-z][A-Za-z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/gi;
+    function gnCloseBlockFormatting(html) {
+        var open = [],
+            out = "",
+            from = 0,
+            m;
+        GN_BLOCK_TAG.lastIndex = 0;
+        for (m = GN_BLOCK_TAG.exec(html); m; m = GN_BLOCK_TAG.exec(html)) {
+            var name = m[3] ? m[3].toLowerCase() : "";
+            if (!GN_BLOCK_FORMATTING[name]) {
+                continue;
+            }
+            if (m[2]) {
+                // Only the closed tag leaves: the HTML parser opens a misnested one again after it (`<b><i>x</b>`).
+                var at = open.lastIndexOf(name);
+                if (at >= 0) {
+                    open.splice(at, 1);
+                }
+            } else if (m[5]) {
+                // `<span/>` opens a span in HTML; the author meant an empty one.
+                out += `${html.slice(from, GN_BLOCK_TAG.lastIndex)}</${name}>`;
+                from = GN_BLOCK_TAG.lastIndex;
+            } else {
+                open.push(name);
+            }
+        }
+        var rest = html.slice(from),
+            body = rest.replace(/\s+$/, ""),
+            closers = "";
+        while (open.length) {
+            closers += `</${open.pop()}>`;
+        }
+        return out + body + closers + rest.slice(body.length);
+    }
+    md.core.ruler.after("block", "gn_block_html", (state) => {
+        var t = state.tokens;
+        for (var i = 0; i < t.length; i++) {
+            if (t[i].type === "html_block") {
+                t[i].content = gnCloseBlockFormatting(t[i].content);
+            }
+        }
+    });
+
     md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
         var inline = tokens[idx + 1];
         var text = inline && inline.content ? inline.content : "";
