@@ -2,6 +2,7 @@ import type { FaceDeps } from "@app/macos/lib/permissions/part-readiness";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import type { WindowPlayFocus, WindowPlayMode } from "@genesiscz/utils/meetings/config";
 import type { MeetingsParams } from "./service/api";
 
 const { log } = logger.scoped("meetings-window");
@@ -73,32 +74,50 @@ export async function openMeetingsWindow(
     openFace(args, machine);
 }
 
-/** Prefer an existing window for a routed Moment; absent windows keep the command player. */
-export async function playInOpenWindow(
+/** How a Moment reached the Meetings window: a running one took it, or one opened on the meeting to play it. */
+export type WindowPlayRoute = "running" | "opened";
+
+export interface WindowPlayDeps {
+    running: () => boolean;
+    open: (request: WindowRequest) => Promise<void>;
+}
+
+/** True while a Meetings window face of the installed app runs (its face record and its executable). */
+async function meetingsWindowRunning(): Promise<boolean> {
+    const [{ readFaceRecords }, { readExecutablePath }] = await Promise.all([
+        import("@app/macos/lib/permissions/relaunch"),
+        import("@genesiscz/utils/process/processes"),
+    ]);
+    return [...readFaceRecords()].some(
+        ([pid, args]) => args[0] === "--meetings" && readExecutablePath(pid)?.endsWith("/Contents/MacOS/GenesisTools")
+    );
+}
+
+/**
+ * Sends a Moment to the Meetings window (`playback.window`): a running window plays it, and with `mode: "open"` a
+ * closed one opens on the meeting and plays it there. Undefined: no window plays it (`mode: "running"` and none runs),
+ * so the caller plays it in the command player. With `focus: "keep"` the window comes to the front without the
+ * keyboard (`open -g`, `--no-focus`): a key typed in the app in use stays there. On 2026-11-25 a handoff that took the
+ * keyboard quit the window 0.4 s later, because the ⌘Q meant for the app in front hit "Quit Meetings".
+ */
+export async function playInWindow(
     params: MeetingsParams<"moment.clip">,
-    deps?: { running: () => boolean; open: (request: WindowRequest) => Promise<void> }
-): Promise<boolean> {
-    let running: boolean;
-    if (deps) {
-        running = deps.running();
-    } else {
-        const [{ readFaceRecords }, { readExecutablePath }] = await Promise.all([
-            import("@app/macos/lib/permissions/relaunch"),
-            import("@genesiscz/utils/process/processes"),
-        ]);
-        running = [...readFaceRecords()].some(
-            ([pid, args]) =>
-                args[0] === "--meetings" && readExecutablePath(pid)?.endsWith("/Contents/MacOS/GenesisTools")
-        );
+    options: { mode: WindowPlayMode; focus: WindowPlayFocus },
+    deps?: WindowPlayDeps
+): Promise<WindowPlayRoute | undefined> {
+    const running = deps ? deps.running() : await meetingsWindowRunning();
+
+    if (!running && options.mode === "running") {
+        return undefined;
     }
-    if (!running) {
-        return false;
-    }
-    const request: WindowRequest = { meeting: params.meeting, play: params };
+
+    const request: WindowRequest = { meeting: params.meeting, play: params, focus: options.focus === "take" };
+
     if (deps) {
         await deps.open(request);
     } else {
         await openMeetingsWindow({ ...request, build: false });
     }
-    return true;
+
+    return running ? "running" : "opened";
 }

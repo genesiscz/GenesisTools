@@ -48,7 +48,7 @@ import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject, restoreProject } from "./project-admin";
 import { displayFocusSpans, screenTimeline } from "./screen-timeline";
 import { InProcessMeetingsClient } from "./service/client";
-import { openMeetingsWindow, playInOpenWindow, type WindowRequest, windowOpenArgs } from "./window";
+import { openMeetingsWindow, playInWindow, type WindowRequest, windowOpenArgs } from "./window";
 import { revisionsRead, revisionTokens } from "./window-reads";
 
 let n = 0;
@@ -1221,7 +1221,7 @@ describe("window", () => {
     });
 });
 
-test("routed playback uses an open window and preserves every Moment option", async () => {
+test("routed playback follows playback.window, keeps the keyboard where it is and preserves every Moment option", async () => {
     const opened: WindowRequest[] = [];
     const params = {
         meeting: "m1",
@@ -1235,12 +1235,24 @@ test("routed playback uses an open window and preserves every Moment option", as
     const open = async (request: WindowRequest) => {
         opened.push(request);
     };
-    expect(await playInOpenWindow(params, { running: () => false, open })).toBe(false);
+    const closed = { running: () => false, open };
+    expect(await playInWindow(params, { mode: "running", focus: "keep" }, closed)).toBeUndefined();
     expect(opened).toEqual([]);
-    expect(await playInOpenWindow(params, { running: () => true, open })).toBe(true);
-    expect(opened).toEqual([{ meeting: "m1", play: params }]);
-    const args = windowOpenArgs(opened[0]!, "/A.app");
-    expect(SafeJSON.parse(args[args.indexOf("--play-request") + 1], { strict: true })).toEqual(params);
+    expect(await playInWindow(params, { mode: "open", focus: "keep" }, closed)).toBe("opened");
+    expect(await playInWindow(params, { mode: "running", focus: "take" }, { running: () => true, open })).toBe(
+        "running"
+    );
+    expect(opened).toEqual([
+        { meeting: "m1", play: params, focus: false },
+        { meeting: "m1", play: params, focus: true },
+    ]);
+    // keep: Launch Services leaves the app in use in front (-g) and the window takes no keyboard (--no-focus), so a ⌘Q
+    // typed there cannot reach "Quit Meetings".
+    const kept = windowOpenArgs(opened[0]!, "/A.app");
+    expect(kept.slice(0, 2)).toEqual(["-n", "-g"]);
+    expect(kept.at(-1)).toBe("--no-focus");
+    expect(SafeJSON.parse(kept[kept.indexOf("--play-request") + 1], { strict: true })).toEqual(params);
+    expect(windowOpenArgs(opened[1]!, "/A.app")).not.toContain("--no-focus");
 });
 
 /** MU11: a project can be renamed everywhere it is named, and removed with a backup. */
