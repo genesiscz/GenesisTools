@@ -181,6 +181,9 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
         expect(child.status).toBe(0);
         const report = reportOf(child);
         expect(report).toMatchObject({ ok: true, written: ["Foo.ts → Bar.ts", "lib/deep.ts", "use.ts"] });
+        expect(report.files[0]).toMatchObject({ file: "Foo.ts", renamedTo: "Bar.ts", action: "renamed" });
+        expect(report.files.every((file) => /^[0-9a-f]{64}$/.test(file.sha256Before ?? ""))).toBe(true);
+        expect(report.files.flatMap((file) => file.ops).every((op) => op.expected === op.found)).toBe(true);
         expect((await git("status", "--porcelain")).split("\n")).toEqual([
             "RM Foo.ts -> Bar.ts",
             " M lib/deep.ts",

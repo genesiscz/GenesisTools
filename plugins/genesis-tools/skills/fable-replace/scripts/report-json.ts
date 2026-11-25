@@ -307,7 +307,7 @@ const opFromJson = (value: unknown, path: string): Op => {
             return compact({
                 kind,
                 content: f.str("content"),
-                expectSha256: f.str("expectSha256"),
+                expectSha256: f.optStr("expectSha256"),
                 label: f.optStr("label"),
             });
         }
@@ -359,13 +359,16 @@ const opResultToJson = (op: OpResult): RunReportJson["files"][number]["ops"][num
         expected: op.expected,
         reason: op.reason,
         lines: op.lines,
+        currentSha256: op.currentSha256,
     });
 };
 
 const fileResultToJson = (file: FileResult): RunReportJson["files"][number] => {
     return compact({
         file: file.file,
+        renamedTo: file.renamedTo,
         action: file.action,
+        sha256Before: file.sha256Before,
         diffStat: file.diffStat,
         diff: file.diff,
         ops: file.ops.map(opResultToJson),

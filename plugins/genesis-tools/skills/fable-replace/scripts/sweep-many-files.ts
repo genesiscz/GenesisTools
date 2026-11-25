@@ -17,6 +17,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +35,8 @@ import { checkVerifyCommand, runVerifyCommand, verifyUnknownReason } from "./ver
  * Those still hold the rejected content, so the caller must name them: an exit code
  * alone reads as a routine failure, and the user trusts "or not at all".
  */
+const sha256Of = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
+
 const strandedByRollback = ({ backupDir, touched }: { backupDir: string; touched: string[] }): string[] => {
     // Only the paths this sweep wrote. A file the changed-on-disk guard refused holds someone
     // else's write, and a file after the failure was never touched: restoring either from
@@ -599,6 +602,13 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         if (structural) {
             preflightErrors.push(`${edit.file}: ${structural}`);
         }
+
+        // The hash guards the write, and a code-mode caller has no hasher: its dry run hands back sha256Before.
+        if (!dryRun && edit.ops?.some((op) => op.kind === "rewrite" && op.expectSha256 === undefined)) {
+            preflightErrors.push(
+                `${edit.file}: a rewrite needs expectSha256 on a real run. Dry-run it first, then send that report's sha256Before for this file as expectSha256.`
+            );
+        }
         if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
             // Reading it threw a bare EISDIR from deep inside the runner.
             preflightErrors.push(`${edit.file}: is a directory, not a file`);
@@ -709,6 +719,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 fileResult.action = "deleted";
                 fileResult.changed = true;
                 bytesAtPlan = fs.readFileSync(abs, "utf8");
+                fileResult.sha256Before = sha256Of(bytesAtPlan);
                 fileResult.diffStat = diffStatOf(diffHunks(bytesAtPlan, ""));
             }
             planned.push({
@@ -751,6 +762,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             // still reporting OK. A file we cannot represent exactly is a file we must not
             // rewrite at all.
             const raw = fs.readFileSync(abs);
+            fileResult.sha256Before = sha256Of(raw);
             before = raw.toString("utf8");
             if (!Buffer.from(before, "utf8").equals(raw)) {
                 fileResult.action = "failed-read";
@@ -785,6 +797,10 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         fileResult.changed = after !== before || fileResult.action === "created" || Boolean(edit.renameTo);
         if (fileResult.action !== "created") {
             fileResult.action = edit.renameTo ? "renamed" : fileResult.changed ? "edited" : "unchanged";
+        }
+
+        if (fileResult.action === "renamed") {
+            fileResult.renamedTo = edit.renameTo;
         }
 
         // A created file's "before" for the diff is the empty file, not its own seed: the

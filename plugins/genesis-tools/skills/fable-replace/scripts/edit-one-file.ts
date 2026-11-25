@@ -450,19 +450,25 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
  * Replace the whole content, guarded by its sha256 (utf8 bytes). The content is the file before any op, because a
- * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>", so the caller re-reads
- * and retries with that hash instead of sending the old text back as a needle.
+ * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>" and carries the hash as
+ * currentSha256, so the caller re-reads and retries with that hash instead of sending the old text back as a needle.
+ * Without expectSha256 the op is a preview: the runner refuses it on a real run, so only a dry run gets here, and its
+ * report hands the caller the file's hash as sha256Before.
  */
 const applyRewrite = (content: string, op: RewriteOp, otherOps: number): { content: string; result: OpResult } => {
     const desc = opDesc(op);
     const current = createHash("sha256").update(content, "utf8").digest("hex");
     const miss = (why: string): { content: string; result: OpResult } => ({
         content,
-        result: { status: "MISS", desc, reason: `current sha256 ${current}: ${why}` },
+        result: { status: "MISS", desc, reason: `current sha256 ${current}: ${why}`, currentSha256: current },
     });
     // The runner refuses this before planning; a direct applyOps caller would otherwise lose the other ops' work.
     if (otherOps > 0) {
         return miss(`a rewrite is the only op of its file, and this file has ${otherOps} other op(s)`);
+    }
+
+    if (op.expectSha256 === undefined) {
+        return { content: op.content, result: { status: "OK", desc } };
     }
 
     const expected = op.expectSha256.toLowerCase();

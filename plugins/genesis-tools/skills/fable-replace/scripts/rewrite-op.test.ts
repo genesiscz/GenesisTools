@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { rollback } from "./backup-and-rollback";
 import { applyOps } from "./edit-one-file";
 import { FableReplaceError } from "./internal";
+import { reportToJson } from "./report-json";
 import { parseSpec } from "./spec";
 import { run } from "./sweep-many-files";
+import type { FileEdit } from "./types";
 
 // A rewrite replaces a whole file without sending the old text back as a needle: the caller names the sha256 of what
 // it read, and a file that changed since is a MISS naming the current hash. These tests pin that contract through
@@ -79,8 +81,32 @@ describe("the rewrite op through run()", () => {
         const op = failure.report?.files[0].ops[0];
         expect(op?.status).toBe("MISS");
         expect(op?.reason?.startsWith(`current sha256 ${sha256(OLD)}: `)).toBe(true);
+        expect(op?.currentSha256).toBe(sha256(OLD));
+        expect(reportToJson({ error: failure, dryRun: false }).files[0].ops[0].currentSha256).toBe(sha256(OLD));
         expect(failure.report?.written).toEqual([]);
         expect(readFileSync(target, "utf8")).toBe(OLD);
+    });
+
+    test("without a hasher: a dry run without expectSha256 hands back sha256Before, and a real run needs it", async () => {
+        const { work, backupDir, target } = fixture();
+        const rewrite = (expectSha256?: string): FileEdit[] => [
+            { file: "notes.md", ops: [{ kind: "rewrite", content: NEW, expectSha256 }] },
+        ];
+
+        const preview = await run({ cwd: work, dryRun: true, verbose: false, edits: rewrite() });
+        const [entry] = reportToJson({ report: preview, dryRun: true }).files;
+        expect(entry.ops[0].status).toBe("OK");
+        expect(entry.sha256Before).toBe(sha256(OLD));
+        expect(readFileSync(target, "utf8")).toBe(OLD);
+
+        const refused = await missOf(run({ cwd: work, backupDir, verbose: false, edits: rewrite() }));
+        expect(refused.code).toBe(2);
+        expect(refused.message).toContain("Dry-run it first, then send that report's sha256Before for this file");
+        expect(readFileSync(target, "utf8")).toBe(OLD);
+
+        const landed = await run({ cwd: work, backupDir, verbose: false, edits: rewrite(entry.sha256Before) });
+        expect(landed.ok).toBe(true);
+        expect(readFileSync(target, "utf8")).toBe(NEW);
     });
 });
 
@@ -133,8 +159,10 @@ describe("the FRSPEC lines of P4", () => {
         );
         expect(() => parseSpec({ text: "@@ a.md\n<<< rewrite\none\n>>>" })).toThrow(/rewrite needs sha256=/);
         expect(() => parseSpec({ text: "@@ a.md\n<<< rewrite sha256=abc\none\n>>>" })).toThrow(/64 hex characters/);
-        expect(() => parseSpec({ text: '[{"file":"a.md","ops":[{"kind":"rewrite","content":"x"}]}]' })).toThrow(
-            /\(rewrite\) needs content and expectSha256 as strings/
+        const hashless = '[{"file":"a.md","ops":[{"kind":"rewrite","content":"x"}]}]';
+        expect(parseSpec({ text: hashless })[0].ops).toEqual([{ kind: "rewrite", content: "x" }]);
+        expect(() => parseSpec({ text: hashless.replace('"x"', '"x","expectSha256":5') })).toThrow(
+            /\(rewrite\) needs content as a string, and expectSha256 \(when given\) as a string/
         );
         expect(() => parseSpec({ text: `@@ a.md\n<<< sha256=${hex}\none\n===\ntwo\n>>>` })).toThrow(
             /sha256= only applies to rewrite/

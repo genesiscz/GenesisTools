@@ -116,8 +116,11 @@ export interface RewriteOp {
     kind: "rewrite";
     /** The whole new content. */
     content: string;
-    /** sha256 hex of the current content (utf8). Another hash is a MISS naming the current one. */
-    expectSha256: string;
+    /**
+     * sha256 hex of the current content (utf8). Another hash is a MISS naming the current one. Required on a real run;
+     * a dry run without it previews the rewrite, and its report hands back the file's hash as sha256Before.
+     */
+    expectSha256?: string;
     label?: string;
 }
 
@@ -258,11 +261,17 @@ export interface OpResult {
     expected?: number | "all";
     /** 1-based line numbers the op acted on, when it works line-wise (dropComments, deleteLines). */
     lines?: number[];
+    /** A rewrite MISS: the sha256 of the content on disk, to send back as expectSha256. */
+    currentSha256?: string;
 }
 
 export interface FileResult {
     file: string;
     action: "edited" | "unchanged" | "deleted" | "renamed" | "created" | "failed-read";
+    /** The new path of a renamed file, relative like `file` (its renameTo). */
+    renamedTo?: string;
+    /** The sha256 of the content the run read from disk (none for a created file). */
+    sha256Before?: string;
     ops: OpResult[];
     postConditionFailures: string[];
     /** Content before/after (in memory) — present for edited files. */
@@ -313,7 +322,9 @@ export interface RunReportJson {
     backupDir?: string;
     files: Array<{
         file: string;
+        renamedTo?: string;
         action: FileResult["action"];
+        sha256Before?: string;
         diffStat?: { added: number; removed: number };
         diff?: string;
         ops: Array<{
@@ -323,6 +334,7 @@ export interface RunReportJson {
             expected?: number | "all";
             reason?: string;
             lines?: number[];
+            currentSha256?: string;
         }>;
         postConditionFailures: string[];
     }>;

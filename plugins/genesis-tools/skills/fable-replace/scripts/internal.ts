@@ -171,7 +171,9 @@ export const opDesc = (op: Op): string => {
         case "append":
             return `append "${preview(op.text, 40)}"`;
         case "rewrite":
-            return `rewrite sha256=${preview(op.expectSha256, 12)}`;
+            return op.expectSha256 === undefined
+                ? "rewrite (no expectSha256, dry run)"
+                : `rewrite sha256=${preview(op.expectSha256, 12)}`;
         default:
             return `replace "${preview((op as LiteralOp).find, 48)}"`;
     }
