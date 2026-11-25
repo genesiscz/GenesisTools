@@ -24,6 +24,11 @@ export interface TranscriptCorrections {
         line?: number;
         /** A direct assignment wins over a join's voice, matching any source line the join absorbed. */
         overrideJoin?: boolean;
+        /**
+         * The range names its lines only as a guess with this confidence (`[Name: 60 %]`): it wins them over weaker
+         * ranges, and the reader still sees that nobody decided the name.
+         */
+        guess?: number;
     }>;
     /**
      * The line starting at `atSec` (at index `line` of the source transcript, when known) lost its first word to the
@@ -87,10 +92,14 @@ export function isUnclearMarker(text: string, label: string): boolean {
     return text.startsWith(`[${label}:`) && text.endsWith("]");
 }
 
+/** `[Name: 60 %]`: a guessed name with its confidence, or `[Name]` with none. */
+function guessMarker(name: string, confidence: number | undefined): string {
+    return confidence === undefined ? `[${name}]` : `[${name}: ${Math.round(confidence * 100)} %]`;
+}
+
 function passageMarker(label: string, raw: string, passage: UnclearPassage): string {
     if (passage.guess) {
-        const { name, confidence } = passage.guess;
-        return confidence === undefined ? `[${name}]` : `[${name}: ${Math.round(confidence * 100)} %]`;
+        return guessMarker(passage.guess.name, passage.guess.confidence);
     }
 
     return unclearMarker(label, raw, passage.readings);
@@ -320,6 +329,10 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     const ranged = new Set<TranscriptEntry>();
     /** The range item that set each line's voice last; a later range over the same line takes it over. */
     const rangeOwner = new Map<TranscriptEntry, string>();
+    /** The confidence of the range that set each line's voice last, when that range names it only as a guess. */
+    const rangeGuess = new Map<TranscriptEntry, number>();
+    /** The names that ranges naming plainly gave each line, so a later guess for one of them stays plain. */
+    const plainNames = new Map<TranscriptEntry, Set<string>>();
 
     for (const join of corrections.joins ?? []) {
         const found = joinLine(source, join);
@@ -414,6 +427,16 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             line.speaker = range.speaker;
             ranged.add(line);
             rangeOwner.set(line, range.item ?? "later range");
+            // A guess on a line that a weaker range names plainly for the same person keeps the plain name: that range
+            // backs the name on its own, so the line shows no less certainty than it has.
+            if (range.guess === undefined) {
+                plainNames.set(line, new Set([...(plainNames.get(line) ?? []), range.speaker]));
+                rangeGuess.delete(line);
+            } else if (plainNames.get(line)?.has(range.speaker)) {
+                rangeGuess.delete(line);
+            } else {
+                rangeGuess.set(line, range.guess);
+            }
             counts.ranges += 1;
         }
 
@@ -459,6 +482,13 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     // a join already gave a voice is decided, whatever it is called now, and a line is marked once: the first passage wins.
     const speakerMarked = new Set<TranscriptEntry>();
     let guessed = new Map<TranscriptEntry, string>();
+
+    // A line whose winning range names it only as a guess shows the guess; it stays decided for the passages below.
+    for (const [line, confidence] of rangeGuess) {
+        guessed.set(line, line.speaker);
+        line.speaker = guessMarker(line.speaker, confidence);
+        line.guess = true;
+    }
 
     for (const passage of corrections.unclear?.passages ?? []) {
         for (const line of lines) {
@@ -625,7 +655,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     }
 
     // The dictionary writes a changed line anew, line for line, so the named lines are followed through it.
-    let named = new Set<TranscriptEntry>([...ranged, ...voiced.keys()]);
+    let named = new Set<TranscriptEntry>([...[...ranged].filter((line) => !rangeGuess.has(line)), ...voiced.keys()]);
     let sources = new Map(
         lines.flatMap((line): Array<[TranscriptEntry, number]> => {
             const index = indexOf.get(line);

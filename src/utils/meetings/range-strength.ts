@@ -31,12 +31,27 @@ export function rangeStrength(item: Pick<MeetingItem, "status" | "rules">): Rang
 }
 
 /**
- * Whether a suggested range names its line at any confidence: one built on the user's answer or stated by an agent
- * does, because its confidence is their own doubt (a note on the line), not a rule's score held back under the apply
- * threshold.
+ * Whether a suggested range takes part in naming its line at any confidence, so the order (`compareRanges`) decides
+ * between it and the other ranges on that line: one built on the user's answer or stated by an agent does. A rule's
+ * range under the apply threshold does not; it stays a guess where nothing stronger names the line.
  */
 export function namesAtAnyConfidence(item: Pick<MeetingItem, "status" | "rules">): boolean {
     return rangeStrength(item) !== RangeStrength.Automatic;
+}
+
+/**
+ * Whether the range that names a line shows its name as a guess (`[Name: 60 %]`): an agent's stated range or a rule's
+ * range under the apply threshold. A confirmed range and one built on the user's answer show the name plainly at any
+ * confidence, because the user decided it; an agent's confidence is its own doubt, and a plain name would hide it.
+ */
+export function showsAsGuess(item: Ranked, applyAbove: number): boolean {
+    const strength = rangeStrength(item);
+
+    if (strength === RangeStrength.Confirmed || strength === RangeStrength.UserDerived) {
+        return false;
+    }
+
+    return item.confidence !== undefined && item.confidence < applyAbove;
 }
 
 /**

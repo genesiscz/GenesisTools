@@ -319,10 +319,12 @@ people) on each look until the record has an end, for up to 10 min.
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
 confirmed items change a transcript. With `--with-suggested`, proposed terms apply at
 `global.suggest.terms.applyAbove` and speaker suggestions at `global.suggest.applyAbove`. Both default to 0.7.
-Items without a confidence, such as a person's own correction, also apply. A speaker range a person or an agent
-stated (`items add`, an answer) names its line at any confidence: the confidence is their own doubt, kept on the line
-as `confidence`, never a `[Name: NN %]` guess. A range owned by an open speaker question stays a guess until answered
-or confirmed.
+Items without a confidence, such as a person's own correction, also apply. A speaker range built on the user's
+answer (its rules include `user`) names its line plainly at any confidence. A range an agent stated (`items add`)
+takes part at any confidence, so the order below decides its line, but under the threshold the line shows it as a
+guess, `[Name: 60 %]`, as a rule's range under the threshold shows: only a confirmed range or the user's answer makes
+a name plain. A guess for a person whom another range on the same line names at or above the threshold shows the
+plain name. A range owned by an open speaker question stays a guess until answered or confirmed.
 
 When several ranges cover one line, one order decides its name in every reader (the transcript, `look`, the polished
 file, the naming pass): a confirmed range first (a person's later decision replaces the earlier one), then a range built
@@ -833,8 +835,8 @@ The displayed priority and its minimum filter keep their existing scale. Questio
 records, retain priority order. Matching candidate names alone never multiply reach or establish one voice identity.
 
 Suggested speaker names of a rule (seat, voice, attendance) under the transcript threshold (`global.suggest.applyAbove`,
-default 70%) remain explicit guesses, as every other kind of suggestion does; a name a person or an agent stated is
-applied at any confidence. `transcript <meeting> --with-suggested
+default 70%) and of an agent remain explicit guesses, as every other kind of suggestion does; a name built on the
+user's answer is applied at any confidence. `transcript <meeting> --with-suggested
 --apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
 confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.
 

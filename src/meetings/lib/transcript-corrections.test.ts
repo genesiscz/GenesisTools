@@ -663,18 +663,20 @@ test("the user's answer names its line over a later agent's range; between agent
         confidence: 0.9,
         look: "Alice Example",
     });
+    // Under the apply threshold an agent's range wins its line and still shows as a guess.
     expect(shown([range("i1", "Alice Example", 0.6), range("i2", "Bob Example", 0.45)])).toMatchObject({
-        speaker: "Alice Example",
+        speaker: "[Alice Example: 60 %]",
+        guess: true,
         look: "Alice Example",
     });
     expect(shown([range("i1", "Alice Example", 0.45), range("i2", "Bob Example", 0.45)])).toMatchObject({
-        speaker: "Bob Example",
-        guess: false,
+        speaker: "[Bob Example: 45 %]",
+        guess: true,
         look: "Bob Example",
     });
 });
 
-test("a range an agent stated names its line at any confidence, kept on the line as a note; a rule's low range stays a guess", () => {
+test("an agent's range under the threshold wins its line as a guess; the user's answer names it plainly at any confidence", () => {
     const stated = item({
         id: "i1",
         kind: "speaker-range",
@@ -700,8 +702,43 @@ test("a range an agent stated names its line at any confidence, kept on the line
             withSuggested: true,
         }).entries[3];
 
-    expect(shown(stated)).toMatchObject({ speaker: "Alice Example", band: "applied", guess: false, confidence: 0.4 });
+    expect(shown(stated)).toMatchObject({
+        speaker: "[Alice Example: 40 %]",
+        band: "guess",
+        guess: true,
+        confidence: 0.4,
+    });
     expect(shown(automatic)).toMatchObject({ speaker: "[Alice Example: 40 %]", band: "guess", guess: true });
+    expect(shown({ ...stated, rules: [MeetingRule.Agent, MeetingRule.User] })).toMatchObject({
+        speaker: "Alice Example",
+        band: "applied",
+        guess: false,
+        confidence: 0.4,
+    });
+    expect(shown({ ...stated, confidence: 0.8 })).toMatchObject({ speaker: "Alice Example", guess: false });
+
+    // The agent's guess outranks a rule's sure range for another person, and shows as a guess; one for the same person
+    // is backed by that range and shows the plain name.
+    const several = (...items: ReturnType<typeof item>[]) =>
+        correctTranscript({
+            record: { ...base, items },
+            transcript,
+            config,
+            format: "json",
+            withSuggested: true,
+        });
+    const sure = (speaker: string) =>
+        item({
+            ...automatic,
+            id: "i3",
+            speaker,
+            confidence: 0.9,
+            evidence: { labeler: "seat", reason: "seat-of-one" },
+        });
+    const overBob = several(sure("Bob Example"), stated);
+    expect(overBob.entries[3]).toMatchObject({ speaker: "[Alice Example: 40 %]", guess: true });
+    expect(overBob.guesses).toEqual([{ name: "Alice Example", lines: 1 }]);
+    expect(several(sure("Alice Example"), stated).entries[3]).toMatchObject({ speaker: "Alice Example", guess: false });
 });
 
 test("later ranges shadow earlier outcomes", () => {
@@ -800,7 +837,7 @@ describe("question-owned transcript uncertainty", () => {
 
     test.each([0.5, 0.6])("unasked speaker suggestions of a rule use the configured threshold of %s", (applyAbove) => {
         const source = [line("Voice", 5, "Raw words.")];
-        // A rule's range: one a person or an agent stated names its line at any confidence.
+        // A rule's range: under the threshold it is a guess, as an agent's range is.
         const range = item({
             id: "i1",
             kind: "speaker-range",
@@ -1131,7 +1168,7 @@ test("speaker metadata uses each source line's own range when two lines start in
                 toSec: 10,
                 speaker: "Alice Example",
                 confidence: 0.6,
-                // A rule's range under the threshold is a guess; a stated one would name its line.
+                // A rule's range under the threshold is a guess.
                 rules: [MeetingRule.VoiceEmbedding],
             }),
             item({
@@ -1207,7 +1244,8 @@ test("two lines of one label in one second with no ids each keep their own range
     });
 
     expect(entries).toMatchObject([
-        { speaker: "Alice Example", confidence: 0.6, suggestedSpeaker: "Alice Example", guess: false },
+        // An agent's range under the apply threshold shows as a guess on its own line only.
+        { speaker: "[Alice Example: 60 %]", confidence: 0.6, suggestedSpeaker: "Alice Example", guess: true },
         { speaker: "Bob Example", confidence: 0.8, suggestedSpeaker: "Bob Example", guess: false },
     ]);
 });
