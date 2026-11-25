@@ -3,7 +3,8 @@ import type { AgentInstructionSeverity, AgentInstructions } from "@genesiscz/uti
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
-import type { NoticeInput, RequestRow } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import type { RequestJournal, RequestView } from "@genesiscz/utils/genesis-tools/areas/person/journal";
+import type { NoticeInput, RequestOutcome, RequestRow } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentActor, DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -32,6 +33,15 @@ const NOT_NOW = "Not now";
 
 /** The part of the person area a relayed confirmation calls. */
 export type RelayedConfirmDoor = { person: Pick<AreaClients["person"], "confirm"> };
+
+/** The person area's request journal as a confirmation reads it: the newest attempt's state, and its withdrawal. */
+export type RelayedRequests = Pick<RequestJournal, "get" | "withdraw" | "claim">;
+
+/**
+ * How long a request may wait after its post for the worker that shows its window: a rerun inside it treats the
+ * window as on screen, so a quick rerun does not withdraw a window that is about to open.
+ */
+export const RELAYED_WINDOW_START_MS = 30_000;
 
 /** One meeting's items to confirm; an item is an id (`i42`) or a question label (`Q12`). */
 export interface RelayedGroup {
@@ -72,10 +82,21 @@ export function relayedRowId(meeting: string, item: string, token: string): stri
     return `${meeting}/${item}/${token}`;
 }
 
-/** One request per set of rows: the same items again read the user's answer to the same request. */
+/**
+ * One request family per set of rows: the same items again read the answer to the newest attempt at asking about them
+ * ({@link relayedAttemptId}).
+ */
 export function relayedRequestId(rows: readonly Pick<RelayedRow, "meeting" | "item" | "entry">[]): string {
     const ids = rows.map((row) => relayedRowId(row.meeting.id, row.item, row.entry.token)).sort();
     return `relayed:${sha256Json(ids)}`;
+}
+
+/**
+ * The id of the `attempt`th request about one set of rows: the first keeps the family id, each later one adds its
+ * number, so the request journal keeps every attempt and a rerun finds the newest.
+ */
+export function relayedAttemptId(family: string, attempt: number): string {
+    return attempt <= 1 ? family : `${family}:${attempt}`;
 }
 
 /** The items of `--confirm-relayed`: `i42` in the named meeting, `<meeting>:Q2` in another one. */
@@ -352,10 +373,202 @@ function stopped(severity: AgentInstructionSeverity, lines: string[]): AgentInst
     return { text: lines.join("\n"), severity, stop: true };
 }
 
+/** What the newest attempt at asking about these rows means for this run. */
+type PriorAttempt =
+    | { kind: "answered"; view: RequestView }
+    | { kind: "declined"; view: RequestView }
+    | { kind: "waiting"; view: RequestView }
+    | { kind: "post"; attempt: number; why: string[] };
+
+/** The newest attempt in the journal at asking about one set of rows, or null when none was posted. */
+function newestAttempt(requests: RelayedRequests, family: string): { attempt: number; view: RequestView } | null {
+    let newest: { attempt: number; view: RequestView } | null = null;
+
+    for (let attempt = 1; ; attempt++) {
+        const view = requests.get(relayedAttemptId(family, attempt));
+
+        if (!view) {
+            return newest;
+        }
+
+        newest = { attempt, view };
+    }
+}
+
+/** Why a request that ended without the user's answer does not stop the next one. */
+function endedWithoutAnswer(view: RequestView): string {
+    const reason = view.outcome.reason ? ` (${view.outcome.reason})` : "";
+
+    if (view.state === "withdrawn") {
+        return `Request ${view.id} was withdrawn before the user answered it${reason}.`;
+    }
+
+    if (view.state === "obsolete") {
+        return `Request ${view.id} ended obsolete before the user answered it${reason}.`;
+    }
+
+    return `Request ${view.id} ended without the user's answer, because no window reached the user${reason}.`;
+}
+
+/** A settled attempt: the user's answer, the user's Not now, or an end without an answer that a new attempt follows. */
+function settledAttempt(view: RequestView, next: number, askAgain: boolean): PriorAttempt {
+    if (view.outcome.status === "done") {
+        return { kind: "answered", view };
+    }
+
+    if (view.outcome.status === "declined") {
+        return askAgain
+            ? {
+                  kind: "post",
+                  attempt: next,
+                  why: [`The user answered ${NOT_NOW} to request ${view.id} and then asked for the window again.`],
+              }
+            : { kind: "declined", view };
+    }
+
+    return { kind: "post", attempt: next, why: [endedWithoutAnswer(view)] };
+}
+
+/**
+ * Reads the newest attempt at asking about these rows. A done or declined one is the user's answer. One that ended
+ * without an answer (withdrawn, obsolete, failed) gets a new attempt. A waiting one is never posted twice while its
+ * window is on screen or about to open; it is withdrawn and asked again when it shows an older rendering of the rows
+ * (`renders` false) or when no worker shows it any more (its window timed out, or none opened).
+ */
+async function priorAttempt(options: {
+    requests: RelayedRequests;
+    family: string;
+    renders: (posted: NoticeInput) => boolean;
+    askAgain: boolean;
+}): Promise<PriorAttempt> {
+    const { requests, family, askAgain } = options;
+    const newest = newestAttempt(requests, family);
+
+    if (!newest) {
+        return { kind: "post", attempt: 1, why: [] };
+    }
+
+    const { view } = newest;
+    const next = newest.attempt + 1;
+
+    if (view.outcome.status !== "pending") {
+        return settledAttempt(view, next, askAgain);
+    }
+
+    const withdrawn = (why: string): PriorAttempt => {
+        const after = requests.get(view.id) ?? view;
+        // The user can have answered between the read and the withdrawal: that answer stands.
+        return after.state === "withdrawn"
+            ? { kind: "post", attempt: next, why: [why] }
+            : settledAttempt(after, next, askAgain);
+    };
+    const older = async (): Promise<PriorAttempt> => {
+        await requests.withdraw(view.id);
+        return withdrawn(
+            `Request ${view.id} showed these answers as an older version of this command rendered them, so it was withdrawn. Its window can stay on screen until its deadline; an answer there no longer counts.`
+        );
+    };
+    const changed = !options.renders(view.request);
+
+    // Its worker may not show the window yet: a probe of the claim now could make that worker give up.
+    if (Date.now() - Date.parse(view.request.createdAt) < RELAYED_WINDOW_START_MS) {
+        return changed ? older() : { kind: "waiting", view };
+    }
+
+    // The worker that shows a window holds the request's claim while the window is on screen: a claim taken here
+    // means no window shows the request any more, and the withdrawal under it keeps a late worker from showing it.
+    const probe = await requests.claim(view.id, (current) => requests.withdraw(current.id));
+
+    if (probe.claimed) {
+        return withdrawn(
+            `Request ${view.id} was still waiting, but no window showed it any more (its window timed out or never opened), so it was withdrawn.`
+        );
+    }
+
+    if (probe.view.outcome.status !== "pending") {
+        return settledAttempt(probe.view, next, askAgain);
+    }
+
+    return changed ? older() : { kind: "waiting", view: probe.view };
+}
+
+/** Makes each row the user left ticked in `request` the user's decision; the unticked ones stay the agent's. */
+async function adoptTicked(options: {
+    rows: readonly RelayedRow[];
+    client: Pick<MeetingsClient, "call">;
+    request: { id: string; rows?: RequestRow[] };
+    picked: RequestOutcome["picked"];
+    skipped: RelayedSkip[];
+    stay: string;
+}): Promise<RelayedResult> {
+    const { rows, client, request, skipped, stay } = options;
+    const picked = new Set(options.picked ?? (request.rows ?? []).map((row) => row.id));
+    const adopted: RelayedResult["adopted"] = [];
+    const left: RelayedResult["left"] = [];
+    const groups = new Map<string, RelayedRow[]>();
+
+    for (const row of rows) {
+        if (!picked.has(relayedRowId(row.meeting.id, row.item, row.entry.token))) {
+            left.push({ meeting: row.meeting.id, item: row.label });
+            continue;
+        }
+
+        const key = `${row.meeting.id}\u0000${row.entry.token}`;
+        groups.set(key, [...(groups.get(key) ?? []), row]);
+    }
+
+    for (const group of groups.values()) {
+        const { meeting, entry } = group[0]!;
+        const items = group.map((row) => row.item);
+
+        try {
+            const decided = await client.call("decision.apply", {
+                meeting: meeting.id,
+                action: adoptionAction(entry, items),
+                ...(entry.reason ? { reason: entry.reason } : {}),
+                confirmedBy: { request: request.id },
+            });
+
+            if (decided.entry) {
+                adopted.push({ meeting: meeting.id, items: group.map((row) => row.label), token: decided.entry.token });
+            } else {
+                skipped.push(
+                    ...group.map((row) => ({
+                        meeting: meeting.id,
+                        item: row.label,
+                        reason: decided.skipped[0]?.reason ?? "the journal changed nothing",
+                    }))
+                );
+            }
+        } catch (error) {
+            skipped.push(...group.map((row) => ({ meeting: meeting.id, item: row.label, reason: errorText(error) })));
+        }
+    }
+
+    const failed = skipped.length > 0 && adopted.length < groups.size;
+    const notes = [
+        ...(left.length
+            ? [
+                  `The user left out ${left.map((row) => `${row.meeting} ${row.item}`).join(", ")}: ${stay.charAt(0).toLowerCase()}${stay.slice(1)} Do not ask again for them unless the user tells you to.`,
+              ]
+            : []),
+        ...(failed ? skipped.map((skip) => `${skip.meeting} ${skip.item}: ${skip.reason}`) : []),
+    ];
+    return {
+        request: request.id,
+        adopted,
+        left,
+        skipped,
+        ...(notes.length ? { instructions: { text: notes.join("\n"), severity: "warning", stop: false } } : {}),
+    };
+}
+
 /**
  * Asks the user, in one confirmation window, whether the answers an agent relayed are theirs, and makes each ticked
  * one the user's decision. The person area never makes an agent wait, so an agent's first run posts the window and
- * returns instructions to stop; the same run again reads the answer and adopts the ticked rows. Through `client`,
+ * returns instructions to stop; the same run again reads the answer to the newest attempt and adopts the ticked rows.
+ * An attempt that ended without the user's answer, or whose window no longer shows it, is asked again as a new
+ * attempt with the rows this code renders; after the user's Not now only `askAgain` asks again. Through `client`,
  * so the Meetings window hears each decision; the service checks the request before it names the user.
  */
 export async function confirmRelayed(options: {
@@ -364,7 +577,13 @@ export async function confirmRelayed(options: {
     client: Pick<MeetingsClient, "call">;
     /** The command or call that runs this again. */
     rerun: string;
+    /** The same command for when the user asks for the window again after answering Not now. */
+    rerunAskingAgain: string;
+    /** The user asked for the window again: an earlier Not now no longer stops a new request. */
+    askAgain?: boolean;
     gt?: RelayedConfirmDoor;
+    /** The person area's request journal; the default is the one the person area writes. */
+    requests?: RelayedRequests;
 }): Promise<RelayedResult> {
     const { store, client, rerun } = options;
     const rows: RelayedRow[] = [];
@@ -425,7 +644,66 @@ export async function confirmRelayed(options: {
         };
     }
 
-    const request = relayedRequest(rows, records, await relayedPlays(rows, records, client));
+    const fresh = relayedRequest(rows, records, await relayedPlays(rows, records, client));
+    const [{ createRequestJournal }, { noticeInputSchema }] = await Promise.all([
+        import("@genesiscz/utils/genesis-tools/areas/person/journal"),
+        import("@genesiscz/utils/genesis-tools/areas/person/request"),
+    ]);
+    const requests = options.requests ?? createRequestJournal();
+    // What a window shows, apart from its id: a stored request reads back through the same schema.
+    const rendering = (input: NoticeInput): string | null => {
+        const parsed = noticeInputSchema.safeParse({ ...input, id: fresh.id });
+        return parsed.success ? sha256Json(parsed.data) : null;
+    };
+    const current = rendering(fresh);
+    const prior = await priorAttempt({
+        requests,
+        family: fresh.id,
+        renders: (posted) => rendering(posted) === current,
+        askAgain: options.askAgain === true,
+    });
+    const these = rows.length === 1 ? "this answer is" : `these ${rows.length} answers are`;
+    const waiting = (id: string, lead: string[]): RelayedResult => ({
+        request: id,
+        adopted: [],
+        left: [],
+        skipped,
+        instructions: stopped("info", [
+            ...lead,
+            "Ask the user to answer that window; each row has its quote and a Play button.",
+            `After the user answers, run the same command again; it records the ticked answers as the user's: ${rerun}`,
+            `The answer so far: ${toolCommand("genesis-tools", "request", "show", id)}`,
+            ...skippedLines,
+        ]),
+    });
+    const declined = (id: string): RelayedResult => ({
+        request: id,
+        adopted: [],
+        left: [],
+        skipped,
+        instructions: stopped("error", [
+            `The user answered ${NOT_NOW} (request ${id}). ${stay}`,
+            "Do not ask again for these answers unless the user tells you to.",
+            `When the user asks for the window again, run: ${options.rerunAskingAgain}`,
+        ]),
+    });
+
+    if (prior.kind === "answered") {
+        const { view } = prior;
+        return adoptTicked({ rows, client, request: view.request, picked: view.outcome.picked, skipped, stay });
+    }
+
+    if (prior.kind === "declined") {
+        return declined(prior.view.id);
+    }
+
+    if (prior.kind === "waiting") {
+        return waiting(prior.view.id, [
+            `A confirmation window still asks the user whether ${these} theirs (request ${prior.view.id}). Nothing changed yet.`,
+        ]);
+    }
+
+    const request: NoticeInput = { ...fresh, id: relayedAttemptId(fresh.id, prior.attempt) };
     let outcome: Awaited<ReturnType<RelayedConfirmDoor["person"]["confirm"]>>;
 
     try {
@@ -439,6 +717,7 @@ export async function confirmRelayed(options: {
             left: [],
             skipped,
             instructions: stopped("error", [
+                ...prior.why,
                 `The confirmation request could not be posted (${errorText(error)}). ${stay}`,
             ]),
         };
@@ -451,105 +730,40 @@ export async function confirmRelayed(options: {
             adopted: [],
             left: [],
             skipped,
-            instructions: stopped("error", [`No confirmation window could reach the user (${why}). ${stay}`]),
-        };
-    }
-
-    const answer = outcome.value;
-    const show = toolCommand("genesis-tools", "request", "show", request.id);
-
-    if (answer.status === "pending") {
-        return {
-            request: request.id,
-            adopted: [],
-            left: [],
-            skipped,
-            instructions: stopped("info", [
-                `A confirmation window asks the user now whether ${rows.length === 1 ? "this answer is" : `these ${rows.length} answers are`} theirs (request ${request.id}). Nothing changed yet.`,
-                "Ask the user to answer that window; each row has its quote and a Play button.",
-                `After the user answers, run the same command again; it records the ticked answers as the user's: ${rerun}`,
-                `The answer so far: ${show}`,
-                ...skippedLines,
+            instructions: stopped("error", [
+                ...prior.why,
+                `No confirmation window could reach the user (${why}). ${stay}`,
             ]),
         };
     }
 
+    const answer = outcome.value;
+
+    if (answer.status === "pending") {
+        return waiting(request.id, [
+            ...prior.why,
+            `${prior.why.length ? "A new" : "A"} confirmation window asks the user now whether ${these} theirs (request ${request.id}). Nothing changed yet.`,
+        ]);
+    }
+
+    if (answer.status === "declined") {
+        return declined(request.id);
+    }
+
     if (answer.status !== "done") {
-        const why =
-            answer.status === "declined"
-                ? `The user answered ${NOT_NOW}`
-                : `The request ended ${answer.status}${answer.reason ? `: ${answer.reason}` : ""}`;
         return {
             request: request.id,
             adopted: [],
             left: [],
             skipped,
             instructions: stopped("error", [
-                `${why} (request ${request.id}). ${stay}`,
-                "Do not ask again for these answers unless the user tells you to.",
+                `The request ended ${answer.status}${answer.reason ? `: ${answer.reason}` : ""} (request ${request.id}). ${stay}`,
+                `It ended without the user's answer, so it does not stop a new window: when the user can answer one, run the same command again: ${rerun}`,
             ]),
         };
     }
 
-    const picked = new Set(answer.picked ?? (request.rows ?? []).map((row) => row.id));
-    const adopted: RelayedResult["adopted"] = [];
-    const left: RelayedResult["left"] = [];
-    const groups = new Map<string, RelayedRow[]>();
-
-    for (const row of rows) {
-        if (!picked.has(relayedRowId(row.meeting.id, row.item, row.entry.token))) {
-            left.push({ meeting: row.meeting.id, item: row.label });
-            continue;
-        }
-
-        const key = `${row.meeting.id}\u0000${row.entry.token}`;
-        groups.set(key, [...(groups.get(key) ?? []), row]);
-    }
-
-    for (const group of groups.values()) {
-        const { meeting, entry } = group[0]!;
-        const items = group.map((row) => row.item);
-
-        try {
-            const decided = await client.call("decision.apply", {
-                meeting: meeting.id,
-                action: adoptionAction(entry, items),
-                ...(entry.reason ? { reason: entry.reason } : {}),
-                confirmedBy: { request: request.id },
-            });
-
-            if (decided.entry) {
-                adopted.push({ meeting: meeting.id, items: group.map((row) => row.label), token: decided.entry.token });
-            } else {
-                skipped.push(
-                    ...group.map((row) => ({
-                        meeting: meeting.id,
-                        item: row.label,
-                        reason: decided.skipped[0]?.reason ?? "the journal changed nothing",
-                    }))
-                );
-            }
-        } catch (error) {
-            skipped.push(...group.map((row) => ({ meeting: meeting.id, item: row.label, reason: errorText(error) })));
-        }
-    }
-
-    const failed = skipped.length > 0 && adopted.length < groups.size;
-    const notes = [
-        ...(left.length
-            ? [
-                  `The user left out ${left.map((row) => `${row.meeting} ${row.item}`).join(", ")}: ${stay.charAt(0).toLowerCase()}${stay.slice(1)} Do not ask again for them unless the user tells you to.`,
-              ]
-            : []),
-        ...(failed ? skipped.map((skip) => `${skip.meeting} ${skip.item}: ${skip.reason}`) : []),
-    ];
-    return {
-        request: request.id,
-        adopted,
-        left,
-        skipped,
-        ...(notes.length ? { instructions: { text: notes.join("\n"), severity: "warning", stop: false } } : {}),
-    };
+    return adoptTicked({ rows, client, request, picked: answer.picked, skipped, stay });
 }
 
 /** Who may name the user in a decision: the actor of a request the user answered with this row ticked. */

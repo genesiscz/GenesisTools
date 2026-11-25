@@ -935,12 +935,14 @@ export const confirmRelayed = defineMethod({
             also: z
                 .array(z.object({ meeting: z.string().min(1), items: z.array(z.string().min(1)).min(1) }))
                 .optional(),
+            /** The user asked to see the window again after answering Not now: a new one is posted. */
+            askAgain: z.boolean().optional(),
         })
         .strict(),
     result: z.unknown(),
     resultName: "{ request?, adopted: [{ meeting, items, token }], left, skipped }",
     effect: "reversible",
-    doc: `Ask the user, in one confirmation window, whether answers an agent relayed from chat are the user's own: each row is the item with its decision, the user's quoted words, a Play button for its range and its own tick. Each ticked answer becomes the user's decision (journal actor request, relayedBy the agent), so voice samples and learning use it; Undo brings the agent's back. An agent's first call posts the window and throws the FOR AGENTS block; the same call again after the user answered records the ticked rows. CLI twin: ${toolCommand("meetings listen")} <meeting> --confirm-relayed <items...> (another meeting's item as <meeting>:<item>) --json.`,
+    doc: `Ask the user, in one confirmation window, whether answers an agent relayed from chat are the user's own: each row is the item with its decision, the user's quoted words, a Play button for its range and its own tick. Each ticked answer becomes the user's decision (journal actor request, relayedBy the agent), so voice samples and learning use it; Undo brings the agent's back. An agent's first call posts the window and throws the FOR AGENTS block; the same call again after the user answered records the ticked rows. A request that ended without the user's answer (withdrawn, timed out, unreachable) or whose window no longer shows it is posted again as a new attempt with the current rows; after the user's Not now it throws the block until askAgain: true says the user asked for the window again. CLI twin: ${toolCommand("meetings listen")} <meeting> --confirm-relayed <items...> [--ask-again] (another meeting's item as <meeting>:<item>) --json.`,
 });
 
 export const voiceLibraryMethods = {

@@ -17,15 +17,28 @@ export function confirmRelayedCommand(meeting: string, items: readonly string[])
     return `${TOOL} listen ${shellWord(meeting)} --confirm-relayed ${items.map(shellWord).join(" ")}`;
 }
 
-/** Posts (or reads the answer to) the user's confirmation of relayed answers: `confirmRelayed` over the client. */
+/**
+ * Posts (or reads the answer to) the user's confirmation of relayed answers: `confirmRelayed` over the client.
+ * `askAgain`: the user asked for the window again after answering Not now (`--ask-again`).
+ */
 export async function runConfirmRelayed(options: {
     store: MeetingStore;
     meeting: string;
     items: readonly string[];
+    askAgain?: boolean;
 }): Promise<RelayedResult> {
     const groups = relayedGroups(options.meeting, options.items);
     const rerun = confirmRelayedCommand(options.meeting, options.items);
-    return withMeetingsClient((client) => confirmRelayed({ groups, store: options.store, client, rerun }));
+    return withMeetingsClient((client) =>
+        confirmRelayed({
+            groups,
+            store: options.store,
+            client,
+            rerun,
+            rerunAskingAgain: `${rerun} --ask-again`,
+            askAgain: options.askAgain === true,
+        })
+    );
 }
 
 /**

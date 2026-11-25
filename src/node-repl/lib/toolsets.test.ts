@@ -538,6 +538,7 @@ describe("toolset method names", () => {
         const toolset = new MeetingsToolset();
         expect(describeMethod([toolset.api], "meetings.confirmRelayed")).toContain("meetings listen");
         expect(describeMethod([toolset.api], "meetings.confirmRelayed")).toContain("--confirm-relayed");
+        expect(describeMethod([toolset.api], "meetings.confirmRelayed")).toContain("--ask-again");
         const record = await new MeetingStore().create(
             { title: "Relay door", start: "2026-11-01T10:00:00Z", createdBy: "new" },
             { command: "test", change: "fixture" }

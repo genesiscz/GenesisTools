@@ -16,12 +16,8 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
-import {
-    type NoticeInput,
-    noticeInputSchema,
-    type RequestOutcome,
-    type RequestRow,
-} from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { createRequestJournal, type RequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
+import { type NoticeInput, noticeInputSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
@@ -85,10 +81,14 @@ import { rejectFilterIds } from "./reject-filter";
 import {
     adoptionAction,
     confirmRelayed,
+    RELAYED_WINDOW_START_MS,
     type RelayedConfirmDoor,
+    type RelayedRequests,
     relayedActor,
+    relayedAttemptId,
     relayedGroups,
     relayedQuote,
+    relayedRequestId,
     relayedRowId,
 } from "./relayed";
 import { reviewRow } from "./review-rows";
@@ -4379,10 +4379,13 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         caller: { harness: "codex", session: "relay-1", model: "gpt-6.1-sol" },
     };
 
-    /** A client over the fixture's journal; `decision.apply` names the user only through `relayedActor`, as the service does. */
+    /**
+     * A client over the fixture's journal; `decision.apply` names the user only through `relayedActor` over the request
+     * the call names in the request journal, as the service does.
+     */
     function relayClient(
         fx: Awaited<ReturnType<typeof fixture>>,
-        request: () => { id: string; rows?: RequestRow[]; status: string; picked?: string[]; via?: string } | null,
+        requests: Pick<RequestJournal, "get">,
         lines?: TranscriptEntry[]
     ) {
         const applied: unknown[] = [];
@@ -4412,24 +4415,71 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
                     : "items" in action
                       ? action.items.map((ref) => itemIdOf(record, ref))
                       : [];
-            const actor = relayedActor({ request: request(), meeting: fx.meeting.id, items, earlier, action });
+            const confirmedBy = params.confirmedBy as { request: string } | undefined;
+            const view = confirmedBy ? requests.get(confirmedBy.request) : null;
+            const request = view
+                ? {
+                      id: view.id,
+                      rows: view.request.rows,
+                      status: view.outcome.status,
+                      picked: view.outcome.picked,
+                      via: view.outcome.via,
+                  }
+                : null;
+            const actor = relayedActor({ request, meeting: fx.meeting.id, items, earlier, action });
             return fx.journal.apply({ meeting: fx.meeting.id, action, actor, reason: params.reason as string });
         };
         return { client: { call } as unknown as Pick<MeetingsClient, "call">, applied };
     }
 
-    function personDoor(outcome: Partial<RequestOutcome>) {
+    /** A scratch request journal whose posts are dated by `clock.at`, so a test can post a request minutes ago. */
+    function requestJournal() {
+        const clock = { at: Date.now() };
+        const journal = createRequestJournal({
+            dir: mkdtempSync(join(tmpdir(), "relayed-requests-")),
+            now: () => new Date(clock.at),
+        });
+        return { journal, clock };
+    }
+
+    /**
+     * The person area over that journal: `confirm` posts the request and leaves it waiting (a detached worker shows
+     * it), or settles it at once with `answer` (a window answered in the same run).
+     */
+    function personDoor(
+        journal: RequestJournal,
+        answer?: { status: "done" | "declined" | "obsolete"; picked?: string[] }
+    ) {
         const posted: NoticeInput[] = [];
         const confirm = async (input: NoticeInput) => {
             posted.push(input);
-            return {
-                status: "ran" as const,
-                via: "native",
-                skipped: [],
-                value: { id: input.id, status: "pending" as const, reason: null, ...outcome },
-            };
+            const { view } = await journal.postOnce({ input });
+            const value = answer
+                ? await journal.settle(view.id, answer.status, null, { via: "native", picked: answer.picked })
+                : view.outcome;
+            return { status: "ran" as const, via: "native", skipped: [], value };
         };
         return { gt: { person: { confirm } } as unknown as RelayedConfirmDoor, posted };
+    }
+
+    /** One confirmation run over the fixture: the door that posts and the journal it reads. */
+    function confirmRun(
+        fx: Awaited<ReturnType<typeof fixture>>,
+        items: string[],
+        door: { gt: RelayedConfirmDoor },
+        requests: RelayedRequests,
+        extra: { askAgain?: boolean; lines?: TranscriptEntry[] } = {}
+    ) {
+        return confirmRelayed({
+            groups: relayedGroups(fx.meeting.id, items),
+            store: fx.store,
+            client: relayClient(fx, requests, extra.lines).client,
+            rerun: "again",
+            rerunAskingAgain: "again --ask-again",
+            gt: door.gt,
+            requests,
+            ...(extra.askAgain ? { askAgain: true } : {}),
+        });
     }
 
     test("one window lists each agent decision with its quote and Play; the ticked ones become the user's, in one entry each", async () => {
@@ -4450,17 +4500,11 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
             actor: relayer,
             reason: 'Alice in chat: "that is Bob"',
         });
-        const groups = relayedGroups(fx.meeting.id, ["i3", "i7", "i1"]);
+        const { journal } = requestJournal();
 
         // First run: the window is posted, nothing changes, and the agent is told to stop.
-        const pending = personDoor({});
-        const first = await confirmRelayed({
-            groups,
-            store: fx.store,
-            client: relayClient(fx, () => null).client,
-            rerun: "again",
-            gt: pending.gt,
-        });
+        const pending = personDoor(journal);
+        const first = await confirmRun(fx, ["i3", "i7", "i1"], pending, journal);
         expect(first.instructions?.stop).toBe(true);
         expect(first.instructions?.text).toContain("A confirmation window asks the user now");
         // i1 is decided by the answer to i3, so it is the same row as i3, never a second one.
@@ -4481,17 +4525,13 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         expect(noticeInputSchema.parse(request)).toBeTruthy();
         expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
 
-        // The user ticked only the speaker range: it becomes the user's decision, replacing the agent's.
+        // The user ticked only the speaker range in that window: the rerun reads that answer from the request journal
+        // and posts nothing, and the ticked row becomes the user's decision, replacing the agent's.
         const picked = [relayedRowId(fx.meeting.id, "i7", confirmed.entry!.token)];
-        const done = personDoor({ status: "done", via: "native", picked });
-        const view = () => ({ id: request!.id, rows: request!.rows, status: "done", picked, via: "native" });
-        const second = await confirmRelayed({
-            groups,
-            store: fx.store,
-            client: relayClient(fx, view).client,
-            rerun: "again",
-            gt: done.gt,
-        });
+        await journal.settle(request!.id, "done", null, { via: "native", picked });
+        const second = await confirmRun(fx, ["i3", "i7", "i1"], pending, journal);
+        expect(pending.posted).toHaveLength(1);
+        expect(second.request).toBe(request!.id);
         expect(second.adopted).toEqual([{ meeting: fx.meeting.id, items: ["i7"], token: expect.any(String) }]);
         expect(second.left.map((row) => row.meeting)).toEqual([fx.meeting.id]);
         expect(second.instructions?.stop).toBe(false);
@@ -4539,14 +4579,9 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
             actor: relayer,
             reason: 'Alice in chat: "she said \\\\\\"Ada\\\\\\" there"',
         });
-        const pending = personDoor({});
-        await confirmRelayed({
-            groups: relayedGroups(fx.meeting.id, ["i5", "i6"]),
-            store: fx.store,
-            client: relayClient(fx, () => null, lines).client,
-            rerun: "again",
-            gt: pending.gt,
-        });
+        const { journal } = requestJournal();
+        const pending = personDoor(journal);
+        await confirmRun(fx, ["i5", "i6"], pending, journal, { lines });
         const rows = pending.posted[0]?.rows ?? [];
         const record = fx.store.read(fx.meeting.id)!;
         const listen = meetingsConfigSchema.parse({}).global.playback.listen;
@@ -4581,6 +4616,174 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         expect(quote('Alice said \\"keep it\\"')).toBe("keep it");
         // Outside quoted words nothing is unescaped: a reason without quote marks is shown as written.
         expect(quote("Alice said C:\\\\temp")).toBe("Alice said C:\\\\temp");
+    });
+
+    /** A meeting with one speaker range an agent confirmed from the user's words in chat, and its request family. */
+    async function relayedRange() {
+        const fx = await fixture([speakerRange("i7", 90, { toSec: 96 })]);
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i7"], speaker: "Bob Example" },
+            actor: relayer,
+            reason: 'Alice in chat: "that is \\"Bob\\""',
+        });
+        const entry = fx.journal.read(fx.meeting.id)[0]!;
+        const family = relayedRequestId([{ meeting: fx.meeting, item: "i7", entry }]);
+        return { fx, family, row: relayedRowId(fx.meeting.id, "i7", entry.token) };
+    }
+
+    /** The window an older build posted for that row: the shell's backslashes left in the quote, and no Play button. */
+    function olderWindow(family: string, row: string): NoticeInput {
+        return {
+            kind: "notice",
+            id: family,
+            title: "Confirm the answer you gave: i7",
+            reason: "An agent recorded this answer from what you said in chat.",
+            rows: [{ id: row, title: "i7 · Bob Example", quote: 'that is \\"Bob\\"' }],
+            buttons: { confirm: "Confirm as mine", decline: "Not now" },
+        };
+    }
+
+    test("a rerun after the window timed out posts a new attempt with the rows this code renders", async () => {
+        const { fx, family, row } = await relayedRange();
+        const { journal, clock } = requestJournal();
+        // An older build posted the window ten minutes ago. It timed out on screen, so the request still waits and no
+        // worker shows it.
+        clock.at = Date.now() - 10 * 60_000;
+        await journal.postOnce({ input: olderWindow(family, row) });
+        clock.at = Date.now();
+        const door = personDoor(journal);
+
+        const result = await confirmRun(fx, ["i7"], door, journal);
+
+        const second = relayedAttemptId(family, 2);
+        expect(door.posted.map((input) => input.id)).toEqual([second]);
+        expect(journal.get(family)?.state).toBe("withdrawn");
+        expect(journal.get(second)?.state).toBe("waiting");
+        const shown = door.posted[0]?.rows?.[0];
+        expect(shown?.quote).toBe('that is "Bob"');
+        expect(shown?.action).toMatchObject({ kind: "play-meeting", fromSec: 90, toSec: 96 });
+        expect(result.request).toBe(second);
+        expect(result.instructions).toMatchObject({ stop: true, severity: "info" });
+        expect(result.instructions?.text).toContain(
+            `Request ${family} was still waiting, but no window showed it any more (its window timed out or never opened), so it was withdrawn.`
+        );
+        expect(result.instructions?.text).toContain(
+            `A new confirmation window asks the user now whether this answer is theirs (request ${second}).`
+        );
+        expect(result.instructions?.text).not.toContain("Do not ask again");
+        expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+    });
+
+    test("a request that ended without the user's answer does not block: the rerun posts the next attempt, and the run after reads that one", async () => {
+        const { fx, family } = await relayedRange();
+        const second = relayedAttemptId(family, 2);
+        const ends: { name: string; end: (journal: RequestJournal) => Promise<unknown>; says: string }[] = [
+            {
+                name: "withdrawn by its caller",
+                end: (journal) => journal.withdraw(family),
+                says: `Request ${family} was withdrawn before the user answered it (Withdrawn by its caller.).`,
+            },
+            {
+                name: "obsolete",
+                end: (journal) => journal.settle(family, "obsolete", "The meeting was reopened."),
+                says: `Request ${family} ended obsolete before the user answered it (The meeting was reopened.).`,
+            },
+            {
+                name: "unreachable",
+                end: (journal) => journal.settle(family, "unreachable", "no display"),
+                says: `Request ${family} ended without the user's answer, because no window reached the user (no display).`,
+            },
+        ];
+
+        for (const { name, end, says } of ends) {
+            const { journal } = requestJournal();
+            const door = personDoor(journal);
+            await confirmRun(fx, ["i7"], door, journal);
+            await end(journal);
+
+            const again = await confirmRun(fx, ["i7"], door, journal);
+            const after = await confirmRun(fx, ["i7"], door, journal);
+
+            expect({ name, posted: door.posted.map((input) => input.id) }).toEqual({ name, posted: [family, second] });
+            expect(again.instructions?.text).toContain(says);
+            expect(again.instructions?.text).toContain(
+                `A new confirmation window asks the user now whether this answer is theirs (request ${second}).`
+            );
+            expect(again.instructions?.text).not.toContain("Do not ask again");
+            expect(after.request).toBe(second);
+            expect(after.instructions?.text).toContain(
+                `A confirmation window still asks the user whether this answer is theirs (request ${second}).`
+            );
+        }
+    });
+
+    test("after the user's Not now a rerun posts nothing, and asks again only when askAgain says the user asked for it", async () => {
+        const { fx, family } = await relayedRange();
+        const { journal } = requestJournal();
+        const door = personDoor(journal);
+        await confirmRun(fx, ["i7"], door, journal);
+        await journal.settle(family, "declined", null, { via: "native" });
+
+        const declined = await confirmRun(fx, ["i7"], door, journal);
+
+        expect(door.posted).toHaveLength(1);
+        expect(declined.request).toBe(family);
+        expect(declined.instructions).toMatchObject({ stop: true, severity: "error" });
+        expect(declined.instructions?.text).toContain(`The user answered Not now (request ${family}).`);
+        expect(declined.instructions?.text).toContain(
+            "Do not ask again for these answers unless the user tells you to."
+        );
+        expect(declined.instructions?.text).toContain(
+            "When the user asks for the window again, run: again --ask-again"
+        );
+
+        const asked = await confirmRun(fx, ["i7"], door, journal, { askAgain: true });
+
+        expect(door.posted.map((input) => input.id)).toEqual([family, relayedAttemptId(family, 2)]);
+        expect(asked.instructions?.text).toContain(
+            `The user answered Not now to request ${family} and then asked for the window again.`
+        );
+        // The rerun after this answer never repeats askAgain, so a second Not now stops the agent again.
+        expect(asked.instructions?.text).not.toContain("--ask-again");
+        expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+    });
+
+    test("a request waiting in a live window is not posted twice, unless it shows an older rendering: then it is withdrawn and posted again", async () => {
+        const { fx, family, row } = await relayedRange();
+        // A worker shows each window: it holds the request's claim, so a probe of the claim finds it presented.
+        const presented = (journal: RequestJournal): RelayedRequests => ({
+            ...journal,
+            claim: async (id) => ({ claimed: false, view: journal.get(id)! }),
+        });
+
+        const current = requestJournal();
+        current.clock.at = Date.now() - 5 * 60_000;
+        const door = personDoor(current.journal);
+        await confirmRun(fx, ["i7"], door, presented(current.journal));
+        current.clock.at = Date.now();
+        const same = await confirmRun(fx, ["i7"], door, presented(current.journal));
+
+        expect(door.posted).toHaveLength(1);
+        expect(current.journal.get(family)?.state).toBe("waiting");
+        expect(same.instructions?.text).toContain(
+            `A confirmation window still asks the user whether this answer is theirs (request ${family}).`
+        );
+
+        const older = requestJournal();
+        older.clock.at = Date.now() - 5 * 60_000;
+        await older.journal.postOnce({ input: olderWindow(family, row) });
+        older.clock.at = Date.now();
+        const replacing = personDoor(older.journal);
+        const replaced = await confirmRun(fx, ["i7"], replacing, presented(older.journal));
+
+        expect(replacing.posted.map((input) => input.id)).toEqual([relayedAttemptId(family, 2)]);
+        expect(older.journal.get(family)?.state).toBe("withdrawn");
+        expect(replacing.posted[0]?.rows?.[0]?.quote).toBe('that is "Bob"');
+        expect(replaced.instructions?.text).toContain(
+            `Request ${family} showed these answers as an older version of this command rendered them, so it was withdrawn.`
+        );
+        expect(RELAYED_WINDOW_START_MS).toBeLessThan(5 * 60_000);
     });
 
     test("the service names the user only for a done request with the row ticked and the agent's decision unchanged", async () => {
