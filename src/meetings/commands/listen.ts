@@ -466,6 +466,7 @@ interface ListenOptions {
     item?: string;
     answer?: string;
     confirmRelayed?: string[];
+    askAgain?: boolean;
     except?: string[];
     replaces?: string;
     comment?: string;
@@ -946,9 +947,15 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
     if (opts.confirmRelayed) {
         try {
-            printRelayed(await runConfirmRelayed({ store, meeting: meeting.id, items: opts.confirmRelayed }), {
-                json: opts.json,
-            });
+            printRelayed(
+                await runConfirmRelayed({
+                    store,
+                    meeting: meeting.id,
+                    items: opts.confirmRelayed,
+                    askAgain: opts.askAgain === true,
+                }),
+                { json: opts.json }
+            );
         } catch (error) {
             fail(error);
         }
@@ -1304,6 +1311,10 @@ export function registerListenCommand(program: Command): void {
         .option(
             "--confirm-relayed <items...>",
             "ask the user in one window whether answers an agent relayed are theirs (an item of another meeting as <meeting>:<item>); run it again after the user answered to record the ticked ones as the user's"
+        )
+        .option(
+            "--ask-again",
+            "with --confirm-relayed: the user asked to see the window again after answering Not now, so a new one is posted"
         )
         .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(

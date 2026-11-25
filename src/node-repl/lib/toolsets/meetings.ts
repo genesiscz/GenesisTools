@@ -233,13 +233,17 @@ export class MeetingsToolset extends ReplToolset {
                     lineEligibilityFor(OpenedMeeting.of(store, recordOf(store, meeting)), line),
                 // The CLI's own core: tools meetings listen --confirm-relayed, the same window and the same check.
                 confirmRelayed: async (input: z.input<typeof confirmRelayed.params>) => {
-                    const { meeting, items, also } = confirmRelayed.params.parse(input);
+                    const { meeting, items, also, askAgain } = confirmRelayed.params.parse(input);
+                    // The rerun after an answer never repeats askAgain: a second Not now must stop the agent again.
+                    const { askAgain: _asked, ...plain } = input;
                     const result = await withMeetingsClient((client) =>
                         askRelayed({
                             groups: [{ meeting, items }, ...(also ?? [])],
                             store,
                             client,
-                            rerun: `meetings.confirmRelayed(${SafeJSON.stringify(input)})`,
+                            rerun: `meetings.confirmRelayed(${SafeJSON.stringify(plain)})`,
+                            rerunAskingAgain: `meetings.confirmRelayed(${SafeJSON.stringify({ ...plain, askAgain: true })})`,
+                            askAgain: askAgain === true,
                         })
                     );
                     if (result.instructions?.stop) {
