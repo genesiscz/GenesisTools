@@ -4094,6 +4094,31 @@ describe("evidence --raw", () => {
             ).toEqual([]);
         });
 
+        test("a heard word that the screen shows at the end of a longer OCR word gets that end as its form", () => {
+            const glued = { file: "frames/g.jpg", at: frameAt(62), displayId: 1, text: "N'OrderTemplate,", blocks: [] };
+            const { blocks: _blocks, ...gluedLine } = glued;
+            const gluedRead: ScreenRecordRead = { ...read, rows: [glued], lines: [gluedLine] };
+            const lead = (heard: string, candidates: string[] = []): RawTerms => ({
+                ...terms,
+                runs: [],
+                documents: undefined,
+                unknown: [
+                    {
+                        ...terms.unknown[0]!,
+                        heard,
+                        examples: [example(60, `to je ==${heard}==`)],
+                        candidates: candidates.map((term) => ({ term, confidence: 70, source: "context" })),
+                    },
+                ],
+            });
+            const lines = (terms: RawTerms) =>
+                withScreenLines(terms, { read: gluedRead, linesPerLead: 3 }).unknown[0]?.screen?.lines;
+
+            expect(lines(lead("order template"))).toMatchObject([{ form: "OrderTemplate", score: 90 }]);
+            // A candidate's spelling is matched against whole screen words only: its word ends fit other identifiers.
+            expect(lines(lead("kandidát", ["OrderTemplate"]))).toEqual([]);
+        });
+
         test("a term fix the screen near it spells otherwise names that screen line; a fix the screen shows does not", () => {
             const fix = { atSec: 65, heard: "content rouz", proposed: "ContentRoes" };
 

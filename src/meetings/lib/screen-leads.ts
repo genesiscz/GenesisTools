@@ -35,6 +35,14 @@ const ENDING_LETTERS = /^[aeiouymvhc]*$/;
 const STEM_CHARS = 4;
 /** An OCR line is cut to this many characters: a code line or a paragraph can run long. */
 const MAX_LINE_CHARS = 200;
+/** A screen form that is the end of a longer OCR word (`LeadTemplate` of `N'LeadTemplate`) scores this much of a whole word. */
+const WORD_END_PENALTY = 0.9;
+/**
+ * The floor for such a form, which only the heard words get (a candidate's word ends matched other identifiers).
+ * Measured on three recorded meetings (2026-11-25, 20 lines per lead): at 85 and up 3 of 3 heard word ends were the
+ * spoken word; under it, 2 of 15 were.
+ */
+const WORD_END_MIN_SCORE = 85;
 
 /** One OCR line of a frame near a lead whose words sound like it. */
 export interface ScreenLine {
@@ -405,7 +413,34 @@ function screenNear(options: {
     };
 }
 
-/** The run of a line's words that sounds most like one of the queries, at or above the floor. */
+/**
+ * The ends of a screen word after each boundary inside it, where OCR or the screen glued something before the spoken
+ * word: a separator (`N'LeadTemplate`, `l/catalog/orders`) or a change from a small to a capital letter
+ * (`AppValidator`, `HTTPClient`).
+ */
+function wordEnds(word: string): string[] {
+    const chars = [...word];
+    const ends: string[] = [];
+
+    for (let index = 1; index < chars.length; index++) {
+        const [before, at, after] = [chars[index - 1]!, chars[index]!, chars[index + 1] ?? ""];
+        const separated = /[._/'-]/.test(before) && /[\p{L}\p{N}]/u.test(at);
+        const camel = /\p{Ll}/u.test(before) && /\p{Lu}/u.test(at);
+        const acronymEnd = /\p{Lu}/u.test(before) && /\p{Lu}/u.test(at) && /\p{Ll}/u.test(after);
+
+        if (separated || camel || acronymEnd) {
+            ends.push(chars.slice(index).join(""));
+        }
+    }
+
+    return ends;
+}
+
+/**
+ * The run of a line's words that sounds most like one of the queries, at or above the floor. A run whose first word
+ * only ends with the spoken word (`N'LeadTemplate` for "lead template") is scored from that end, with the same first
+ * sound only and {@link WORD_END_PENALTY}, so a whole word that fits as well wins.
+ */
 function bestForm(options: {
     line: LineWords;
     queries: Array<{ text: string; via?: string; words: number }>;
@@ -413,16 +448,28 @@ function bestForm(options: {
 }): { form: string; score: number; via?: string } | undefined {
     const { words } = options.line;
     let found: { form: string; score: number; via?: string } | undefined;
+    const consider = (query: { via?: string }, form: string, score: number | undefined) => {
+        if (score !== undefined && score >= MIN_SCORE && (!found || score > found.score)) {
+            found = { form, score, ...(query.via ? { via: query.via } : {}) };
+        }
+    };
 
     for (const query of options.queries) {
         for (let size = 1; size <= query.words + 1; size++) {
             for (let start = 0; start + size <= words.length; start++) {
-                const form = words.slice(start, start + size).join(" ");
-                const score =
-                    options.matcher.score(query.text, form) ?? options.matcher.scoreOtherStart(query.text, form);
+                const run = words.slice(start, start + size);
+                const form = run.join(" ");
+                consider(
+                    query,
+                    form,
+                    options.matcher.score(query.text, form) ?? options.matcher.scoreOtherStart(query.text, form)
+                );
 
-                if (score !== undefined && score >= MIN_SCORE && (!found || score > found.score)) {
-                    found = { form, score, ...(query.via ? { via: query.via } : {}) };
+                for (const end of query.via === undefined ? wordEnds(run[0]!) : []) {
+                    const endForm = [end, ...run.slice(1)].join(" ");
+                    const raw = options.matcher.score(query.text, endForm);
+                    const score = raw === undefined ? undefined : Math.round(raw * WORD_END_PENALTY);
+                    consider(query, endForm, score !== undefined && score >= WORD_END_MIN_SCORE ? score : undefined);
                 }
             }
         }
