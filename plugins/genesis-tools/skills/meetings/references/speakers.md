@@ -184,6 +184,14 @@ any confidence. A guess for the person the line's own label (a platform name, or
 because it agrees with the label; a label item that says the label tracks no one person, or an open question on the
 line, keeps the guess. Under 60 % (`listenBelow`) a range that matters is a question candidate (below).
 
+A finding from other evidence that agrees with your range counts with it (`speakerLabels.fusion.mode`, `independent`
+by default). After a speakers pass, a one-line range you stated for the person that the seat or a voice match with a
+clear rival also names shows the plain name under 70 % too: your 50 % and a voice match of 0.6 make 80 %. Your
+confidence and rules stay yours; the agreement is the range's `evidence.agreeing`. So state your own reading of the
+words, never the confidence of a suggestion you read: a rule's range that was on the line before you stated yours adds
+nothing, because the two would be one finding. A voice name with no rival to compare adds nothing either; on the
+lines people decided it was right about half the time.
+
 | Rule | Weight | Statement | Status |
 |---|---|---|---|
 | R1 departure | 5 | A person who said goodbye does not speak after that. | confirmed |
