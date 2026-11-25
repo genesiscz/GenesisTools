@@ -10,6 +10,13 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Type guard: returns true if `value` is any non-null object, arrays included. Use `isObject` to refuse arrays.
+ */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+/**
  * Deep merge `source` into `target`. Only merges plain objects recursively;
  * arrays and primitives are overwritten.
  */
