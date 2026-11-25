@@ -228,7 +228,10 @@ A missing meeting names only the store that was searched. To find which store ho
    in the `.ts` for a meeting in another language, and `phrases` only for a wording this one file needs. Change the
    file, never the markdown: the build stamps it and refuses to overwrite a hand edit; `--check` (REPL: `meetings.polish.check(file)`) says clean, stale or hand-edited. A draft
    `<name>.polished.json` becomes the `.ts` once with `tools meetings polish init --from <json>` (REPL:
-   `meetings.polish.init(from)`). A vault folder needs `tools link install` once so the import resolves.
+   `meetings.polish.init(from)`); so does a hand-written `<name>.polished.md` with no `.ts`
+   (`--from <md> [--record <id...>]`, REPL: `meetings.polish.init(md, undefined, records)`): the sections the records
+   would write stay frozen as `overrides.sections`, so run `--check`, then `--force` once, then delete an override to
+   hand that section back to the records. A vault folder needs `tools link install` once so the import resolves.
 7. **Report**: the file link, the count of changes per kind, the `[nejasné: ...]` count, and every decision that
    contradicts the documents.
 

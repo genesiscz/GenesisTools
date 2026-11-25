@@ -11,7 +11,8 @@ export interface PartTimes {
 
 /** `[[t:43:15]]`: a time in one part, named by the part's token. */
 const TOKEN_RE = /\[\[([a-z]+):(\d+(?::\d{2}){1,2})\]\]/g;
-const FENCE_RE = /(```[\s\S]*?```)/;
+/** A code fence, kept whole by `split`: text inside it gets no link. */
+export const FENCE_RE = /(```[\s\S]*?```)/;
 
 /** `13:49` with its play link in a superscript, the form polishing.md asks for; the bare time when there is no link. */
 export function playTime(label: string, link: string | null): string {

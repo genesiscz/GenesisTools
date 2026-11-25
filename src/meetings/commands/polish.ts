@@ -127,13 +127,23 @@ export function registerPolishCommands(program: Command): void {
 
     polish
         .command("init")
-        .description("Write a NEW .polished.ts from a draft polished JSON, once; every draft field is kept or reported")
-        .requiredOption("--from <json>", "the draft, e.g. <name>.polished.json")
-        .option("--out <file>", "the .polished.ts to write (default: the draft's path with .ts)")
+        .description(
+            "Write a NEW .polished.ts, once, from a draft polished JSON or from a polished markdown that has none (written by hand); every field is mapped, kept or reported"
+        )
+        .requiredOption("--from <file>", "the draft (<name>.polished.json) or the markdown (<name>.polished.md)")
+        .option("--out <file>", "the .polished.ts to write (default: the --from path with .ts)")
+        .option(
+            "--record <id...>",
+            "markdown: the meeting record of each part, in order, when its front matter and play links name none"
+        )
         .option("--json", "print the result as JSON")
-        .action(async (opts: { from: string; out?: string; json?: boolean }) => {
+        .action(async (opts: { from: string; out?: string; record?: string[]; json?: boolean }) => {
             try {
-                const result = await initPolished({ from: opts.from, ...(opts.out ? { out: opts.out } : {}) });
+                const result = await initPolished({
+                    from: opts.from,
+                    ...(opts.out ? { out: opts.out } : {}),
+                    ...(opts.record?.length ? { records: opts.record } : {}),
+                });
 
                 if (opts.json) {
                     out.result(SafeJSON.stringify(result, null, 2));

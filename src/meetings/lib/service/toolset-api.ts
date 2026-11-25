@@ -530,12 +530,18 @@ export const polishCheck = defineMethod({
 });
 export const polishInit = defineMethod({
     name: "polish.init",
-    params: z.object({ from: z.string().min(1), out: z.string().min(1).optional() }).strict(),
-    positional: ["from", "out"],
+    params: z
+        .object({
+            from: z.string().min(1),
+            out: z.string().min(1).optional(),
+            records: z.array(z.string().min(1)).optional(),
+        })
+        .strict(),
+    positional: ["from", "out", "records"],
     result: z.unknown(),
     resultName: "{ path, report: { mapped, kept, notes }, unlinkedDir }",
     effect: "reversible",
-    doc: `Write a NEW .polished.ts from a draft polished JSON, once: every draft field becomes a config field or is kept under extras and reported. Refuses an existing file. Same as ${toolCommand("meetings polish init")} --from <json> [--out <file>].`,
+    doc: `Write a NEW .polished.ts, once, from a draft polished JSON (every field becomes a config field or is kept under extras) or from a polished markdown that has none: its front matter and authored sections become config fields, its play links [[<token>:MM:SS]] tokens, and each section the build writes from the records keeps the markdown's text as an override, so the first build writes the same body. records names the parts of a markdown that names none. Refuses an existing file. Same as ${toolCommand("meetings polish init")} --from <json|md> [--out <file>] [--record <id...>].`,
 });
 
 export const dictionaryTest = defineMethod({

@@ -1,15 +1,18 @@
 import { existsSync } from "node:fs";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripStamp } from "@genesiscz/utils/json2md/integrity";
 import {
     MEETINGS_POLISHED_SPECIFIER,
     type MeetingsPolishedInput,
     meetingsPolishedSchema,
 } from "@genesiscz/utils/meetings/polished";
+import { MeetingStore, meetingAddress } from "@genesiscz/utils/meetings/record";
 import { MEETING_SOURCE_IDS } from "@genesiscz/utils/meetings/sources";
 import { z } from "zod";
-import { unlinkedPolishedDir } from "./build";
+import { adoptPolishedMarkdown } from "./adopt-md";
+import { polishedOutPath, unlinkedPolishedDir } from "./build";
 
 /** What adopting a draft did with each of its fields. */
 export interface AdoptReport {
@@ -261,23 +264,55 @@ export interface PolishInitResult {
 }
 
 /**
- * `tools meetings polish init --from <draft.json>`: writes a NEW `.polished.ts` from a draft JSON, once. Refuses to
- * overwrite an existing file; writes nothing when the adopted config does not validate.
+ * `tools meetings polish init --from <draft.json | polished.md>`: writes a NEW `.polished.ts`, once, from a draft JSON
+ * or from a polished markdown that has none (`records` names its parts when the markdown does not). The markdown stays
+ * where it is, and the module builds it again. Refuses to overwrite an existing file; writes nothing when the adopted
+ * config does not validate.
  */
-export async function initPolished(options: { from: string; out?: string }): Promise<PolishInitResult> {
+export async function initPolished(options: {
+    from: string;
+    out?: string;
+    records?: string[];
+    store?: MeetingStore;
+}): Promise<PolishInitResult> {
     const from = isAbsolute(options.from) ? options.from : resolve(process.cwd(), options.from);
+    const markdown = /\.md$/i.test(from);
     const out = options.out
         ? isAbsolute(options.out)
             ? options.out
             : resolve(process.cwd(), options.out)
-        : resolve(dirname(from), `${basename(from).replace(/\.json$/, "")}.ts`);
+        : resolve(dirname(from), `${basename(from).replace(/\.(json|md)$/i, "")}.ts`);
 
     if (existsSync(out)) {
         throw new Error(`${out} exists already; init never overwrites it. Edit it, or pass --out for a new file.`);
     }
 
-    const draft: unknown = SafeJSON.parse(await Bun.file(from).text());
-    const { config, report } = adoptPolishedDraft(draft);
+    if (!markdown && options.records?.length) {
+        throw new Error("--record names the parts of a polished markdown; a draft JSON lists its own parts.");
+    }
+
+    const text = await Bun.file(from).text();
+    const store = markdown ? (options.store ?? new MeetingStore()) : undefined;
+    const { config, report } = store
+        ? adoptPolishedMarkdown({
+              markdown: text,
+              records: options.records,
+              resolve: (ref) => meetingAddress(store, ref)?.record.id,
+          })
+        : adoptPolishedDraft(SafeJSON.parse(text));
+
+    // The module writes the markdown it came from, wherever --out puts it.
+    if (markdown && polishedOutPath(out, config) !== from) {
+        config.out = relative(dirname(out), from);
+        report.mapped.push(`out: ${config.out}`);
+    }
+
+    if (markdown && !stripStamp(text).stamp) {
+        report.notes.push(
+            `The first build replaces a markdown it did not write only with --force: compare first with ${toolCommand("meetings polish build", basename(out), "--check")}.`
+        );
+    }
+
     await Bun.write(out, polishedModuleSource(config, out));
 
     return { path: out, report, unlinkedDir: await unlinkedPolishedDir(out) };

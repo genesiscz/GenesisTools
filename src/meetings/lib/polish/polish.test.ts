@@ -4,11 +4,18 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { defineMeetingsPolished, isDefinedMeetingsPolished } from "@genesiscz/utils/meetings/polished";
+import { splitFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
+import { stripStamp } from "@genesiscz/utils/json2md/integrity";
+import {
+    defineMeetingsPolished,
+    isDefinedMeetingsPolished,
+    MEETINGS_POLISHED_SPECIFIER,
+} from "@genesiscz/utils/meetings/polished";
 import { type MeetingItem, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { adoptPolishedDraft, polishedModuleSource } from "./adopt";
+import { adoptPolishedDraft, initPolished, polishedModuleSource } from "./adopt";
+import { adoptPolishedMarkdown } from "./adopt-md";
 import { buildPolished } from "./build";
 import { type PartTimes, renderTimes, tokenizeBareTimes } from "./tokens";
 
@@ -113,6 +120,114 @@ describe("adoptPolishedDraft", () => {
         expect(polishedModuleSource(config, "/notes/Planning.polished.ts")).toStartWith(
             'import { defineMeetingsPolished } from "@genesiscz/utils/meetings/polished";'
         );
+    });
+});
+
+describe("adoptPolishedMarkdown", () => {
+    const play = (meeting: string, at: string) =>
+        `\`${at}\`<sup>[play](https://example.test/meetings/play?meeting=${meeting}&at=${encodeURIComponent(at)})</sup>`;
+    const fence = "```";
+    const markdown = [
+        "---",
+        "tags: [work, planning]",
+        "title: Planning",
+        "source: wisprflow",
+        "wisprflow_id: w-1",
+        "meeting_record: rec-1",
+        "share_link: https://example.test/share/1",
+        "start: 2026-11-02 15:00 (Europe/Prague)",
+        "end: 2026-11-02 16:00 (Europe/Prague)",
+        "written: 2026-11-03 10:00",
+        "status: draft",
+        'waiting_for: ["listen questions Q1 to Q2"]',
+        'sessions: ["claude:abc(planning)"]',
+        "---",
+        "",
+        "# Planning (polished)",
+        "",
+        `Read at ${play("rec-1", "00:05")}.`,
+        "",
+        "## Participants",
+        "",
+        "| Person | Role |",
+        "|---|---|",
+        "| Alice Example | host |",
+        "",
+        "## Glossary",
+        "",
+        `- **API**: heard as apí ${play("rec-1", "00:10")}, elsewhere ${play("other", "00:11")}`,
+        "",
+        "## Summary",
+        "",
+        `- Decided ${play("rec-old", "1:00:05")} at ${play("rec-1", "6:07")}.`,
+        "",
+        "## Summary diff",
+        "",
+        `${fence}diff`,
+        `- old ${play("rec-1", "00:05")}`,
+        "## not a heading inside a fence",
+        fence,
+        "",
+        "## Transcript",
+        "",
+        `<details>\n<summary>Part 1</summary>\n\n**Alice Example** ${play("rec-1", "00:00")} Ahoj.\n\n</details>`,
+        "",
+        "## Diffs",
+        "",
+        "Speaker diffs.",
+        "",
+        "## Unresolved",
+        "",
+        "**U1** a question",
+        "",
+    ].join("\n");
+
+    test("maps the front matter, tokenizes the play links of its parts and freezes the sections the records write", () => {
+        const aliases: Record<string, string> = { "rec-1": "rec-1", "rec-old": "rec-1" };
+        const { config, report } = adoptPolishedMarkdown({ markdown, resolve: (ref) => aliases[ref] });
+
+        expect(config.title).toBe("Planning");
+        expect(config.heading).toBeUndefined();
+        expect(config.status).toBe("draft");
+        expect(config.writtenAt).toBe("2026-11-03 10:00");
+        expect(config.frontmatter).toEqual({ tags: ["work", "planning"] });
+        expect(config.parts).toEqual([
+            {
+                record: "rec-1",
+                token: "t",
+                start: "2026-11-02 15:00",
+                end: "2026-11-02 16:00",
+                sources: { wisprflow: { meetingId: "w-1", shareLink: "https://example.test/share/1" } },
+            },
+        ]);
+        expect(config.intro).toBe("Read at [[t:00:05]].");
+        expect(config.glossary?.md).toBe(`- **API**: heard as apí [[t:00:10]], elsewhere ${play("other", "00:11")}`);
+        expect(config.summary?.md).toBe(`- Decided ${play("rec-old", "1:00:05")} at ${play("rec-1", "6:07")}.`);
+        expect(config.sections).toEqual([
+            {
+                heading: "Summary diff",
+                after: "summary",
+                md: `${fence}diff\n- old ${play("rec-1", "00:05")}\n## not a heading inside a fence\n${fence}`,
+            },
+        ]);
+        expect(config.overrides?.sections?.participants).toStartWith("| Person | Role |");
+        expect(config.overrides?.sections?.transcript).toContain("**Alice Example** [[t:00:00]] Ahoj.");
+        expect(config.overrides?.sections?.unresolved).toBe("**U1** a question");
+        expect(config.overrides?.sections?.questions).toBeNull();
+        expect(
+            report.notes.some((note) =>
+                note.startsWith("Play links: 3 became [[<token>:MM:SS]] tokens, 3 stay as written")
+            )
+        ).toBe(true);
+        expect(report.notes.some((note) => note.startsWith("waiting_for"))).toBe(true);
+        expect(report.notes.some((note) => note.startsWith("sessions"))).toBe(true);
+        expect(() =>
+            adoptPolishedMarkdown({
+                markdown: markdown.replace("meeting_record: rec-1\n", ""),
+                resolve: () => undefined,
+            })
+        ).toThrow(/No meeting "rec-1"/);
+        expect(() => adoptPolishedMarkdown({ markdown: "no title" })).toThrow(/title line/);
     });
 });
 
@@ -268,6 +383,23 @@ describe("buildPolished", () => {
 
         expect(statSync(file).mtimeMs).toBe(moduleBefore);
         expect(readFileSync(store.path(record.id), "utf8")).toBe(recordBefore);
+
+        // A polished markdown with no .ts: init adopts it, and the first build writes the same body again.
+        const handFolder = mkdtempSync(join(tmpdir(), "meetings-polish-hand-"));
+        const handMd = join(handFolder, "Hand.polished.md");
+        const written = readFileSync(first.outPath, "utf8");
+        writeFileSync(handMd, stripStamp(written).body);
+        const init = await initPolished({ from: handMd, store });
+        writeFileSync(
+            init.path,
+            readFileSync(init.path, "utf8").replace(MEETINGS_POLISHED_SPECIFIER, POLISHED_MODULE.replaceAll("\\", "/"))
+        );
+        expect(init.path).toBe(join(handFolder, "Hand.polished.ts"));
+        expect((await buildPolished({ file: init.path, store, linked })).outcome).toBe("refused");
+        expect((await buildPolished({ file: init.path, store, linked, force: true })).outcome).toBe("written");
+        expect(splitFrontmatter(stripStamp(readFileSync(handMd, "utf8")).body).body.trimEnd()).toBe(
+            splitFrontmatter(stripStamp(written).body).body.trimEnd()
+        );
 
         // The phrases follow the file's language; a language with no block in the config writes English and says so.
         for (const [language, expected, warns] of [
