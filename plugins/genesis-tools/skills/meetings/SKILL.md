@@ -108,7 +108,9 @@ A missing meeting names only the store that was searched. To find which store ho
      none of the enrolled seat-mates, and the lines sound like one speaker. Check that suggestion by ear.
      A line marked `[few-samples]` waits: three or more people share its seat, and one of them has fewer samples than
      `speakerLabels.voice.minSamples` (default 2), so the voice leaves that person out. Answer or confirm one more of
-     their lines to add a sample.
+     their lines to add a sample. A line marked `[unsampled-present]` waits for a sample of a present person. A remote
+     person whom the call's speaking indicator never shows speaking in the meeting, while it shows other remote people
+     speaking, holds no line back (`speakerLabels.voice.skipUnsampledNeverSpeaking`, on by default).
      Run `tools meetings voices apply <meeting>` (REPL: `meetings.voices.apply({ meeting })`) to save the speaker
      suggestions for review. It fills only the lines that nobody named: a range you add with `items add` outranks every
      automatic seat or voice range on its line, whatever their age, a range built on the user's answer outranks yours,
