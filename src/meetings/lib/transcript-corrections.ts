@@ -372,7 +372,7 @@ export function correctionsOf(
 }
 
 /** What the transcript of a meeting is after its corrections, and what became of each item it applied. */
-export interface CorrectedTranscript extends Omit<CorrectionsApplied, "named" | "guessed"> {
+export interface CorrectedTranscript extends Omit<CorrectionsApplied, "named" | "guessed" | "sources"> {
     /** The people the lines are attributed to after the corrections, with their line counts, most lines first. */
     speakers: Array<{ name: string; lines: number }>;
     /**
@@ -405,25 +405,26 @@ export function correctTranscript(options: {
 }): CorrectedTranscript {
     const { record, transcript, config } = options;
     const corrections = correctionsOf(record, config, options);
-    const { named, guessed, ...corrected } = applyCorrections(transcript, corrections);
+    const { named, guessed, sources, ...corrected } = applyCorrections(transcript, corrections);
     // A record written before the CLI composed its arguments keeps decomposed names from the window's answers: one
     // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
-    // The source lookups and the speaker ranges are built once: rescanning the transcript and the items for every
-    // entry made each corrected read quadratic in its lines.
-    const sources = indexSources(transcript);
-    const speakerRanges = record.items.filter(
-        (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
+    // The speaker ranges are built once: rescanning the items for every entry made each corrected read quadratic in its
+    // lines. A range inside one second names only the line at its address, as `look` reads it (`lineSpeakerFacts`).
+    const speakerRanges = record.items.flatMap((item) =>
+        item.kind === "speaker-range" ? [{ ...item, ...rangeAddress(item) }] : []
     );
+    // A line is read by its own source index (`applyCorrections` keeps it), never by its second: two lines that start
+    // in one second each keep their own label and their own range.
     const covers = (
-        item: { fromSec: number; toSec: number; label: string },
+        item: { fromSec: number; toSec: number; label: string; line?: number },
         { atSec, sourceIndex }: { atSec: number | undefined; sourceIndex: number | undefined }
     ) =>
         atSec !== undefined &&
+        sourceIndex !== undefined &&
         atSec >= item.fromSec &&
         atSec <= item.toSec &&
-        (sourceIndex !== undefined
-            ? transcript[sourceIndex].speaker === item.label
-            : sources.labelsAt.get(atSec)?.has(item.label) === true);
+        transcript[sourceIndex].speaker === item.label &&
+        (item.line === undefined || item.line === sourceIndex);
     // Only a question still open about a voice leaves a line's speaker uncertain; an answered one or a term question
     // does not.
     const speakerQuestions = openQuestions(record).filter((question) => question.about === "speaker");
@@ -435,8 +436,7 @@ export function correctTranscript(options: {
     const applied = {
         ...corrected,
         entries: corrected.entries.flatMap((rawEntry): TranscriptEntry[] => {
-            const sourceIndex =
-                (rawEntry.id ? sources.byId.get(rawEntry.id) : undefined) ?? sources.byStart.get(rawEntry.startSec);
+            const sourceIndex = sources.get(rawEntry);
             const entry =
                 sourceIndex !== undefined && record.evidence?.voice?.lines[String(sourceIndex)]
                     ? { ...rawEntry, sourceIndex }
@@ -583,33 +583,6 @@ export function correctTranscript(options: {
         guesses: ranked(counts.guesses),
         unattributed: ranked(counts.unattributed),
     };
-}
-
-/** The source transcript's lookups: the first line of each id and of each start, and the labels heard at each start. */
-function indexSources(transcript: readonly TranscriptEntry[]): {
-    byId: Map<string, number>;
-    byStart: Map<number | undefined, number>;
-    labelsAt: Map<number, Set<string>>;
-} {
-    const byId = new Map<string, number>();
-    const byStart = new Map<number | undefined, number>();
-    const labelsAt = new Map<number, Set<string>>();
-
-    transcript.forEach((source, index) => {
-        if (source.id && !byId.has(source.id)) {
-            byId.set(source.id, index);
-        }
-
-        if (!byStart.has(source.startSec)) {
-            byStart.set(source.startSec, index);
-        }
-
-        if (source.startSec !== undefined) {
-            labelsAt.set(source.startSec, (labelsAt.get(source.startSec) ?? new Set<string>()).add(source.speaker));
-        }
-    });
-
-    return { byId, byStart, labelsAt };
 }
 
 /**

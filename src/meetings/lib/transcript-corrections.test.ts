@@ -1144,6 +1144,42 @@ test("speaker metadata uses each source line's own range when two lines start in
     ]);
 });
 
+test("two lines of one label in one second with no ids each keep their own range's confidence and suggested name", () => {
+    const source: TranscriptEntry[] = [
+        { speaker: "Voice A", startSec: 10, text: "The glimble is ready." },
+        { speaker: "Voice A", startSec: 10, text: "The flomble is ready." },
+    ];
+    const range = (id: string, line: number, speaker: string, confidence: number) =>
+        item({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice A",
+            fromSec: 10,
+            toSec: 10,
+            speaker,
+            confidence,
+            evidence: { transcriptLine: line },
+        });
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: [range("i1", 0, "Alice Example", 0.6), range("i2", 1, "Bob Example", 0.8)],
+    });
+    const { entries } = correctTranscript({
+        record,
+        transcript: source,
+        config,
+        format: "json",
+        withSuggested: true,
+        dictionary: false,
+    });
+
+    expect(entries).toMatchObject([
+        { speaker: "Alice Example", confidence: 0.6, suggestedSpeaker: "Alice Example", guess: false },
+        { speaker: "Bob Example", confidence: 0.8, suggestedSpeaker: "Bob Example", guess: false },
+    ]);
+});
+
 test("a multi-voice split cuts only its own source line, with distinct ids, words and times", () => {
     const timed = (location: number, length: number, startSec: number) => ({
         range: { location, length },
