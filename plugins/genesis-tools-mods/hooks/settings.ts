@@ -16,7 +16,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * repository and cannot import it, so `scripts/gen-harness-plugin.ts` writes the CLI's defaults into `mods-defaults.ts`.
  */
 export interface ModsSettings {
-    diff: { fullDiff: boolean; collapseGitSync: boolean; bottomRow: boolean; filesOnly: boolean };
+    /** `foldAfterLines`: a diff past this many lines draws its first lines and `show all`; 0 never folds. */
+    diff: {
+        fullDiff: boolean;
+        collapseGitSync: boolean;
+        bottomRow: boolean;
+        filesOnly: boolean;
+        foldAfterLines: number;
+    };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     agentModel: { enabled: boolean; format: "label" | "short" | "version" };
     /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
@@ -150,6 +157,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             collapseGitSync: bool(diff.collapseGitSync, bool(held.collapseGitSync, d.diff.collapseGitSync)),
             bottomRow: bool(diff.bottomRow, d.diff.bottomRow),
             filesOnly: bool(diff.filesOnly, d.diff.filesOnly),
+            foldAfterLines: whole(diff.foldAfterLines, 0, 10_000, d.diff.foldAfterLines),
         },
         idleCompact: {
             enabled: bool(idle.enabled, legacyIdle ?? d.idleCompact.enabled),

@@ -10,6 +10,12 @@ export type FoldAll = boolean | null;
 /** The git-sync calls whose hidden diff the person opened: `<row>|<call>`, the newest 500. */
 export type ShownCalls = string[];
 
+/**
+ * The diffs the person opened past `mods.diff.foldAfterLines`: a Write or Edit row's `tool_use_id`, or a shell
+ * block's file as `<row>|<call>|<path>`; the newest 500.
+ */
+export type WholeDiffs = string[];
+
 /** One option of a decision: its letter and its text. */
 export interface DecisionOption {
     letter: string;
@@ -165,6 +171,7 @@ declare module "claude-code" {
             flipped: FlippedFiles;
             foldAll: FoldAll;
             shown: ShownCalls;
+            whole: WholeDiffs;
             callAt: import("claude-code").StateFamily<CallStartedAt>;
         };
     }
