@@ -595,6 +595,11 @@ export interface NearestHintParams {
     /** When given, a needle whose replacement is already present is reported as "already applied". */
     replacement?: string;
     /**
+     * The count the op declared (default 1). "Already applied" is claimed only when the replacement occurs exactly
+     * that often; "all" never claims it, because any count fits.
+     */
+    expected?: number | "all";
+    /**
      * The content BEFORE any op of this batch ran (what is on disk). With it, a replacement
      * that is present in `content` but absent here is blamed on an earlier op of the batch,
      * not on a previous run.

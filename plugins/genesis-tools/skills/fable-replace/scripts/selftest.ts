@@ -1424,6 +1424,20 @@ console.log("nearestHint");
         nearestHint({ content: "a = b;", needle: "a=b;" }).includes("whitespace")
     );
     check("nothing similar → re-read", nearestHint({ content: src, needle: "zebra crossing" }).includes("Re-read"));
+    // A short replacement occurs by chance ("e" twice in src): only the count the op declares reads as a re-run.
+    check(
+        "a replacement found by chance is not 'already applied'",
+        !nearestHint({ content: src, needle: "nope-not-there", replacement: "e" }).includes("already")
+    );
+    const twice = "x = 2;\nx = 2;\n";
+    const hintAt = (expected?: number | "all"): string =>
+        nearestHint({ content: twice, needle: "x = 1;", replacement: "x = 2;", expected });
+    check(
+        "the declared count decides: twice is 'already applied' at count 2, not at 1 or all",
+        hintAt(2).includes("already") && !hintAt(1).includes("already") && !hintAt("all").includes("already")
+    );
+    const chance = applyOps(src, [{ find: "nope-not-there", replace: "e" }]);
+    check("a literal op hands its count to the hint", !(chance.results[0].reason ?? "").includes("REPLACEMENT"));
     const r = applyOps(src, [{ find: "two = 3;", replace: "two = 4;" }]);
     check("literal MISS reason carries the hint", (r.results[0].reason ?? "").includes("needle not found."));
 }

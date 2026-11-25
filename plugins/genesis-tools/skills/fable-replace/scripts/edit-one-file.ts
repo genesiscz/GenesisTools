@@ -88,6 +88,7 @@ const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): { c
                       content,
                       needle: op.find,
                       replacement: op.replace,
+                      expected: want,
                       original: batch?.original,
                       producedBy: batch?.producedBy,
                   })}`;
@@ -278,7 +279,14 @@ const lineAt = (content: string, at: number): number => content.slice(0, at).spl
  * exists at line N and the text diverges from line N+k. A bare "not found" made
  * agents guess; this points at the line to re-read.
  */
-export const nearestHint = ({ content, needle, replacement, original, producedBy }: NearestHintParams): string => {
+export const nearestHint = ({
+    content,
+    needle,
+    replacement,
+    expected,
+    original,
+    producedBy,
+}: NearestHintParams): string => {
     if (replacement !== undefined && replacement.length > 0 && content.includes(replacement)) {
         if (original !== undefined && !original.includes(replacement)) {
             // The text is there because THIS batch put it there: an earlier op consumed the
@@ -290,8 +298,13 @@ export const nearestHint = ({ content, needle, replacement, original, producedBy
             return `the REPLACEMENT is present only because ${who} produced it: that op consumed this needle before this one ran. This is not a re-run. Reorder or merge the two ops, or drop this one.`;
         }
 
-        return "the REPLACEMENT is already in the file: this edit was probably applied before (make the op optional to allow re-runs).";
+        // A short replacement ("x") occurs by chance. Only the count this op would have left behind reads as a re-run,
+        // so "all", which leaves any count, never claims one.
+        if (expected !== "all" && countOccurrences(content, replacement) === (expected ?? 1)) {
+            return "the REPLACEMENT is already in the file: this edit was probably applied before (make the op optional to allow re-runs).";
+        }
     }
+
     const noSpace = squashedIndexOf({ content, needle });
     if (noSpace !== -1) {
         return `matches when ALL whitespace is ignored (first at line ${lineAt(content, noSpace)}): the difference is spaces, tabs, indentation or line breaks. Copy the exact text, or use kind "fuzzy".`;
