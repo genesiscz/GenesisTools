@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // The selftest is a standalone script so it can run from any checkout with plain `bun`.
-// This wrapper is what puts it under `bun run test` and CI. The two variables keep it
-// hermetic even if the lines inside selftest.ts that set them are ever moved.
+// This wrapper is what puts it under `bun run test` and CI. The three variables keep it
+// hermetic even if the lines inside selftest.ts that set them are ever moved; the scratch
+// root matters inside a harness session, whose scratch folder lives in /tmp, not TMPDIR.
 describe("fable-replace selftest", () => {
     test("bun selftest.ts exits 0 and ends with ALL SELFTESTS PASSED", () => {
         const root = join(tmpdir(), "fable-replace");
@@ -15,7 +16,12 @@ describe("fable-replace selftest", () => {
         try {
             const result = spawnSync("bun", [join(import.meta.dir, "selftest.ts")], {
                 encoding: "utf8",
-                env: { ...process.env, GENESIS_TOOLS_HOME: scratch, TMPDIR: scratch },
+                env: {
+                    ...process.env,
+                    GENESIS_TOOLS_HOME: scratch,
+                    TMPDIR: scratch,
+                    FABLE_REPLACE_SCRATCH_ROOT: join(scratch, "fable-replace"),
+                },
                 timeout: 120_000,
             });
             if (result.status !== 0) {

@@ -178,8 +178,12 @@ process.on("exit", () => {
     appendJournal(entry);
 
     // Housekeeping rides on every run: age-only, manifest-gated, capped, this run's own
-    // backup dir excluded. Silent unless it removed something.
-    const pruned = pruneScratch({ keep: entry.backupDir === undefined ? [] : [entry.backupDir] });
+    // backup dir excluded. Silent unless it removed something. The --cwd value, not the
+    // `cwd` const: this hook also runs for an exit before that const exists.
+    const pruned = pruneScratch({
+        keep: entry.backupDir === undefined ? [] : [entry.backupDir],
+        scratch: { cwd: value("--cwd") },
+    });
     if (pruned.removed > 0) {
         console.log(
             `pruned ${pruned.removed} stale scratch dir(s) older than 12 h under ${pruned.roots.join(" and ")}`
@@ -323,7 +327,7 @@ try {
         showDiff: flag("--diff"),
         verbose: !flag("--quiet"),
         partial: flag("--partial"),
-        backupDir: flag("--no-backup") || flag("--dry") ? undefined : scratchDir("cli"),
+        backupDir: flag("--no-backup") || flag("--dry") ? undefined : scratchDir("cli", { cwd }),
         verifyCommand: value("--verify"),
         throwOnFailure: true,
         onWritten: ({ written, backupDir }) => {

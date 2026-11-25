@@ -42,12 +42,15 @@
  * Runtime: bun (TypeScript directly). No dependencies outside node builtins.
  */
 
+export type { ScratchContext } from "./backup-and-rollback";
 export {
     backupDirInUse,
     pruneScratch,
+    recordGitMove,
     recordPostWriteHashes,
     rollback,
     scratchDir,
+    scratchHarnessSession,
     scratchRoot,
     scratchSessionKey,
     sessionScratchRoot,
