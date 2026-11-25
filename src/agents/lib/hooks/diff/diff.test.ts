@@ -60,7 +60,7 @@ import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
-import { commandDirs, namedArguments } from "./command-paths";
+import { commandDirs, namedArguments, programDirs } from "./command-paths";
 import { writeFullDiff } from "./full";
 import { activeSessions, covers, fileTimesOf, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
@@ -712,6 +712,63 @@ describe("a command that edits a sibling repository", () => {
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(join(other, "sibling.ts"));
         expect(decision.message).toContain("TWO-IN-SIBLING");
+    });
+
+    // Session a1523c66, 2026-11-24: from a cwd in one checkout, `fable-replace … --cwd <second checkout>` and then
+    // `bun renames.ts '<second checkout>' …` edited the second one, and the hook watched only the first.
+    it("finds the repository the command hands a program through a folder flag", () => {
+        const current = begin({ command: `bun /opt/none/edit.ts --spec /opt/none/a.frspec --cwd '${other}' --quiet` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-CWD-FLAG\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-CWD-FLAG");
+    });
+
+    it("finds the repository a script runner gets as its top folder", () => {
+        const current = begin({ command: `bun '/opt/none/renames.ts' '${other}' '[{"from":"A","to":"B"}]'` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-ARGUMENT\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-ARGUMENT");
+    });
+
+    it("reads a folder flag or a repository argument as a program folder, and nothing else", () => {
+        const parent = dirname(other);
+        const leaf = basename(other);
+
+        expect(programDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([other]);
+        expect(programDirs(`bun x.ts --cwd='${other}'`, repo)).toEqual([other]);
+        expect(programDirs(`git -C "${other}" apply fix.patch`, repo)).toEqual([other]);
+        expect(programDirs(`make --directory ${other} build`, repo)).toEqual([other]);
+        // A relative value is read from the folder the command is in at that point.
+        expect(programDirs(`cd ${parent} && bun x.ts --cwd ${leaf}`, repo)).toEqual([other]);
+        expect(programDirs(`O=${other}; bun x.ts --cwd "$O"`, repo)).toEqual([other]);
+        // `grep -C 3` names a number; the cwd is no program folder of its own; a file is no top folder.
+        expect(programDirs("grep -C 3 needle kept.ts", repo)).toEqual([]);
+        expect(programDirs(`bun x.ts --cwd ${repo}`, repo)).toEqual([]);
+        expect(programDirs(`bun x.ts ${other}/sibling.ts`, repo)).toEqual([]);
+        // Only a script runner's argument counts, and only a repository's top folder.
+        expect(programDirs(`cp -R ${other} /opt/none/copy`, repo)).toEqual([]);
+        expect(programDirs(`bun x.ts ${parent}`, repo)).toEqual([]);
+        // The `cd` folders stay where they were: the shell moves there, no program is handed one.
+        expect(commandDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([repo]);
+    });
+
+    it("gives a command that only reads no program folder, so `git -C <dir> log` costs no second root", () => {
+        expect(
+            captureRoots({ ...payload(), command: `git -C ${other} log --oneline -3` }, DEFAULT_HOOKS_CONFIG.diff)
+        ).toEqual([repo]);
+        expect(
+            captureRoots({ ...payload(), command: `git -C ${other} apply fix.patch` }, DEFAULT_HOOKS_CONFIG.diff)
+        ).toEqual([repo, other]);
     });
 });
 
