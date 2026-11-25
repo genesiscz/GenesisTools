@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { isInteractive, parseByteSize, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -22,7 +23,7 @@ import {
 } from "@genesiscz/utils/video/reencode";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { type EncodeRow, trashLine } from "../encode";
+import { besideInstructions, type EncodeRow, trashLine } from "../encode";
 import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "../encode-progress";
 import {
     type FinalCheck,
@@ -497,6 +498,11 @@ function renderFinal({
     }
 
     out.log.info(lines.join("\n"));
+    const beside = besideInstructions([row]);
+
+    if (beside) {
+        outputAgentInstructions(beside);
+    }
 }
 
 function planJson(plan: ShrinkPlan) {

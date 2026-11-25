@@ -1,3 +1,4 @@
+import { formatAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes, formatClock } from "@genesiscz/utils/format";
 import {
@@ -346,12 +347,21 @@ function summaryLines(allViews: readonly RequestView[], now: Date): string[] {
 
 function footerLines(views: readonly RequestView[], caller: RmCaller): string[] {
     const rm = toolCommand("rm");
+    // An agent reads its next steps as the FOR AGENTS block every instruction for an agent uses (ADR 0049).
     const footer = caller.isInAgent
-        ? `The user approves: ! ${rm} approve <id>   Open their window: ${rm} ask <id> (background)   Cancel your own: ${rm} deny <id>   Detail: ${rm} requests <id>`
+        ? formatAgentInstructions({
+              severity: "info",
+              stop: false,
+              text: `The user approves: ! ${rm} approve <id>   Open their window: ${rm} ask <id> (background)   Cancel your own: ${rm} deny <id>   Detail: ${rm} requests <id>`,
+          })
         : `Approve: ${rm} approve <id>   Detail: ${rm} requests <id>   Close gone and expired: ${rm} prune`;
     const anyDefault = views.some((view) => view.request.targets.some((target) => target.rule === "default"));
     const anyLost = views.some((view) => isOpen(view) && view.live.targets.includes("copy-lost"));
-    return [footer, ...(anyDefault ? [pc.dim(NO_RULE_LEGEND)] : []), ...(anyLost ? [pc.red(LOST_LEGEND)] : [])];
+    return [
+        ...footer.split("\n"),
+        ...(anyDefault ? [pc.dim(NO_RULE_LEGEND)] : []),
+        ...(anyLost ? [pc.red(LOST_LEGEND)] : []),
+    ];
 }
 
 /** The listing: a summary, then one group per asking session (newest first), then the next commands. */

@@ -547,7 +547,8 @@ tools rm preset bun-cache --in ~/.bun/install/cache
   `{ path, kind, verdict, rule, reason, preset, bytes, willAside, alsoIn }` (`alsoIn`: the pending requests that
   already name the path). `requests`, `trash`, `presets`, `roots list`, `profiles`, `config show`, `prune` and `log` take
   `--json` too.
-- **The flow when a path needs the user.** The run prints the request id and exits 3. Its last line stands alone,
+- **The flow when a path needs the user.** The run prints the request id in a FOR AGENTS block
+  (`docs/adr/0049-agent-instructions.md`) and exits 3. The block is no stop, so its last line is the hint and stands alone,
   because agents often keep only `| tail -1`: `rm request <id>: 1 path waits for the user. Do not run approve
   yourself. ...`. Run `tools rm ask <id>` in the background for a request of 10 MB or more, so the person sees the
   window; for a smaller one, or when `ask` exits 1, hand the user `! tools rm approve <id>`. Cancel your own with
