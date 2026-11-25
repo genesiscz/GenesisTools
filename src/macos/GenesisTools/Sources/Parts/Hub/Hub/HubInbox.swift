@@ -2814,7 +2814,6 @@ struct InboxDecisionCard: View, Equatable {
         let recommended = choice.recommended == true || item.recommended == choice.id
         // A decision that takes any set of its options: a check box per option, and a click only ticks it.
         let multiple = item.takesSeveral
-        let shape = RoundedRectangle(cornerRadius: 8)
         // A second pick while the session's send runs would race it (P14).
         let enabled = pickable && !sessionSending
         let choose = {
@@ -2822,63 +2821,23 @@ struct InboxDecisionCard: View, Equatable {
             inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
                          shift: flags.contains(.shift), command: flags.contains(.command))
         }
-        let label = HStack(alignment: .top, spacing: 9) {
-            if multiple {
-                // Ticked in the staged blue while open, in the answered green once closed.
-                WidgetOptionCheckBox(checked: picked, tint: answered ? ReviewPalette.added : SessionPalette.blue)
-                    .padding(.top, 0.5)
-            }
-            // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps
-            // the white letter at 4.5:1.
-            Text(verbatim: "\(choice.id))")
-                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                .foregroundColor(stagedPick ? .white : answered ? .black : Color.white.opacity(0.85))
-                .frame(width: 26, height: 21)
-                .background(RoundedRectangle(cornerRadius: 5).fill(
-                    stagedPick ? GenPrimaryButtonStyle.blue : answered ? ReviewPalette.added : Color.white.opacity(0.08)))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Color.white.opacity(item.isOpen || picked ? 0.92 : 0.55))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if recommended {
-                        DecisionRecommendedBadge()
-                    }
-                    // A set's ticked box already says it; the word stays for a one-letter pick.
-                    if stagedPick && !multiple {
-                        Text("Staged")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(SessionPalette.blue)
-                    }
-                }
+        return DecisionOptionButton(
+            live: live, enabled: enabled,
+            tooltip: !item.isOpen
+                ? "This decision is closed: \(statusPhrase)"
+                : sessionSending ? "This session's send is running"
+                : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
+                                                  swaps: preferences.decisionCommandSwaps,
+                                                  key: index < 9 ? index + 1 : nil, multiple: multiple),
+            action: choose) {
+            DecisionOptionRow(state: stagedPick ? .staged(word: "Staged") : answered ? .answered : .open,
+                              badge: .letter(choice.id), look: .hub, recommended: recommended, multiple: multiple,
+                              dimmed: !(item.isOpen || picked)) {
+                FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
+            } rationale: {
                 if let rationale = choice.rationale, !rationale.isEmpty {
                     FindText(inlineMarkdown(rationale), field: "rationale:\(choice.id)")
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.dim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(stagedPick ? SessionPalette.blue.opacity(0.16) : Color.clear, in: shape)
-        .overlay(shape.strokeBorder(stagedPick ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
-        .contentShape(shape)
-        return Group {
-            if live {
-                Button(action: choose) { label }
-                    // The kit's row button: a soft fill in the row's own frame, not the white outline (P1).
-                    .buttonStyle(RowButtonStyle(cornerRadius: 8))
-                    .disabled(!enabled)
-                    .instantTooltip(!item.isOpen
-                        ? "This decision is closed: \(statusPhrase)"
-                        : sessionSending ? "This session's send is running"
-                        : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                                          swaps: preferences.decisionCommandSwaps,
-                                                          key: index < 9 ? index + 1 : nil, multiple: multiple))
-            } else {
-                label.restingButton(enabled: enabled, action: choose)
             }
         }
         .modifier(SetOptionAccessibility(

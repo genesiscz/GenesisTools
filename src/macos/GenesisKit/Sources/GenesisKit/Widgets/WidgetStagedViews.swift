@@ -508,7 +508,7 @@ struct WidgetStagedDecisionRow: View {
             if let options = item.options, !options.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                        WidgetItemOptionButton(model: model, item: item, index: index, option: option)
+                        WidgetOptionButton(model: model, item: item, index: index, option: option)
                     }
                     // This one decision's Send and Unstage sit under its options.
                     WidgetStagedActions(

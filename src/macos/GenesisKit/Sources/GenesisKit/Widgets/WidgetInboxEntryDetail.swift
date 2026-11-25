@@ -87,7 +87,7 @@ struct WidgetInboxEntryDetail: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                     let letter = WidgetInboxOverview.letter(index)
-                    WidgetItemOptionButton(model: model, item: item, index: index, option: option,
+                    WidgetOptionButton(model: model, item: item, index: index, option: option,
                                            focused: focusRow && focusedOption == letter)
                         .id(item.id + "#" + letter)
                 }

@@ -12,7 +12,7 @@ enum WidgetAnswerFieldStyle: Equatable {
             : EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 5)
     }
 
-    var cornerRadius: CGFloat { self == .full ? 13 : WidgetOptionLabel.cornerRadius + 2 }
+    var cornerRadius: CGFloat { self == .full ? 13 : DecisionOptionMetrics.cornerRadius + 2 }
 }
 
 /// One answer box for the reply composer, a decision card's own answer and the alert popup's own answer: the rounded

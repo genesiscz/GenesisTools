@@ -11,6 +11,30 @@ import XCTest
 /// `WIDGET_DECISION_SHOTS=<folder>` (the same calls before and after a change, so the pairs match).
 @MainActor
 final class WidgetDecisionSurfacesTests: XCTestCase {
+    /// One option row draws every state in the widget's look and the hub's: open, a staged word, answered, and a key
+    /// badge with the letter before the text.
+    func testOneOptionRowDrawsEveryStateInBothLooks() throws {
+        let rows = VStack(alignment: .leading, spacing: 8) {
+            ForEach([DecisionOptionLook.widget, .hub], id: \.self) { look in
+                DecisionOptionRow(state: .open, badge: .letter("a"), look: look, recommended: true, text: "Wicker",
+                                  rationale: "It keeps the shape")
+                DecisionOptionRow(state: .staged(word: "Sending"), badge: .letter("b"), look: look, recommended: false,
+                                  text: "Crate", rationale: nil)
+                DecisionOptionRow(state: .answered, badge: .letter("c"), look: look, recommended: false, text: "Sack",
+                                  rationale: nil)
+            }
+            DecisionOptionRow(state: .open, badge: .key("4", letter: "d"), recommended: false, text: "Barrel",
+                              rationale: nil)
+        }.frame(width: 360)
+        let text = try WidgetInboxRender.draw(rows, size: CGSize(width: 380, height: 420)).joined(separator: " ")
+        // The answered letter is black on green in the hub's look, which the text reader misses; its text is read.
+        for word in ["Wicker", "It keeps the shape", "Crate", "Sending", "Sack", "a)", "b)", "Barrel", "d)"] {
+            XCTAssertTrue(text.contains(word), "\(word): \(text)")
+        }
+        XCTAssertEqual(text.components(separatedBy: "Sending").count - 1, 2, "the staged word in both looks: \(text)")
+        XCTAssertEqual(DecisionOptionMetrics.textInset(multiple: true), 8 + 20 + 8 + WidgetOptionCheckBox.width + 8)
+    }
+
     /// One chrome for every decision row: a staged decision's edge is blue at 1.5 pt even while it waits, a waiting
     /// one's orange at 1 pt, a closed one takes its surface's tint, and the rest draws none.
     func testOneChromeMarksStagedBlueAndWaitingOrange() {
