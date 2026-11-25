@@ -7,8 +7,11 @@ import {
     crossSessionInboundSetting,
     DEFAULT_WARMUP,
     isCrossSessionInbound,
+    type LowQuotaSwitch,
     loadConfig,
+    lowQuotaSwitchSetting,
     setCrossSessionInbound,
+    setLowQuotaSwitch,
     updateConfig,
 } from "@app/claude/lib/config";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
@@ -541,6 +544,13 @@ function todayDateString(): string {
     return formatLocalDate(new Date());
 }
 
+/** "on, below 10% of the 5-hour window or 5% of a weekly limit", or "off". */
+function describeLowQuotaSwitch(setting: LowQuotaSwitch): string {
+    return setting.enabled
+        ? `on, below ${setting.fiveHourLeftBelowPct}% of the 5-hour window or ${setting.weeklyLeftBelowPct}% of a weekly limit`
+        : "off";
+}
+
 async function showConfig(config: ClaudeConfig, store: AiConfigStore): Promise<void> {
     const accounts = store.accounts({ provider: "anthropic-sub" });
     const defaultAccount = store.defaultAccount("claude");
@@ -621,6 +631,11 @@ async function showConfig(config: ClaudeConfig, store: AiConfigStore): Promise<v
     lines.push(
         `  Cross-session messages: ${inbound.value}${inbound.source === "default" ? pc.dim(" (default)") : ""} ` +
             pc.dim(`(${toolCommand("claude config cross-messages")} accept | hold)`)
+    );
+    const lowQuota = await lowQuotaSwitchSetting();
+    lines.push(
+        `  Switch question after a quit: ${describeLowQuotaSwitch(lowQuota.value)}${lowQuota.source === "default" ? pc.dim(" (default)") : ""} ` +
+            pc.dim(`(${toolCommand("claude config low-quota-switch")} on | off --five-hour <pct> --weekly <pct>)`)
     );
     lines.push("");
 
@@ -883,6 +898,58 @@ export function registerConfigCommand(program: Command): void {
 
             await setCrossSessionInbound(value);
             out.println(`${value} (${claudeConfigPath()})`);
+        });
+
+    configCmd
+        .command("low-quota-switch [state]")
+        .description(
+            `Whether ${toolCommand("claude run")} asks "Do you want to switch to another account?" after Claude Code quits in ` +
+                "the terminal on an account nearly out of quota; yes opens the account picker and resumes the same session. " +
+                "on | off (default on). Without arguments, prints the current values"
+        )
+        .option("--five-hour <pct>", "Ask when the 5-hour window has less than this % left (default 10)")
+        .option("--weekly <pct>", "Ask when a weekly limit has less than this % left (default 5)")
+        .action(async (state: string | undefined, flags: { fiveHour?: string; weekly?: string }) => {
+            const patch: Partial<LowQuotaSwitch> = {};
+
+            if (state !== undefined) {
+                if (state !== "on" && state !== "off") {
+                    out.error(`Unknown value "${state}". Possible values: on, off.`);
+                    out.info(toolCommand("claude config low-quota-switch", "on"));
+                    process.exitCode = 1;
+                    return;
+                }
+
+                patch.enabled = state === "on";
+            }
+
+            for (const [key, raw, flag] of [
+                ["fiveHourLeftBelowPct", flags.fiveHour, "--five-hour"],
+                ["weeklyLeftBelowPct", flags.weekly, "--weekly"],
+            ] as const) {
+                if (raw === undefined) {
+                    continue;
+                }
+
+                const value = Number(raw);
+
+                if (!Number.isFinite(value) || value < 0 || value > 100) {
+                    out.error(`${flag} takes a percentage from 0 to 100, not "${raw}".`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                patch[key] = value;
+            }
+
+            if (Object.keys(patch).length > 0) {
+                await setLowQuotaSwitch(patch);
+            }
+
+            const current = await lowQuotaSwitchSetting();
+            out.println(
+                `${describeLowQuotaSwitch(current.value)} (${current.source === "default" ? "default" : claudeConfigPath()})`
+            );
         });
 
     // OAuth login command (top-level, not under config). A door onto the shared

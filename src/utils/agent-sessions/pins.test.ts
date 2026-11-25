@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
-import { loadPins, pinsPath, recordPin } from "@genesiscz/utils/agent-sessions/pins";
+import { loadPins, pinsPath, recordPin, sessionOfLaunch } from "@genesiscz/utils/agent-sessions/pins";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { t3ThreadOfSession } from "@genesiscz/utils/t3code/session-thread";
@@ -146,6 +146,19 @@ describe("pins", () => {
             expect(pins.size).toBe(SESSIONS);
             expect(await readFile(pinsPath(), "utf8")).toBe(before);
         });
+    });
+});
+
+describe("the session a launch ran", () => {
+    test("is the newest pin with the launch id, so the new session of a /clear wins", async () => {
+        await recordPin(pin({ sessionId: "first", launchId: "launch-1", at: 1 }));
+        await recordPin(pin({ sessionId: "other-launch", launchId: "launch-2", at: 2 }));
+        await recordPin(pin({ sessionId: "after-clear", launchId: "launch-1", at: 3 }));
+        await recordPin(pin({ sessionId: "untagged", at: 4 }));
+
+        expect(await sessionOfLaunch("launch-1")).toBe("after-clear");
+        expect(await sessionOfLaunch("launch-2")).toBe("other-launch");
+        expect(await sessionOfLaunch("launch-3")).toBeNull();
     });
 });
 

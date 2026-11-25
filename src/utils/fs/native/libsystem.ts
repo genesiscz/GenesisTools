@@ -56,6 +56,14 @@ export const libSystem = defineSystemLibrary({
         getpwuid: { args: [FFIType.u32], returns: FFIType.ptr },
         /** `int setpriority(int which, id_t who, int prio)`: with PRIO_DARWIN_PROCESS (4), 0, 0 a process leaves background. */
         setpriority: { args: [FFIType.i32, FFIType.u32, FFIType.i32], returns: FFIType.i32 },
+        /** `pid_t getpgrp(void)`: the process group of the caller. */
+        getpgrp: { args: [], returns: FFIType.i32 },
+        /** `pid_t tcgetpgrp(int fd)`: the foreground group of the terminal on `fd`, -1 when it is not the caller's terminal. */
+        tcgetpgrp: { args: [FFIType.i32], returns: FFIType.i32 },
+        /** `int tcsetpgrp(int fd, pid_t pgrp)`: a caller in a background group must ignore SIGTTOU around it. */
+        tcsetpgrp: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        /** `sig_t signal(int, sig_t)`: the handler as a pointer-sized integer (SIG_DFL 0, SIG_IGN 1, SIG_ERR all ones). */
+        signal: { args: [FFIType.i32, FFIType.u64], returns: FFIType.u64_fast },
     },
 });
 

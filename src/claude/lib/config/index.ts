@@ -1,5 +1,6 @@
 import { determineAccountLabel } from "@genesiscz/utils/claude/account-label";
 import { logger } from "@genesiscz/utils/logger";
+import { isRecord } from "@genesiscz/utils/object";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 /** @deprecated Use AIAccountEntry from @app/utils/config/ai.types instead */
@@ -88,15 +89,43 @@ export interface LaunchPreferences {
      * nothing, so Claude Code's own settings decide. A per-run `--cross-messages` / `--no-cross-messages` wins.
      */
     crossSessionInbound: CrossSessionInbound;
+    lowQuotaSwitch: LowQuotaSwitch;
 }
 
-export const DEFAULT_LAUNCH: LaunchPreferences = { crossSessionInbound: "accept" };
+/**
+ * The question `tools claude run` asks in the terminal after Claude Code quits on an account that is nearly out of quota:
+ * "Do you want to switch to another account?". Yes shows the account picker and resumes the same session there.
+ */
+export interface LowQuotaSwitch {
+    /** false never asks. */
+    enabled: boolean;
+    /** Ask when the 5-hour window has less than this percentage left (0 to 100). */
+    fiveHourLeftBelowPct: number;
+    /** Ask when the weekly limit (all models, and Fable's own for a Fable session) has less than this percentage left. */
+    weeklyLeftBelowPct: number;
+}
+
+export const DEFAULT_LOW_QUOTA_SWITCH: LowQuotaSwitch = {
+    enabled: true,
+    fiveHourLeftBelowPct: 10,
+    weeklyLeftBelowPct: 5,
+};
+
+export const DEFAULT_LAUNCH: LaunchPreferences = {
+    crossSessionInbound: "accept",
+    lowQuotaSwitch: DEFAULT_LOW_QUOTA_SWITCH,
+};
+
+/** `launch` as the file holds it: every key optional, and each key of `lowQuotaSwitch` too. */
+export type SavedLaunchPreferences = Partial<Omit<LaunchPreferences, "lowQuotaSwitch">> & {
+    lowQuotaSwitch?: Partial<LowQuotaSwitch>;
+};
 
 export interface ClaudeConfig {
     notifications: NotificationConfig;
     warmup?: WarmupConfig;
     /** Absent on disk until a value is set, so a load-and-save never pins today's default into the file. */
-    launch?: Partial<LaunchPreferences>;
+    launch?: SavedLaunchPreferences;
 }
 
 export const DEFAULT_WARMUP: WarmupConfig = {
@@ -189,10 +218,56 @@ export async function crossSessionInboundSetting(): Promise<{
     return { value: saved, source: "file" };
 }
 
+function isPercent(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
+/**
+ * `launch.lowQuotaSwitch` with each missing or invalid key at its default, and whether any key came from the file.
+ * An invalid key is logged and replaced alone, so one typo does not reset the other two.
+ */
+export async function lowQuotaSwitchSetting(): Promise<{ value: LowQuotaSwitch; source: "file" | "default" }> {
+    const saved: unknown = (await loadConfig()).launch?.lowQuotaSwitch;
+
+    if (saved === undefined) {
+        return { value: { ...DEFAULT_LOW_QUOTA_SWITCH }, source: "default" };
+    }
+
+    const record = isRecord(saved) ? saved : {};
+    const value: LowQuotaSwitch = {
+        enabled: typeof record.enabled === "boolean" ? record.enabled : DEFAULT_LOW_QUOTA_SWITCH.enabled,
+        fiveHourLeftBelowPct: isPercent(record.fiveHourLeftBelowPct)
+            ? record.fiveHourLeftBelowPct
+            : DEFAULT_LOW_QUOTA_SWITCH.fiveHourLeftBelowPct,
+        weeklyLeftBelowPct: isPercent(record.weeklyLeftBelowPct)
+            ? record.weeklyLeftBelowPct
+            : DEFAULT_LOW_QUOTA_SWITCH.weeklyLeftBelowPct,
+    };
+    const invalid = Object.entries(record).filter(
+        ([key, entry]) => entry !== undefined && (key === "enabled" ? typeof entry !== "boolean" : !isPercent(entry))
+    );
+
+    if (invalid.length > 0) {
+        logger.warn(
+            { invalid, file: storage.getConfigPath() },
+            "claude config launch.lowQuotaSwitch has keys that are not a boolean or a percentage; those keys use the default"
+        );
+    }
+
+    return { value, source: "file" };
+}
+
+/** Saves the given keys of `launch.lowQuotaSwitch` through the locked read-modify-write; the other keys stay. */
+export async function setLowQuotaSwitch(patch: Partial<LowQuotaSwitch>): Promise<void> {
+    await updateConfig((config) => {
+        config.launch = { ...config.launch, lowQuotaSwitch: { ...config.launch?.lowQuotaSwitch, ...patch } };
+    });
+}
+
 /** The launch preferences with the defaults filled in, so callers never read the config shape themselves. */
 export async function launchPreferences(): Promise<LaunchPreferences> {
-    const inbound = await crossSessionInboundSetting();
-    return { ...DEFAULT_LAUNCH, crossSessionInbound: inbound.value };
+    const [inbound, lowQuota] = await Promise.all([crossSessionInboundSetting(), lowQuotaSwitchSetting()]);
+    return { crossSessionInbound: inbound.value, lowQuotaSwitch: lowQuota.value };
 }
 
 /** Saves `launch.crossSessionInbound` through the locked read-modify-write; the other keys stay as they are. */
