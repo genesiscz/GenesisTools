@@ -79,6 +79,25 @@ export function speakingStateFor(facts: SpeakingFacts): SpeakingState {
     return names.length ? { kind: "speaking", names } : { kind: "empty" };
 }
 
+/**
+ * The remote people among `people` whom the call's speaking indicator never shows speaking on any line. Nobody when
+ * no line outside an ignored stretch shows a remote person speaking: then the indicator did not work in this meeting,
+ * and its silence says nothing. Unlike `speakingStateFor`, a line whose reads are partly unknown still counts the
+ * people its good reads show, and so does an ignored line: either is a sign that the person spoke.
+ */
+export function neverShownSpeaking(options: {
+    lines: readonly SpeakingFacts[];
+    people: readonly string[];
+    remote: (name: string) => boolean;
+}): string[] {
+    const shown = (line: SpeakingFacts) => Object.keys(line.speaking).filter((name) => line.speaking[name]! > 0);
+    if (!options.lines.some((line) => !line.ignoredIndicator && shown(line).some(options.remote))) {
+        return [];
+    }
+    const keys = new Set(options.lines.flatMap(shown).map(nameKey));
+    return [...new Set(options.people)].filter((person) => options.remote(person) && !keys.has(nameKey(person)));
+}
+
 type Stay = { fromSec: number; toSec?: number };
 type Coverage = "full" | "partial" | "none";
 export interface SpeakerFacts extends Shares, SpeakingFacts {

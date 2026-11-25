@@ -4,7 +4,7 @@ import { type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genes
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
+import { seatSpan, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { type LineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/evidence";
@@ -14,6 +14,7 @@ import {
     type Eligibility,
     isStrongCallForNaming,
     mutedAccountsFor,
+    neverShownSpeaking,
     type SpeakerFacts,
     speakersFor,
 } from "./speaker-eligibility";
@@ -95,6 +96,27 @@ export class LineSpeakers {
 
     isRoomDevice(name: string): boolean {
         return this.deviceAccounts.has(rosterAccountKey(name));
+    }
+
+    /**
+     * The remote people among `people` whom the call's speaking indicator never shows speaking in this meeting
+     * (`neverShownSpeaking`). Remote means in the call only: not the user, not a room device account, and on no room
+     * seat, because the indicator shows a room person's voice under the account that carries it.
+     */
+    neverShownSpeaking(people: readonly string[]): string[] {
+        const { selfName } = this.facts;
+        const room = (this.facts.seats?.room ?? []).map((row) => seatSpan(row).name);
+        return neverShownSpeaking({
+            lines: [...this.rows.values()].map((line) => ({
+                ...line,
+                ignoredIndicator: this.assessment.ignored.has(line.index),
+            })),
+            people,
+            remote: (name) =>
+                !this.isRoomDevice(name) &&
+                !(selfName && sameName(name, selfName)) &&
+                !room.some((person) => sameName(person, name)),
+        });
     }
 
     allowsMatchedVoice(line: LineEvidence, person: string): boolean {

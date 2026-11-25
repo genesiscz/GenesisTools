@@ -387,6 +387,7 @@ describe("meetings config", () => {
                 sampleScope: "all",
                 outlierBelow: 0.5,
                 supportOnSeatLines: true,
+                skipUnsampledNeverSpeaking: true,
                 seatOppositeShare: 0.1,
             },
         });
@@ -417,6 +418,7 @@ describe("meetings config", () => {
             sampleScope: "all",
             outlierBelow: 0.5,
             supportOnSeatLines: true,
+            skipUnsampledNeverSpeaking: true,
             seatOppositeShare: 0.1,
         });
         expect(set.capture.audioRetentionDays).toBe(90);

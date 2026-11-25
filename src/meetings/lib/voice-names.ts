@@ -36,6 +36,11 @@ interface NamingInputs {
     sources?: ReadonlyMap<VoicePrint, SampleSource>;
     certain?: LabelContext["certain"];
     applyAbove?: number;
+    /**
+     * Remote people the call's speaking indicator never shows speaking in this meeting, while it shows another remote
+     * person speaking (`speakerLabels.voice.skipUnsampledNeverSpeaking`). They are no possible speaker of a line.
+     */
+    neverShownSpeaking?: readonly string[];
 }
 
 export function unit(vector: number[]): number[] | undefined {
@@ -371,9 +376,13 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             })
             .sort((a, b) => b.score - a.score);
         const [first, second] = candidates;
+        // A person the indicator never shows speaking, while it shows others, said none of these lines: without a
+        // usable sample they hold no line back, raise no gate and are never offered by exclusion.
         const missing = [...present.values()].filter(
             (stay) =>
-                eligiblePeople.includes(stay.person) && !candidates.some((sample) => sample.person === stay.person)
+                eligiblePeople.includes(stay.person) &&
+                !candidates.some((sample) => sample.person === stay.person) &&
+                !options.neverShownSpeaking?.some((name) => sameName(name, stay.person))
         );
         const unknown = missing[0];
         const waiting = unknown && few.has(unknown.person) ? "few-samples" : "unsampled-present";

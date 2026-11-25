@@ -198,6 +198,7 @@ async function labelContext(
             })
         ),
         attended: attended.filter((row) => !speakers.isRoomDevice(row.person)),
+        neverShownSpeaking: speakers.neverShownSpeaking(attended.map((row) => row.person)),
         project: record.project,
     };
     async function forVoice(seats: LineLabel[], applyAbove: number): Promise<LabelContext> {
