@@ -3,13 +3,14 @@
  * string out, no filesystem.
  *
  * These are the ops you put in a FileEdit's `ops` array: literal (the workhorse),
- * regex, deleteBlock/replaceBlock, insertBefore/insertAfter, fuzzy. Every op is
+ * regex, deleteBlock/replaceBlock, insertBefore/insertAfter, fuzzy, rewrite. Every op is
  * VERIFIED — a literal op with the default `count: 1` requires the needle exactly
  * once, so a stale assumption is a loud MISS, never a silent no-op.
  *
  * Prefer literal over regex. Paste the exact current text, indentation included.
  */
 
+import { createHash } from "node:crypto";
 import { applyDeleteLines, applyDropComments } from "./comments";
 import {
     countOccurrences,
@@ -38,6 +39,7 @@ import type {
     OpResult,
     RegexOp,
     ReplaceBlockOp,
+    RewriteOp,
 } from "./types";
 
 /** What the ops before this one did to the buffer, so a MISS can tell "re-run" from "consumed". */
@@ -431,6 +433,41 @@ const applyFuzzy = (content: string, op: FuzzyOp): { content: string; result: Op
     return { content: content.replace(rx, () => op.replace), result: { status: "OK", desc, found } };
 };
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Replace the whole content, guarded by its sha256 (utf8 bytes). The content is the file before any op, because a
+ * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>", so the caller re-reads
+ * and retries with that hash instead of sending the old text back as a needle.
+ */
+const applyRewrite = (content: string, op: RewriteOp, otherOps: number): { content: string; result: OpResult } => {
+    const desc = opDesc(op);
+    const current = createHash("sha256").update(content, "utf8").digest("hex");
+    const miss = (why: string): { content: string; result: OpResult } => ({
+        content,
+        result: { status: "MISS", desc, reason: `current sha256 ${current}: ${why}` },
+    });
+    // The runner refuses this before planning; a direct applyOps caller would otherwise lose the other ops' work.
+    if (otherOps > 0) {
+        return miss(`a rewrite is the only op of its file, and this file has ${otherOps} other op(s)`);
+    }
+
+    const expected = op.expectSha256.toLowerCase();
+    if (!SHA256_HEX.test(expected)) {
+        return miss(`expectSha256 must be 64 hex characters, got "${preview(op.expectSha256, 24)}"`);
+    }
+
+    if (expected !== current) {
+        return miss(
+            op.content === content
+                ? "the file already holds this content (an earlier run applied it?)"
+                : `the file is not the one hashed as ${expected.slice(0, 12)}…; re-read it and send its current hash`
+        );
+    }
+
+    return { content: op.content, result: { status: "OK", desc } };
+};
+
 /**
  * Build a regex that matches `needle` treating every run of whitespace as "any
  * whitespace". Lets a literal op survive reindentation/reformatting drift:
@@ -516,6 +553,9 @@ export const applyOps = (content: string, ops: Op[]): { content: string; results
                 break;
             case "fuzzy":
                 outcome = applyFuzzy(current, op);
+                break;
+            case "rewrite":
+                outcome = applyRewrite(current, op, ops.length - 1);
                 break;
             default: {
                 // The script door: a misspelled kind is not a literal op.
