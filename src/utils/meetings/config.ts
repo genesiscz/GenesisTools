@@ -247,6 +247,21 @@ export type PlaybackTracks = (typeof PLAYBACK_TRACKS)[number];
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
 export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
 
+/**
+ * How `play --window` (and a play link) reaches the Meetings window: `open` opens it on the meeting when none runs,
+ * `running` uses only a running window and plays in `listen.player` while none runs.
+ */
+export const WINDOW_PLAY_MODES = ["open", "running"] as const;
+export type WindowPlayMode = (typeof WINDOW_PLAY_MODES)[number];
+
+/**
+ * Whether a Moment sent to the Meetings window takes the keyboard: `keep` shows the window in front and leaves the
+ * keyboard with the app in use, so a key typed there (⌘Q, ⌘W) never lands in the window; `take` makes the Meetings
+ * window the active app.
+ */
+export const WINDOW_PLAY_FOCUS = ["keep", "take"] as const;
+export type WindowPlayFocus = (typeof WINDOW_PLAY_FOCUS)[number];
+
 /** The tone's sound when nothing else is set: a short 880 Hz sine, quieter than speech. */
 export const DEFAULT_TONE_SOUND = { hz: 880, sec: 0.15, volume: 0.6 } as const;
 
@@ -407,6 +422,13 @@ const playbackSchema = z.object({
      */
     tracks: z.enum(PLAYBACK_TRACKS).default("best"),
     listen: listenSchema.prefault({}),
+    /** A Moment sent to the Meetings window (`play --window`, a play link). */
+    window: z
+        .object({
+            mode: z.enum(WINDOW_PLAY_MODES).default("open"),
+            focus: z.enum(WINDOW_PLAY_FOCUS).default("keep"),
+        })
+        .prefault({}),
 });
 
 export const DEFAULT_APPLY_ABOVE = 0.7;

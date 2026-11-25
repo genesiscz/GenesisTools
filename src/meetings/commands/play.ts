@@ -6,6 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import {
     LISTEN_PLAYERS,
     MEETING_PLAYERS,
+    type MeetingsConfig,
     MeetingsConfigStore,
     TONE_PRESET_NAMES,
     type ToneSoundSetting,
@@ -18,12 +19,13 @@ import { clockMove, movedValue } from "../lib/join-clock";
 import { joinedInto } from "../lib/join-recordings";
 import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
 import { PLAYERS, pickPlayer } from "../lib/players";
+import type { MeetingsParams } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL, unknownMeetingText } from "../lib/shared";
 import { TRACK_KINDS, type TrackKind } from "../lib/sound";
 import { playMeetingSound } from "../lib/sound-playback";
-import { playInOpenWindow } from "../lib/window";
+import { playInWindow, type WindowPlayRoute } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
 
@@ -234,25 +236,33 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         return;
     }
 
-    if (
-        opts.window &&
-        !opts.clip &&
-        !opts.json &&
-        opts.player === undefined &&
-        (await playInOpenWindow({
+    const playback = opts.clip ? undefined : (await new MeetingsConfigStore().read()).global.playback;
+
+    if (playback && opts.window && opts.player === undefined) {
+        const params: MeetingsParams<"moment.clip"> = {
             meeting: record.id,
             target,
             ...(toneSound ? { toneSound } : {}),
             ...(opts.tone === false ? { tone: false } : {}),
             ...overrides,
-        }))
-    ) {
-        return;
+        };
+        const route = await routeToWindow(params, playback.window);
+
+        if (route) {
+            opts.json
+                ? out.result(SafeJSON.stringify({ window: true, route, ...params }, null, 2))
+                : ui.ok(
+                      route === "opened"
+                          ? "Opened the Meetings window to play the Moment."
+                          : "Sent the Moment to the Meetings window."
+                  );
+            return;
+        }
     }
 
     let player: (typeof LISTEN_PLAYERS)[number] | undefined;
 
-    if (!opts.clip) {
+    if (playback) {
         const requested = opts.player === undefined ? undefined : LISTEN_PLAYERS.find((id) => id === opts.player);
 
         if (opts.player !== undefined && !requested) {
@@ -260,7 +270,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
             return;
         }
 
-        const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
+        const listen = playback.listen;
         player = requested
             ? PLAYERS[requested].available()
                 ? requested
@@ -300,6 +310,22 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
     opts.json
         ? out.result(SafeJSON.stringify({ ...cut, player, pid: child.pid }, null, 2))
         : ui.ok(`Playing ${momentLine(cut)} in ${player}.`);
+}
+
+/**
+ * The Moment in the Meetings window as `playback.window` says, or undefined for the command player: `mode: "running"`
+ * while no window runs, or a window that could not open (an app without the Meetings part), which says so first.
+ */
+async function routeToWindow(
+    params: MeetingsParams<"moment.clip">,
+    window: MeetingsConfig["global"]["playback"]["window"]
+): Promise<WindowPlayRoute | undefined> {
+    try {
+        return await playInWindow(params, window);
+    } catch (err) {
+        ui.warn(`The Meetings window did not open (${errorText(err)}); the command player plays the Moment.`);
+        return undefined;
+    }
 }
 
 async function play(ref: string, opts: PlayOptions): Promise<void> {
@@ -469,7 +495,10 @@ export function registerPlayCommand(program: Command): void {
             "--moment",
             "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"
         )
-        .option("--window", "prefer the open Meetings window for a Moment; otherwise use the command player")
+        .option(
+            "--window",
+            "play a Moment in the Meetings window: a running one, or one opened on the meeting (playback.window.mode open, the default; running keeps the command player while no window runs). It comes to the front without the keyboard (playback.window.focus keep; take activates it)"
+        )
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
         .option(
             "--tone <sound>",

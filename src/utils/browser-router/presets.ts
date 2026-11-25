@@ -185,7 +185,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             id: "meetings-play",
             title: "Play a meeting moment",
             kind: "installable",
-            description: `https://<link host>/meetings/play?meeting=<id>&at=<time> plays the Moment at that time: a bounded clip with the tone before it (${meetingsPlayCommand()}).`,
+            description: `https://<link host>/meetings/play?meeting=<id>&at=<time> plays the Moment at that time in the Meetings window, opening it while it is closed (playback.window): a bounded clip with the tone before it (${meetingsPlayCommand()}).`,
             enabledIf: ["platform:darwin"],
             needsLinkHost: true,
             routes: withHost((host) => [
