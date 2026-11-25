@@ -44,7 +44,7 @@ platform cannot supply is skipped, never guessed.
 |---|---|---|---|
 | E1 channel | 10 | The recorder: Wispr's live segments tagged `mic` or `system`. The recording's own channels count only after the tool has calibrated, for that recording, which channel (if any) carries the microphone; a mono file, another recorder or an unclear calibration gives no energy evidence. Never assume a channel layout. | The user's confidence comes from the energy table below, not from the formula. Echo (similar text on both channels at once) or loud speakers at the same moment lower it. |
 | E2 attendance | 6 | The platform provider: join and leave times, one row per join, so a person who comes back is attributable again. | A person who was not in the call did not speak. When one person is left, that person spoke. 5 s tolerance. |
-| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. A person missing from the indicator is never evidence against that person. |
+| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. A person missing from the indicator on a line is never evidence against that person. One exception, in the voice pass only: a remote person whom the indicator never shows speaking in the whole meeting, while it shows at least one other remote person speaking, holds no voice line back for a missing sample (`speakerLabels.voice.skipUnsampledNeverSpeaking`, on by default). |
 | E4 live names | 2 | The recorder's live segments. | A weak hint. The name belongs to a live voice, not a person; at the start of a meeting and after a person leaves it is often stale. Drop it when E2 or E3 contradicts it. |
 
 The tool applies three of these limits itself (`suggest`): a call channel silent for 5 min or more while two labels
@@ -129,6 +129,12 @@ For project voice naming, follow the seats and voices step in pass 1 of the skil
 `voice` field of raw evidence. When exactly one person on the seat has no sample, the voice pass can propose them
 by exclusion. The person must be present throughout the line. The voice must sound different from every enrolled
 seat-mate there, and the proposed lines must form one voice. Listen to confirm the name.
+While a person with no sample is present, a line needs `speakerLabels.voice.gate.unsampledScore` (0.55) instead of
+`gate.score` (0.45), or it waits for their sample (`unsampled-present`). A remote person whom the call's speaking
+indicator never shows speaking in the whole meeting does not count: they hold no line back and are never proposed by
+exclusion, so such a line follows the ordinary gates. This needs an indicator that shows at least one other remote
+person speaking in the meeting. A person shown speaking even once, and everybody in a meeting with no such reads,
+still counts. `speakerLabels.voice.skipUnsampledNeverSpeaking: false` turns the exception off.
 
 ### When a library sample sounds wrong
 
