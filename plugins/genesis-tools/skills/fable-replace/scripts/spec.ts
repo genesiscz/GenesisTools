@@ -5,6 +5,7 @@
  *   @@ src/foo.ts                 # start a file section (path relative to cwd, or absolute)
  *   expect: newName(              # optional post-conditions for this file, repeatable
  *   absent: oldName(
+ *   absent-in-change: oldName(    # never in a line the ops of this file added or changed (others may keep it)
  *   <<<                           # a literal replace op (exactly-once by default)
  *   exact current text, indentation included
  *   ===
@@ -26,6 +27,8 @@
  *   <<< delete                    # one body only: these lines go, newline included
  *   <<< block                     # three bodies: from === to === replacement (empty = delete the block)
  *   <<< create                    # one body only: create the file with this content (must not exist)
+ *   <<< rewrite sha256=<64 hex>   # one body only: the whole new content (ends with one newline, as create),
+ *                                 # guarded by the file's current hash (shasum -a 256); a stale hash MISSes naming it
  *   <<< move to=b.ts symbol=x imports=fix   # move x; its imports follow, importers are re-pointed
  *
  * A body is the lines between the markers, joined with "\n", no trailing newline.
@@ -56,6 +59,7 @@ interface Section {
     ops: Op[];
     expectAfter: string[];
     absentAfter: string[];
+    absentInChange: string[];
     createWith?: string;
 }
 
@@ -63,7 +67,7 @@ function fail(line: number, message: string): never {
     throw new Error(`spec line ${line}: ${message}`);
 }
 
-const KINDS = new Set(["regex", "fuzzy", "before", "after", "append", "delete", "block", "create", "move"]);
+const KINDS = new Set(["regex", "fuzzy", "before", "after", "append", "delete", "block", "create", "move", "rewrite"]);
 /** The kinds whose `count=` is a checked contract; the others anchor on a unique line or have nothing to count. */
 const COUNTED_KINDS = new Set(["replace", "regex", "fuzzy", "delete"]);
 /** Every `kind` a JSON op object may carry (a literal op has none, or "replace"). */
@@ -80,6 +84,7 @@ const OP_KINDS = new Set([
     "append",
     "dropComments",
     "deleteLines",
+    "rewrite",
 ]);
 
 interface Modifiers {
@@ -102,9 +107,11 @@ interface Modifiers {
     imports?: string;
     /** `move` with `imports=fix` only: `widen` exports or widens what must cross the boundary. */
     visibility?: string;
+    /** `rewrite` only: the sha256 hex of the file's current content, lower-cased. */
+    sha256?: string;
 }
 
-const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|doc|lines|at|imports|visibility)=\S/;
+const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|doc|lines|at|imports|visibility|sha256)=\S/;
 
 /**
  * The modifier a label swallowed, if it reads as one. A `key=value` token anywhere is never prose.
@@ -199,6 +206,12 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             }
 
             mods.imports = value;
+        } else if (key === "sha256" && value !== undefined) {
+            if (!/^[0-9a-fA-F]{64}$/.test(value)) {
+                fail(line, `sha256= takes the 64 hex characters of the file's sha256 (shasum -a 256), got "${value}"`);
+            }
+
+            mods.sha256 = value.toLowerCase();
         } else if ((key === "before" || key === "after") && value !== undefined) {
             // Not an alias, and not a bare unknown modifier either: name the form that works.
             // The anchor text is the body.
@@ -215,7 +228,7 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
     if (mods.count !== undefined && !COUNTED_KINDS.has(mods.kind)) {
         fail(
             line,
-            `count= is not enforced for ${mods.kind}: before/after/block need a unique anchor, append/create have nothing to count. Remove it.`
+            `count= is not enforced for ${mods.kind}: before/after/block need a unique anchor, append/create/rewrite have nothing to count. Remove it.`
         );
     }
     if (mods.flags !== undefined && mods.kind !== "regex") {
@@ -227,6 +240,10 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
 
     if (mods.doc !== undefined && mods.kind !== "delete") {
         fail(line, `doc= only applies to delete, not ${mods.kind}`);
+    }
+
+    if (mods.sha256 !== undefined && mods.kind !== "rewrite") {
+        fail(line, `sha256= only applies to rewrite, not ${mods.kind}`);
     }
 
     if (mods.doc !== undefined && mods.symbol !== undefined) {
@@ -263,6 +280,14 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
     if (mods.optional && (mods.kind === "append" || mods.kind === "create")) {
         fail(line, `optional has no meaning for ${mods.kind}: it cannot miss`);
     }
+
+    if (mods.optional && mods.kind === "rewrite") {
+        fail(
+            line,
+            "rewrite cannot be optional: a stale hash means the file changed since it was read, and that must stop the run"
+        );
+    }
+
     return mods;
 };
 
@@ -272,6 +297,7 @@ const partsNeeded = (kind: string): number => {
         case "delete":
         case "create":
         case "move":
+        case "rewrite":
             return 1;
         case "block":
             return 3;
@@ -362,7 +388,7 @@ const buildOp = (
         return;
     }
 
-    if (emptyFirst && mods.kind !== "create" && mods.kind !== "append" && mods.kind !== "move") {
+    if (emptyFirst && !["create", "append", "move", "rewrite"].includes(mods.kind)) {
         // An empty needle or anchor matches everywhere or nowhere; the runner refuses it
         // too, but a spec error names the line before anything is planned.
         fail(line, `${mods.kind}: the first body is empty, so there is nothing to find, delete or anchor on`);
@@ -462,6 +488,15 @@ const buildOp = (
             }
             section.createWith = a.endsWith("\n") ? a : `${a}\n`;
             return;
+        case "rewrite":
+            section.ops.push({
+                kind: "rewrite",
+                content: a.endsWith("\n") ? a : `${a}\n`,
+                expectSha256:
+                    mods.sha256 ?? fail(line, "rewrite needs sha256=<hex>: the sha256 of the file now (shasum -a 256)"),
+                label: mods.label,
+            });
+            return;
         default:
             fail(line, `unhandled kind ${mods.kind}`);
     }
@@ -481,6 +516,11 @@ const toFileEdit = (section: Section): FileEdit => {
     if (section.absentAfter.length > 0) {
         edit.absentAfter = section.absentAfter;
     }
+
+    if (section.absentInChange.length > 0) {
+        edit.absentInChange = section.absentInChange;
+    }
+
     return edit;
 };
 
@@ -529,6 +569,12 @@ const fromJson = (text: string): FileEdit[] => {
                 );
             }
 
+            if (op.kind === "rewrite" && (typeof op.content !== "string" || typeof op.expectSha256 !== "string")) {
+                throw new Error(
+                    `${String(e.file)}: op ${index + 1} (rewrite) needs content and expectSha256 as strings`
+                );
+            }
+
             return op.kind === "regex" && typeof op.find === "string"
                 ? ({ ...op, find: new RegExp(op.find, typeof op.flags === "string" ? op.flags : "g") } as unknown as Op)
                 : (op as unknown as Op);
@@ -574,7 +620,7 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
                     `"${line.slice(0, 40)}" looks like a diff hunk header, not a file path. A body line that was exactly >>> closed the previous block early; write such a line as \\>>>`
                 );
             }
-            current = { file, ops: [], expectAfter: [], absentAfter: [] };
+            current = { file, ops: [], expectAfter: [], absentAfter: [], absentInChange: [] };
             sections.push(current);
             i += 1;
             continue;
@@ -642,12 +688,23 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
             buildOp(mods, parts, lineNo, current, moves, cwd ?? process.cwd());
             continue;
         }
-        const cond = line.match(/^(expect|absent):\s?(.*)$/);
+        const cond = line.match(/^(expect|absent-in-change|absent):\s?(.*)$/);
         if (cond !== null) {
             if (current === null) {
                 fail(lineNo, `${cond[1]}: before any @@ file line`);
             }
-            (cond[1] === "expect" ? current.expectAfter : current.absentAfter).push(cond[2]);
+
+            if (cond[1] === "absent-in-change") {
+                // An empty text is in every changed line, so the file could never pass.
+                if (cond[2] === "") {
+                    fail(lineNo, "absent-in-change: needs the text that must not appear in a changed line");
+                }
+
+                current.absentInChange.push(cond[2]);
+            } else {
+                (cond[1] === "expect" ? current.expectAfter : current.absentAfter).push(cond[2]);
+            }
+
             i += 1;
             continue;
         }
@@ -657,7 +714,7 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
         }
         fail(
             lineNo,
-            `unexpected text outside a block: "${line.slice(0, 60)}". Lines outside <<< >>> must be @@ file, expect:, absent:, # comment, or blank. If this line belongs to the previous block, a body line was exactly >>> or === and closed it early: write such lines as \\>>> or \\===`
+            `unexpected text outside a block: "${line.slice(0, 60)}". Lines outside <<< >>> must be @@ file, expect:, absent:, absent-in-change:, # comment, or blank. If this line belongs to the previous block, a body line was exactly >>> or === and closed it early: write such lines as \\>>> or \\===`
         );
     }
     if (sections.length === 0) {

@@ -152,8 +152,10 @@ Rules that the spec format does not say out loud:
 
 Every MISS says why, and where to look. The hints, in order of what the runner tries:
 
-- *the REPLACEMENT is already in the file* — the edit was applied before. Re-running is not an
-  error in itself; add `optional` if the spec must be re-runnable.
+- *the REPLACEMENT is already in the file* — the needle is gone and the replacement occurs exactly
+  as often as the op declares (`count`, default 1), so the edit was applied before. A `count=all`
+  op never gets this hint. Re-running is not an error in itself; add `optional` if the spec must
+  be re-runnable.
 - *matches when ALL whitespace is ignored (first at line N)* — indentation, tabs or a line
   break differ. Re-read line N and paste the exact text, or use `fuzzy`.
   ⚠️ A literal needle is a SUBSTRING match, so this fires only when your needle carries MORE

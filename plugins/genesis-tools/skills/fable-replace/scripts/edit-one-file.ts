@@ -3,13 +3,14 @@
  * string out, no filesystem.
  *
  * These are the ops you put in a FileEdit's `ops` array: literal (the workhorse),
- * regex, deleteBlock/replaceBlock, insertBefore/insertAfter, fuzzy. Every op is
+ * regex, deleteBlock/replaceBlock, insertBefore/insertAfter, fuzzy, rewrite. Every op is
  * VERIFIED — a literal op with the default `count: 1` requires the needle exactly
  * once, so a stale assumption is a loud MISS, never a silent no-op.
  *
  * Prefer literal over regex. Paste the exact current text, indentation included.
  */
 
+import { createHash } from "node:crypto";
 import { applyDeleteLines, applyDropComments } from "./comments";
 import {
     countOccurrences,
@@ -38,6 +39,7 @@ import type {
     OpResult,
     RegexOp,
     ReplaceBlockOp,
+    RewriteOp,
 } from "./types";
 
 /** What the ops before this one did to the buffer, so a MISS can tell "re-run" from "consumed". */
@@ -86,6 +88,7 @@ const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): { c
                       content,
                       needle: op.find,
                       replacement: op.replace,
+                      expected: want,
                       original: batch?.original,
                       producedBy: batch?.producedBy,
                   })}`;
@@ -269,6 +272,27 @@ const squashedIndexOf = ({ content, needle }: { content: string; needle: string 
 /** 1-based line number of the line that contains offset `at`. */
 const lineAt = (content: string, at: number): number => content.slice(0, at).split("\n").length;
 
+const WORD_CHAR = /[\p{L}\p{N}_$]/u;
+
+/** The offsets where `text` stands as its own token: a word character at its edge does not run on into the file. */
+const standaloneAt = (content: string, text: string): number[] => {
+    const at: number[] = [];
+    const wordStart = WORD_CHAR.test(text.at(0) ?? "");
+    const wordEnd = WORD_CHAR.test(text.at(-1) ?? "");
+
+    for (let i = content.indexOf(text); i !== -1; i = content.indexOf(text, i + text.length)) {
+        const runsOn =
+            (wordStart && WORD_CHAR.test(content[i - 1] ?? "")) ||
+            (wordEnd && WORD_CHAR.test(content[i + text.length] ?? ""));
+
+        if (!runsOn) {
+            at.push(i);
+        }
+    }
+
+    return at;
+};
+
 /**
  * Why did a literal needle miss? Say something a reader can act on: the file
  * already holds the replacement, the needle matches once whitespace is ignored
@@ -276,7 +300,14 @@ const lineAt = (content: string, at: number): number => content.slice(0, at).spl
  * exists at line N and the text diverges from line N+k. A bare "not found" made
  * agents guess; this points at the line to re-read.
  */
-export const nearestHint = ({ content, needle, replacement, original, producedBy }: NearestHintParams): string => {
+export const nearestHint = ({
+    content,
+    needle,
+    replacement,
+    expected,
+    original,
+    producedBy,
+}: NearestHintParams): string => {
     if (replacement !== undefined && replacement.length > 0 && content.includes(replacement)) {
         if (original !== undefined && !original.includes(replacement)) {
             // The text is there because THIS batch put it there: an earlier op consumed the
@@ -288,8 +319,15 @@ export const nearestHint = ({ content, needle, replacement, original, producedBy
             return `the REPLACEMENT is present only because ${who} produced it: that op consumed this needle before this one ran. This is not a re-run. Reorder or merge the two ops, or drop this one.`;
         }
 
-        return "the REPLACEMENT is already in the file: this edit was probably applied before (make the op optional to allow re-runs).";
+        // A short replacement ("x") occurs by chance, also inside a longer word ("export"). Only the count this op would
+        // have left behind, counted where the replacement stands as its own token, reads as a re-run, so "all", which
+        // leaves any count, never claims one.
+        const standalone = expected === "all" ? [] : standaloneAt(content, replacement);
+        if (standalone.length > 0 && standalone.length === (expected ?? 1)) {
+            return `the REPLACEMENT is already in the file (first at line ${lineAt(content, standalone[0])}): this edit was probably applied before (make the op optional to allow re-runs).`;
+        }
     }
+
     const noSpace = squashedIndexOf({ content, needle });
     if (noSpace !== -1) {
         return `matches when ALL whitespace is ignored (first at line ${lineAt(content, noSpace)}): the difference is spaces, tabs, indentation or line breaks. Copy the exact text, or use kind "fuzzy".`;
@@ -431,6 +469,41 @@ const applyFuzzy = (content: string, op: FuzzyOp): { content: string; result: Op
     return { content: content.replace(rx, () => op.replace), result: { status: "OK", desc, found } };
 };
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Replace the whole content, guarded by its sha256 (utf8 bytes). The content is the file before any op, because a
+ * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>", so the caller re-reads
+ * and retries with that hash instead of sending the old text back as a needle.
+ */
+const applyRewrite = (content: string, op: RewriteOp, otherOps: number): { content: string; result: OpResult } => {
+    const desc = opDesc(op);
+    const current = createHash("sha256").update(content, "utf8").digest("hex");
+    const miss = (why: string): { content: string; result: OpResult } => ({
+        content,
+        result: { status: "MISS", desc, reason: `current sha256 ${current}: ${why}` },
+    });
+    // The runner refuses this before planning; a direct applyOps caller would otherwise lose the other ops' work.
+    if (otherOps > 0) {
+        return miss(`a rewrite is the only op of its file, and this file has ${otherOps} other op(s)`);
+    }
+
+    const expected = op.expectSha256.toLowerCase();
+    if (!SHA256_HEX.test(expected)) {
+        return miss(`expectSha256 must be 64 hex characters, got "${preview(op.expectSha256, 24)}"`);
+    }
+
+    if (expected !== current) {
+        return miss(
+            op.content === content
+                ? "the file already holds this content (an earlier run applied it?)"
+                : `the file is not the one hashed as ${expected.slice(0, 12)}…; re-read it and send its current hash`
+        );
+    }
+
+    return { content: op.content, result: { status: "OK", desc } };
+};
+
 /**
  * Build a regex that matches `needle` treating every run of whitespace as "any
  * whitespace". Lets a literal op survive reindentation/reformatting drift:
@@ -516,6 +589,9 @@ export const applyOps = (content: string, ops: Op[]): { content: string; results
                 break;
             case "fuzzy":
                 outcome = applyFuzzy(current, op);
+                break;
+            case "rewrite":
+                outcome = applyRewrite(current, op, ops.length - 1);
                 break;
             default: {
                 // The script door: a misspelled kind is not a literal op.

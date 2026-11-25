@@ -19,7 +19,12 @@
  *   sweep-many-files.ts    the runner: run(), pre-flight guards, transaction,
  *                          verifyCommand, dry-run diff.
  *   backup-and-rollback.ts backupDir snapshots, drift-aware rollback().
- *   recon.ts               grepPreview — look before you declare an op.
+ *   recon.ts               grepPreview — look before you declare an op; recon()
+ *                          returns the files that name a symbol as one report.
+ *   rename-module.ts       renameModuleSymbol: a symbol, its module file and every
+ *                          import of it as one set of edits (git mv, full diffs).
+ *   report-json.ts         the JSON doors: editsFromJson (FileEdit[] from data)
+ *                          and reportToJson (one RunReportJson for a caller).
  *   internal.ts            private helpers. Nothing to see.
  *
  * Design contract (the reason this exists instead of sed):
@@ -52,8 +57,11 @@ export { applyDeleteLines, applyDropComments, deleteLines, dropComments, removeS
 export { all, applyOps, drop, dropJsdocStarting, fuzzyWhitespaceRegex, maybe, nearestHint } from "./edit-one-file";
 export { changedOnDisk, countOccurrences, FableReplaceError, nthIndexOf } from "./internal";
 export type { LeftoverReport } from "./recon";
-export { countMatches, findFiles, grepPreview, leftovers, shadowedFiles } from "./recon";
+export { countMatches, findFiles, grepPreview, leftovers, recon, shadowedFiles } from "./recon";
+export type { RenameModuleSymbolParams } from "./rename-module";
+export { renameModuleParamsFromJson, renameModuleSymbol } from "./rename-module";
 export { renameSymbol, renameSymbolAcross, sameOpsAcross } from "./rename-symbols";
+export { editsFromJson, reportToJson } from "./report-json";
 export type { ParseSpecParams } from "./spec";
 export { parseSpec } from "./spec";
 export type { ExternalParseError } from "./sweep-many-files";
@@ -65,4 +73,12 @@ export {
     simpleDiff,
 } from "./sweep-many-files";
 export * from "./types";
-export { checkVerifyCommand, runVerifyCommand, trimOutput, verifyUnknownReason } from "./verify-command";
+export type { RunVerifyControlParams, VerifyControlRun } from "./verify-command";
+export {
+    checkVerifyCommand,
+    runVerifyCommand,
+    runVerifyControl,
+    TS_VERIFY_CONTROL,
+    trimOutput,
+    verifyUnknownReason,
+} from "./verify-command";

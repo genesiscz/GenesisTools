@@ -107,6 +107,20 @@ export interface AppendOp {
     label?: string;
 }
 
+/**
+ * Replace the whole file with `content`, guarded by the hash of what is on disk now. The caller
+ * never sends the old text back as a needle; a stale hash is a MISS whose reason names the
+ * current hash, so the caller re-reads and retries. A rewrite is the only op of its file.
+ */
+export interface RewriteOp {
+    kind: "rewrite";
+    /** The whole new content. */
+    content: string;
+    /** sha256 hex of the current content (utf8). Another hash is a MISS naming the current one. */
+    expectSha256: string;
+    label?: string;
+}
+
 export type Op =
     | LiteralOp
     | RegexOp
@@ -117,7 +131,26 @@ export type Op =
     | AppendOp
     | DropCommentsOp
     | DeleteLinesOp
-    | FuzzyOp;
+    | FuzzyOp
+    | RewriteOp;
+
+/**
+ * How much of a file's change the report prints. "none": the file's header line only. "stat": the header
+ * with `+N -M`. "full": the diff under the line budgets.
+ */
+export type DiffLevel = "none" | "stat" | "full";
+
+/**
+ * A known-bad probe the verify command must report, proving the check covers the edited folder before
+ * its green is trusted.
+ */
+export interface VerifyControl {
+    /** A file name; the runner writes it into the probe folder, refusing an existing file. */
+    probeName: string;
+    probeContent: string;
+    /** The verify output must contain it, or the control is "missed". */
+    expectInOutput: string;
+}
 
 export interface FileEdit {
     /** Path to the file (absolute, or relative to `opts.cwd` / process.cwd()). */
@@ -138,6 +171,12 @@ export interface FileEdit {
     expectAfter?: string[];
     /** Substrings that MUST NOT be present after all ops ran. */
     absentAfter?: string[];
+    /** Substrings that MUST NOT be present in a line the ops of this file added or changed; untouched lines may hold them. */
+    absentInChange?: string[];
+    /** Stage `renameTo` as a git rename (`git mv`) when the old path is tracked and has nothing staged. Real runs only. */
+    gitMove?: boolean;
+    /** This file's diff level; wins over the run's `diff`. */
+    diff?: DiffLevel;
 }
 
 export interface RunOptions {
@@ -159,6 +198,11 @@ export interface RunOptions {
     verbose?: boolean;
     /** Print the per-file diff on a REAL run too (dry runs always print it). Default false. */
     showDiff?: boolean;
+    /**
+     * How much of each file's change to print. Unset: "full" on a dry run or with `showDiff` ("stat" when
+     * `verbose` is false), else "none". A FileEdit's own `diff` wins.
+     */
+    diff?: DiffLevel;
     /** Max diff lines printed per file in dry runs. Default 200. */
     maxDiffLines?: number;
     /** Total diff lines across the WHOLE dry run before diffs are suppressed. Default 2000. */
@@ -187,6 +231,8 @@ export interface RunOptions {
     verifyCommand?: string;
     /** Backstop for a hung check, in milliseconds. Default 15 minutes; there is no CLI flag. */
     verifyTimeoutMs?: number;
+    /** Run this probe through `verifyCommand` first; a probe the command does not report ends the run as "unknown". */
+    verifyControl?: VerifyControl;
     /**
      * Called once, right after the files are on disk and before any verify runs. The CLI
      * journals a "written" line here, so a check killed by a timeout still leaves a trace.
@@ -221,6 +267,10 @@ export interface FileResult {
     postConditionFailures: string[];
     /** Content before/after (in memory) — present for edited files. */
     changed: boolean;
+    /** Lines added and removed, on every changed file. */
+    diffStat?: { added: number; removed: number };
+    /** The printed diff, at the "full" level only. */
+    diff?: string;
 }
 
 export interface RunReport {
@@ -233,6 +283,65 @@ export interface RunReport {
     verify?: VerifyResult;
 }
 
+/** One file of a recon: how often the pattern occurs there, and whether the file declares it. */
+export interface ReconRow {
+    file: string;
+    count: number;
+    declares: boolean;
+}
+
+/** What `recon()` answers, and `--find --json` prints: every file that names the pattern. */
+export interface ReconReport {
+    v: 1;
+    pattern: string;
+    roots: string[];
+    total: number;
+    files: ReconRow[];
+}
+
+/**
+ * The run report as a JSON contract (`--json`, the MCP tool). A separate shape from RunReport, which
+ * holds functions and grows freely; this one changes only with its version.
+ */
+export interface RunReportJson {
+    v: 1;
+    ok: boolean;
+    exitCode: 0 | 1 | 2 | 3;
+    dryRun: boolean;
+    missCount: number;
+    written: string[];
+    backupDir?: string;
+    files: Array<{
+        file: string;
+        action: FileResult["action"];
+        diffStat?: { added: number; removed: number };
+        diff?: string;
+        ops: Array<{
+            status: "OK" | "MISS" | "SKIP";
+            desc: string;
+            found?: number;
+            expected?: number | "all";
+            reason?: string;
+            lines?: number[];
+        }>;
+        postConditionFailures: string[];
+    }>;
+    verify?: {
+        command: string;
+        status: VerifyResult["status"];
+        exitCode: number | null;
+        timedOut: boolean;
+        control?: "caught" | "missed";
+        shown: string[];
+        outputFile?: string;
+    };
+    /**
+     * The thrown message: a refusal before any report exists (code 2), or the reason beside a report
+     * run() threw (a stale prose mention after a green sweep, exit 3, has no other trace here).
+     */
+    error?: string;
+}
+
 export interface RunVerifyParams {
     /** The shell command, run through `sh -c` with cwd set. */
     command: string;
@@ -241,6 +350,10 @@ export interface RunVerifyParams {
     backupDir?: string;
     /** Default 15 minutes. */
     timeoutMs?: number;
+    /** Run this probe through the command first; "missed" skips the real verify. */
+    control?: VerifyControl;
+    /** Absolute folder the probe is written into. Default `cwd`. */
+    probeDir?: string;
 }
 
 export interface VerifyResult {
@@ -265,6 +378,8 @@ export interface VerifyResult {
     outputFile?: string;
     /** The spawn error message, when there was one. */
     error?: string;
+    /** The verdict of the probe, when a control ran. "missed" comes with status "unknown". */
+    control?: "caught" | "missed";
 }
 
 export interface CommentSpan {
@@ -472,6 +587,11 @@ export interface NearestHintParams {
     needle: string;
     /** When given, a needle whose replacement is already present is reported as "already applied". */
     replacement?: string;
+    /**
+     * The count the op declared (default 1). "Already applied" is claimed only when the replacement occurs exactly
+     * that often; "all" never claims it, because any count fits.
+     */
+    expected?: number | "all";
     /**
      * The content BEFORE any op of this batch ran (what is on disk). With it, a replacement
      * that is present in `content` but absent here is blamed on an earlier op of the batch,
