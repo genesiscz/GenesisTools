@@ -42,6 +42,19 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes, ["global.speakerLabels.voice.supportOnSeatLines": "true"])
     }
 
+    /// w_nlur2jf0: the never-shown-speaking exception is a switch on the Speakers page, on by default as in the engine.
+    func testNeverShownSpeakingSkipReadsItsDefaultAndWritesTheVoiceSetting() throws {
+        XCTAssertTrue(MeetingsVoiceNaming(raw: nil).skipUnsampledNeverSpeaking, "the engine's default is on")
+        let off = try raw(#"{"global":{"speakerLabels":{"voice":{"skipUnsampledNeverSpeaking":false}}}}"#)
+        XCTAssertFalse(MeetingsVoiceNaming(raw: off).skipUnsampledNeverSpeaking)
+        var writes = [String: String]()
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: off)) { path, value in
+            writes[path.joined(separator: ".")] = "\(value)"
+        }
+        card.chooseSkipNeverSpeaking(true)
+        XCTAssertEqual(writes, ["global.speakerLabels.voice.skipUnsampledNeverSpeaking": "true"])
+    }
+
     /// w_pg962cdp: the five voice exclusion settings read the engine's defaults, refuse values the config refuses, and
     /// each control writes its own key under `global.speakerLabels.voice.exclusion`.
     func testVoiceExclusionReadsItsDefaultsAndWritesEachKey() throws {

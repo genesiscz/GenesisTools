@@ -144,6 +144,8 @@ struct MeetingsVoiceNaming: Equatable {
     }
 
     var supportOnSeatLines = true
+    /// `voice.skipUnsampledNeverSpeaking`: a remote person the speaking indicator never shows speaking holds no line back.
+    var skipUnsampledNeverSpeaking = true
     var exclusion = Exclusion()
 
     init() {}
@@ -151,6 +153,7 @@ struct MeetingsVoiceNaming: Equatable {
     init(raw: JSONValue?) {
         let voice = raw?.at(MeetingsVoiceCompute.libraryPath) ?? .null
         if case .bool(let on) = voice.at(["supportOnSeatLines"]) { supportOnSeatLines = on }
+        if case .bool(let on) = voice.at(["skipUnsampledNeverSpeaking"]) { skipUnsampledNeverSpeaking = on }
         let block = voice.at(["exclusion"])
         if case .bool(let on) = block.at(["enabled"]) { exclusion.enabled = on }
         if case .number(let value) = block.at(["margin"]), Exclusion.marginRange.contains(value) { exclusion.margin = value }
@@ -177,6 +180,12 @@ struct MeetingsVoiceNamingCard: View {
                                     + "When off, the voice checks such a line only for a stranger.",
                                  identifier: "meetings.voice.supportOnSeatLines",
                                  isOn: Binding(get: { naming.supportOnSeatLines }, set: chooseSupport))
+            Divider()
+            NativeSettingsToggle("Skip people never shown speaking",
+                                 detail: "A remote person with no voice sample, whom the call never shows speaking while it shows others, "
+                                    + "holds no line back for a sample. When off, every present person without a sample holds the line back.",
+                                 identifier: "meetings.voice.skipUnsampledNeverSpeaking",
+                                 isOn: Binding(get: { naming.skipUnsampledNeverSpeaking }, set: chooseSkipNeverSpeaking))
             Divider()
             NativeSettingsToggle("Offer the only unsampled person",
                                  detail: "When the sampled voices on a seat clearly differ from a line, offer the one person on that seat with no sample for review.",
@@ -243,6 +252,7 @@ struct MeetingsVoiceNamingCard: View {
     }
 
     func chooseSupport(_ on: Bool) { set(MeetingsVoiceCompute.libraryPath + ["supportOnSeatLines"], on) }
+    func chooseSkipNeverSpeaking(_ on: Bool) { set(MeetingsVoiceCompute.libraryPath + ["skipUnsampledNeverSpeaking"], on) }
 
     /// One key of `voice.exclusion`, written as the config spells it.
     func chooseExclusion(_ key: String, _ value: Any) { set(MeetingsVoiceNaming.Exclusion.path + [key], value) }
