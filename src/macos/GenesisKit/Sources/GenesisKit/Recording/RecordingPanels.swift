@@ -328,6 +328,10 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// Whether losing the keyboard closes the picker as a cancel. The recorder's capture picker sets it from its
     /// setting (stay open by default): agents' apps that take the focus closed it under the person (2026-11-09).
     public var closesOnFocusLoss = true
+    /// Counts the presentations, so a size reported by content that was replaced since is never applied.
+    private var presentation = 0
+    /// The content's latest reported size, with the presentation it belongs to.
+    private var reported: (presentation: Int, size: CGSize)?
 
     override public init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
@@ -346,11 +350,19 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// the keyboard; the panel's first click takes it (`FirstMouseHostingView`).
     public func present(_ view: some View, near anchor: CGPoint, focus: Bool = true, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
+        presentation += 1
+        let presentation = self.presentation
         // A fresh hosting view each time: a reused one that had been on screen measured 0x0 after a new root view, so
         // the second picker of a session opened invisible and the recorder waited for a choice nobody could see.
+        // The content is pinned to the window's top, the edge the window keeps when it follows the content. Until the
+        // window has caught up (a main-queue turn after each layout), a list that grew cuts only the bottom; centred, it
+        // cut the header and the tabs off the top by half the difference (105 pt of a 553 pt picker in a 343 pt window).
         let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
-            DispatchQueue.main.async { self?.resize(to: size) }
-        }))
+            self?.reported = (presentation, size)
+            // Never resize the window inside the layout pass that measured it. The latest size wins: one measured a
+            // pass earlier (the list before its rows were measured) must not land after it.
+            DispatchQueue.main.async { self?.followReportedSize() }
+        }.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)))
         let size = Self.measure(hosting)
         window.contentView = hosting
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.screens.first
@@ -370,6 +382,11 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         let size = hosting.fittingSize
         hosting.sizingOptions = []
         return CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
+    }
+
+    private func followReportedSize() {
+        guard let reported, reported.presentation == presentation else { return }
+        resize(to: reported.size)
     }
 
     /// Follows the content (a tab that lists more or fewer rows), keeping the top edge inside its screen.
