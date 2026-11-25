@@ -136,6 +136,25 @@ export function callerRecordOf(identity: CallerRecordSource): CallerRecord {
     return record;
 }
 
+/** The part of a record that a row in a list names: the harness, the session and the model (`callerBrief`). */
+export interface CallerBrief {
+    harness: string;
+    session?: string;
+    model?: string;
+}
+
+/**
+ * Who did it, as a row in a list names it. The checkout, terminal, account and host thread stay on the stored record,
+ * so a snapshot of many rows carries only these three.
+ */
+export function callerBrief(record: CallerRecord): CallerBrief {
+    return {
+        harness: record.harness,
+        ...(record.session ? { session: record.session } : {}),
+        ...(record.model ? { model: record.model } : {}),
+    };
+}
+
 /** One line for a person: "Claude Code, session f94af8c6 · opus · GenesisTools on feat/x · cmux surface 3F2A". */
 export function callerRecordLine(record: CallerRecord, harnessName: (harness: string) => string = (h) => h): string {
     const parts = [`${harnessName(record.harness)}${record.session ? `, session ${record.session.slice(0, 8)}` : ""}`];

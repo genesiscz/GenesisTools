@@ -98,6 +98,8 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var revision: Int? = nil
     /// Who recorded a closed decision's answer (`agent`, `automatic_heuristic`, or the user), when the row says.
     var answeredVia: String? = nil
+    /// The agent that stored that answer (`InboxDecision.answeredBy`); nil when none did, and from an older `tools`.
+    var answeredBy: WidgetAnsweredBy? = nil
     /// The decision takes any set of its options (`InboxDecision.multiple`, `takesSeveral` in
     /// src/question/lib/decisions/option-labels.ts): check boxes, a click ticks or unticks a letter, one Send answers
     /// the set. Nil from an older `tools`, read as one option.
@@ -2534,7 +2536,7 @@ struct InboxDecisionCard: View, Equatable {
     /// A closed decision's answer in its own words, under the picked options: who recorded it, then the text (F7).
     private func answerBlock(_ answer: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(WidgetAlerts.answeredViaText(item.answeredVia))
+            Text(WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(ReviewPalette.dim)
             Text(inlineMarkdown(answer))

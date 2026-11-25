@@ -690,7 +690,7 @@ private struct WidgetAnsweredElsewhereLog: View {
         let picks = WidgetAlerts.answeredOptions(item).map { $0.letter + ") " + $0.text }
         let answer = picks.isEmpty ? item.answer ?? "" : picks.joined(separator: "; ")
         let when = Date(timeIntervalSince1970: item.at / 1000).formatted(.dateTime.month(.abbreviated).day().hour().minute())
-        let details = [WidgetAlerts.answeredViaText(item.answeredVia), session?.title ?? "", when].filter { !$0.isEmpty }
+        let details = [WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy), session?.title ?? "", when].filter { !$0.isEmpty }
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: "checkmark.bubble.fill").foregroundStyle(.green).padding(.top, 1)
                 .accessibilityHidden(true)

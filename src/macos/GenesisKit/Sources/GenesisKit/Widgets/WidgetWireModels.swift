@@ -239,6 +239,8 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var option: String? = nil
     public var answer: String? = nil
     public var answeredVia: String? = nil
+    /// The agent that stored the answer; nil when none did, and from an older hub.
+    public var answeredBy: WidgetAnsweredBy? = nil
     public var comments: [String]? = nil
     public var supersededBy: SupersededBy? = nil
     /// A staged decision's unsent pick and note (the decision log's `drafted` state); sent with the other staged ones.
@@ -800,6 +802,21 @@ public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
     public var body: String
 }
 
+/// The agent that stored a decision's answer (`answeredBy` of the decision row, `callerBrief` in
+/// src/utils/agent/identity/caller-record.ts): its harness, session and model, so a surface names it beside
+/// `answeredVia`.
+public struct WidgetAnsweredBy: Codable, Hashable, Sendable {
+    public var harness: String
+    public var session: String?
+    public var model: String?
+
+    public init(harness: String, session: String? = nil, model: String? = nil) {
+        self.harness = harness
+        self.session = session
+        self.model = model
+    }
+}
+
 public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public struct Message: Codable, Equatable, Sendable {
         public var text: String
@@ -844,6 +861,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var option: String? = nil
     public var answer: String? = nil
     public var answeredVia: String? = nil
+    /// The agent that stored that answer; nil when none did, and from an older hub.
+    public var answeredBy: WidgetAnsweredBy? = nil
     /// A decision row's last write (epoch ms): `reconcileStaged` drops an optimistic pick once the row changed after
     /// the pick was asked for, whatever the row now holds. Nil from an older hub.
     public var updatedAt: Double? = nil

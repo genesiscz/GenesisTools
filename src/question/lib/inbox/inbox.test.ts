@@ -805,6 +805,13 @@ describe("sessionDecisions", () => {
                 options: ["x"],
                 state: "sent",
                 option: "a",
+                answeredVia: "inbox",
+                answeredBy: {
+                    harness: "codex",
+                    session: "0a1b2c3d4e5f",
+                    model: "gpt-6.1-sol",
+                    checkout: { cwd: "/fixture/alpha" },
+                },
                 updatedTs: "2026-03-01T08:00:00.000Z",
             },
             {
@@ -841,6 +848,12 @@ describe("sessionDecisions", () => {
             [1, "sent", "store"],
             [3, "drafted", "store"],
             [4, "waiting", "transcript"],
+        ]);
+        // The agent that relayed an answer is named by its harness, session and model; its checkout stays on the row.
+        expect(sessionDecisions({ sessionId: "s-alpha", rows, scan }).map((item) => item.answeredBy)).toEqual([
+            { harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol" },
+            null,
+            null,
         ]);
         // A stored row says when it last changed, so the hub's staging engine lets another client's newer answer win;
         // a decision only the transcript shows has no row and no time (DECISION 51 b).

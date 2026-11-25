@@ -34,6 +34,7 @@ import { listFormsSnapshot, listPendingFormHeadsSnapshot, type PendingFormHead }
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { type QaRow, queryEntriesOfSessionsSnapshot, queryEntriesSnapshot } from "@app/question/lib/read-model";
 import { askedAtOf, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "@app/question/lib/waiting/set";
+import { type CallerBrief, callerBrief } from "@genesiscz/utils/agent/identity/caller-record";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { changeLogPath, readChangeLogFile } from "@genesiscz/utils/agents/change-log";
 import { openQuestions, sessionsWithDialogRecords } from "@genesiscz/utils/agents/dialogs/store";
@@ -178,6 +179,8 @@ export interface WidgetCard {
     comments?: string[];
     /** Decision cards: who stored the answer, the user in an inbox (`inbox`) or an agent copying a chat answer. */
     answeredVia?: AnsweredVia;
+    /** Decision cards: the agent that stored the answer (`answeredBy` of the row), so the card names it. */
+    answeredBy?: CallerBrief;
     /** A superseded decision: the decision that replaced it, with the widget key of its session when known. */
     supersededBy?: WidgetSupersededBy;
 }
@@ -347,6 +350,8 @@ export interface WidgetInboxItem {
     option?: string;
     answer?: string;
     answeredVia?: AnsweredVia;
+    /** The agent that stored that answer (`answeredBy` of the row): its harness, session and model. */
+    answeredBy?: CallerBrief;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -1579,6 +1584,7 @@ export async function widgetSnapshot({
             ...(row.option ? { option: row.option } : {}),
             ...(answer ? { answer: sliceWhole(answer, 300) } : {}),
             answeredVia: via,
+            ...(row.answeredBy ? { answeredBy: callerBrief(row.answeredBy) } : {}),
         });
     }
     answeredElsewhere.sort((a, b) => b.at - a.at);
@@ -1899,6 +1905,7 @@ export async function widgetSnapshot({
             ...stagedOf(row),
             ...(row.comments?.length ? { comments: row.comments } : {}),
             ...(row.answeredVia ? { answeredVia: row.answeredVia } : {}),
+            ...(row.answeredBy ? { answeredBy: callerBrief(row.answeredBy) } : {}),
             ...supersededBy(row),
         });
     }

@@ -304,7 +304,12 @@
                 ],
                 "option": "a",
                 "answer": "Yes, ship it.",
-                "answeredVia": "agent"
+                "answeredVia": "agent",
+                "answeredBy": {
+                    "harness": "codex",
+                    "session": "0a1b2c3d4e5f",
+                    "model": "gpt-6.1-sol"
+                }
             }
         ]
     },
@@ -493,7 +498,12 @@
             "comments": [
                 "Shipped."
             ],
-            "answeredVia": "agent"
+            "answeredVia": "agent",
+            "answeredBy": {
+                "harness": "codex",
+                "session": "0a1b2c3d4e5f",
+                "model": "gpt-6.1-sol"
+            }
         },
         {
             "id": "decision:d_1_fixture",
