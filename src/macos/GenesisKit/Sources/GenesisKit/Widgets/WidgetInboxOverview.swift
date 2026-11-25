@@ -236,22 +236,23 @@ struct WidgetInboxOverview: View {
                     readingBoundary = feed && scrolled ? feedRuns.first?.items.first : nil
                 }
             if items.isEmpty {
-                VStack(spacing: 10) {
-                    GenesisWidgetMark()
-                    Text(!model.inbox.complete ? "Inbox status unavailable." : filter == "needs"
-                         ? "Nothing waits for your answer." : filter == "unread" ? "No unread items." : "Nothing new in the inbox.")
-                        .font(.headline)
-                    if !model.inboxOverviewItems.isEmpty, filter != "all" {
-                        Button("Show all items") {
-                            model.holdAgentFit()
-                            model.overviewFilterPick = "all"
-                        }
-                            .buttonStyle(.genHover())
-                    } else if model.inbox.complete {
-                        Text("Questions, screenshots and finished work from every session land here.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity).padding(.vertical, 28)
+                let showAll: (() -> Void)? = !model.inboxOverviewItems.isEmpty && filter != "all" ? {
+                    model.holdAgentFit()
+                    model.overviewFilterPick = "all"
+                } : nil
+                if model.inbox.complete {
+                    WidgetEmptyState(size: .regular, text: filter == "needs" ? "Nothing waits for your answer."
+                                         : filter == "unread" ? "No unread items." : "Nothing new in the inbox.",
+                                     detail: showAll == nil
+                                         ? "Questions, screenshots and finished work from every session land here." : nil,
+                                     actionTitle: showAll == nil ? nil : "Show all items", action: showAll)
+                        .frame(maxWidth: .infinity).padding(.vertical, 28)
+                } else {
+                    VStack(spacing: 10) {
+                        WidgetInboxStatusFailure(error: model.error) { model.start() }
+                        if let showAll { Button("Show all items", action: showAll).buttonStyle(.genHover()) }
+                    }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
             } else {
                 Text(Self.summary(items, waits: model.waitsForAnswer, hidden: model.inboxHiddenItems) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.bottom, 8)
