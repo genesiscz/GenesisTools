@@ -1,5 +1,6 @@
 import { meetingCommentSchema } from "@app/meetings/lib/comment-schema";
 import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
+import { lineDecisionSchema } from "@app/meetings/lib/from-decisions";
 import { matchDraftSchema } from "@app/meetings/lib/match-preview";
 import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { WORD_CHECKS } from "@app/meetings/lib/word-check";
@@ -288,6 +289,21 @@ export const add = defineMethod({
     resultName: "{ added: items.list rows, duplicates: string[], warnings } | plan: { warnings, findings }",
     effect: "reversible",
     doc: `Add validated findings under the meeting store lock. Equal open findings are retained and reported as duplicate ids; allowDuplicates appends deliberately. Answers added items.list rows, duplicate ids and warnings. An all-duplicate retry writes nothing. With plan: true, answers { warnings, findings: [{ finding, kind, status, lines }] } from the local transcript and writes nothing. CLI twin: ${toolCommand("meetings items add")} <meeting> --from-file <json> [--plan].`,
+});
+export const fromDecisions = defineMethod({
+    name: "items.fromDecisions",
+    params: z
+        .object({
+            /** One per transcript line: idx as evidence numbers the lines, speaker a name or "?" for nobody in particular. */
+            decisions: z.array(lineDecisionSchema).min(1),
+            /** Preview only, as `items from-decisions --plan`: the items.add plan of the findings; nothing is written. */
+            dryRun: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "items.add answer { added, duplicates, warnings, token } | dryRun: { warnings, findings }",
+    effect: "reversible",
+    doc: `Turn per-line speaker decisions ({ idx, speaker, confidence, reason }) into findings and add them as items.add does. A line decided to its label's own person adds nothing. The next lines of one label with one speaker and one reason become one speaker range at the lowest confidence; a line that shares its start second with another line gets its own range with "line"; "?" lines become a label finding with meaningless. Answers the items.add answer; with dryRun: true, the plan items.add answers with plan: true, from the local transcript, and writes nothing. CLI twin: ${toolCommand("meetings items from-decisions")} <meeting> --file <decisions.json> [--plan].`,
 });
 export const suggest = defineMethod({
     name: "items.suggest",
@@ -1113,6 +1129,7 @@ export const meetingsToolsetApi = defineApi({
                 itemsRows,
                 byChannel,
                 add,
+                fromDecisions,
                 suggest,
                 preview,
                 confirm,

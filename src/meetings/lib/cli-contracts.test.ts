@@ -23,6 +23,7 @@ import {
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import * as voiceBackend from "@genesiscz/utils/meetings/voice";
 import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore, type VoicePrint } from "@genesiscz/utils/meetings/voice-store";
@@ -56,6 +57,7 @@ import * as soundModule from "./sound";
 import { appendAudioRow, meetingSound } from "./sound";
 import { cutSlice, playbackRange, playSoundSlice, slicePlaybackPlan } from "./sound-playback";
 import { preserveSourceAudio } from "./source-audio";
+import * as sourcesModule from "./sources";
 import { linkedSource } from "./sources";
 import * as labelsModule from "./speaker-labels";
 import * as suggestRun from "./suggest-run";
@@ -4464,4 +4466,136 @@ test("removing one numbered sample preserves other tracks sharing its meeting an
         ["mic-raw", 5],
         ["source-mic", 6],
     ]);
+});
+
+describe("items from-decisions", () => {
+    test("--plan prints the plan items add --plan prints for its findings, and without --plan it adds them", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            {
+                title: "Decisions file",
+                start: "2026-11-25T09:00:00.000Z",
+                createdBy: "new",
+                participants: ["Alice Example", "Bob Example", "Carol Example"].map((name) => ({ name, from: [] })),
+            },
+            { command: "test", change: "fixture" }
+        );
+        const transcript = [
+            { startSec: 0, speaker: "Alice Example", text: "Good morning" },
+            { startSec: 3, speaker: "Speaker 2", text: "First words" },
+            { startSec: 3, speaker: "Speaker 2", text: "Second words" },
+            { startSec: 6, speaker: "Speaker 2", text: "More words" },
+            { startSec: 9, speaker: "Alice Example", text: "Talking together" },
+        ];
+        const source: SourceMeeting = {
+            sourceMeetingId: "decisions-file",
+            title: "Decisions file",
+            start: "2026-11-25T09:00:00.000Z",
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript,
+        };
+        const reason = "the voice and the answer fit";
+        const decisions = [
+            { idx: 0, speaker: "Alice Example", confidence: 0.9, reason },
+            { idx: 1, speaker: "Bob Example", confidence: 0.8, reason },
+            { idx: 2, speaker: "C", confidence: 0.7, reason },
+            { idx: 3, speaker: "Bob Example", confidence: 0.9, reason },
+            { idx: 4, speaker: "?", confidence: 0.5, reason: "two people talk at once" },
+        ];
+        const findings = [
+            {
+                kind: "speaker-range",
+                from: 3,
+                to: 3,
+                label: "Speaker 2",
+                speaker: "Bob Example",
+                line: 1,
+                confidence: 0.8,
+                reason,
+            },
+            {
+                kind: "speaker-range",
+                from: 3,
+                to: 3,
+                label: "Speaker 2",
+                speaker: "Carol Example",
+                line: 2,
+                confidence: 0.7,
+                reason,
+            },
+            {
+                kind: "speaker-range",
+                from: 6,
+                to: 6,
+                label: "Speaker 2",
+                speaker: "Bob Example",
+                confidence: 0.9,
+                reason,
+            },
+            {
+                kind: "label",
+                from: 9,
+                to: 9,
+                label: "Alice Example",
+                meaningless: true,
+                confidence: 0.5,
+                reason: "two people talk at once",
+            },
+        ];
+        const folder = mkdtempSync(join(tmpdir(), "gt-from-decisions-"));
+        const decisionsFile = join(folder, "decisions.json");
+        const findingsFile = join(folder, "findings.json");
+        writeFileSync(decisionsFile, SafeJSON.stringify(decisions));
+        writeFileSync(findingsFile, SafeJSON.stringify(findings));
+        const local = spyOn(sourcesModule, "localMeetingTranscript").mockResolvedValue(transcript);
+        const loaded = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(source);
+        const printed: unknown[] = [];
+        const output = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(value);
+        });
+        const run = async (...argv: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
+            await program.parseAsync(argv, { from: "user" });
+        };
+        const planLines = (value: unknown) =>
+            z
+                .object({ findings: z.array(z.object({ lines: z.array(z.object({ index: z.number() })) })) })
+                .parse(typeof value === "string" ? SafeJSON.parse(value) : value)
+                .findings.map((finding) => finding.lines.map((line) => line.index));
+        try {
+            await run("items", "from-decisions", record.id, "--file", decisionsFile, "--plan");
+            await run("items", "add", record.id, "--from-file", findingsFile, "--plan");
+            expect(printed).toHaveLength(2);
+            expect(printed[0]).toEqual(printed[1]);
+            expect(planLines(printed[0])).toEqual([[1], [2], [3], [4]]);
+            expect(new MeetingStore().read(record.id)?.items).toEqual([]);
+            await run("items", "from-decisions", record.id, "--file", decisionsFile);
+            expect(new MeetingStore().read(record.id)?.items).toMatchObject([
+                {
+                    kind: "speaker-range",
+                    speaker: "Bob Example",
+                    fromSec: 3,
+                    toSec: 3,
+                    evidence: { transcriptLine: 1 },
+                },
+                {
+                    kind: "speaker-range",
+                    speaker: "Carol Example",
+                    fromSec: 3,
+                    toSec: 3,
+                    evidence: { transcriptLine: 2 },
+                },
+                { kind: "speaker-range", speaker: "Bob Example", fromSec: 6, toSec: 6, confidence: 0.9 },
+                { kind: "label", label: "Alice Example", meaningless: true, fromSec: 9, toSec: 9 },
+            ]);
+        } finally {
+            local.mockRestore();
+            loaded.mockRestore();
+            output.mockRestore();
+            process.exitCode = 0;
+        }
+    });
 });
