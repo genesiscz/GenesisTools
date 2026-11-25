@@ -238,10 +238,28 @@ function variableValue(raw: string | null, known: Map<string, string>): string |
     return name ? (known.get(name) ?? null) : null;
 }
 
-/** Each `cd` argument the command names, in order, read from the ORIGINAL text. */
-function cdTargets(command: string): string[] {
-    const targets: string[] = [];
-    const scanned = scan(command, "a cd target");
+/**
+ * Long flags that hand a program the folder it works in, as the next word or after `=`: `bun --cwd`, `pnpm --dir`,
+ * `make --directory`, `git --work-tree`, `gunicorn --chdir`, and a script's own `--root`.
+ */
+const DIR_FLAGS = new Set(["--cwd", "--dir", "--directory", "--root", "--chdir", "--workdir", "--work-tree"]);
+/** `-C <folder>`: git, make, tar and pnpm work there. `grep -C 3` names a number, which no folder test passes. */
+const SHORT_DIR_FLAG = "-C";
+
+/**
+ * A folder the command names, in order. `cd` moves the shell there. `flag` and `argument` hand it to the program of
+ * their element: a folder flag (`--cwd <dir>`, `-C <dir>`), or an argument of a script runner, which counts only when
+ * it is a repository's top folder (`programDirs`).
+ */
+interface DirTarget {
+    kind: "cd" | "flag" | "argument";
+    path: string;
+}
+
+/** Every folder target the command names, in order, read from the ORIGINAL text. */
+function dirTargets(command: string): DirTarget[] {
+    const targets: DirTarget[] = [];
+    const scanned = scan(command, "the folders it works in");
 
     if (!scanned) {
         return targets;
@@ -257,18 +275,19 @@ function cdTargets(command: string): string[] {
                 const tokens = tokenize(element);
                 const index = commandTokenIndex(tokens, scanned.command);
                 const token = index === -1 ? undefined : tokens[index];
+                const word = token ? commandWord(token.text) : "";
 
-                if (token && commandWord(token.text) === "cd") {
+                if (token && word === "cd") {
                     const raw = shellWord(nextRawArgument(command, token.start + token.text.length));
-                    const plain = plainArgument(raw);
                     // The shell expands `~` in `cd ~/x`; resolved against the cwd it named a folder that never exists.
                     // A variable's value was expanded when it was assigned (`applyAssignments`).
-                    const target =
-                        plain !== null ? homeOf(raw, plain) : (variableValue(raw, known) ?? expandVariable(raw, known));
+                    const target = wordValue(raw, known);
 
                     if (target) {
-                        targets.push(target);
+                        targets.push({ kind: "cd", path: target });
                     }
+                } else if (token) {
+                    programTargets({ scanned, element, token, known, script: INTERPRETER.test(word), into: targets });
                 }
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
@@ -282,6 +301,103 @@ function cdTargets(command: string): string[] {
     return targets;
 }
 
+/** A word's plain value, `~` and the command's own variables expanded; null when the shell would read it otherwise. */
+function wordValue(raw: string | null, known: Map<string, string>): string | null {
+    const plain = plainArgument(raw);
+
+    return plain !== null ? homeOf(raw, plain) : (variableValue(raw, known) ?? expandVariable(raw, known));
+}
+
+/**
+ * The raw words after `from` up to the end of its element, quotes kept: `nextRawArgument` read one after another. The
+ * scanner trims the quoted words it blanked off the element's end, so the end is found past them in the cleaned text,
+ * and a newline ends the words, because what follows it (a heredoc body) is no argument.
+ */
+function rawWords(scanned: ShellScan, from: number, element: Span): string[] {
+    const { command, cleaned } = scanned;
+    const words: string[] = [];
+    let end = element.start + element.text.length;
+    let at = from;
+
+    while (end < cleaned.length && (cleaned[end] === " " || cleaned[end] === "\t")) {
+        end += 1;
+    }
+
+    while (at < end) {
+        const match = /^[ \t]+('[^']*'|"[^"]*"|\S+)/.exec(command.slice(at, end));
+
+        if (!match) {
+            break;
+        }
+
+        words.push(match[1] as string);
+        at += match[0].length;
+    }
+
+    return words;
+}
+
+/**
+ * The folders one element hands its program: the value of each folder flag, and, for a script runner (`bun x.ts <dir>`),
+ * every path-shaped argument, which `programDirs` keeps only when it is a repository's top folder. The words are read
+ * from the original text one after another, because the scanner blanks a quoted word and leaves it no token: in
+ * `bun '/x/renames.ts' '<checkout>'`, the checkout is the second quoted word in a row.
+ */
+function programTargets({
+    scanned,
+    element,
+    token,
+    known,
+    script,
+    into,
+}: {
+    scanned: ShellScan;
+    element: Span;
+    token: Span;
+    known: Map<string, string>;
+    script: boolean;
+    into: DirTarget[];
+}): void {
+    const words = rawWords(scanned, token.start + token.text.length, element).map((word) => shellWord(word));
+
+    for (let at = 0; at < words.length; at += 1) {
+        const raw = words[at] ?? null;
+
+        if (raw === null) {
+            continue;
+        }
+
+        if (DIR_FLAGS.has(raw) || raw === SHORT_DIR_FLAG) {
+            const value = wordValue(words[at + 1] ?? null, known);
+
+            if (value) {
+                into.push({ kind: "flag", path: value });
+            }
+
+            at += 1;
+            continue;
+        }
+
+        const eq = raw.indexOf("=");
+
+        if (raw.startsWith("--") && eq > 0 && DIR_FLAGS.has(raw.slice(0, eq))) {
+            const value = wordValue(raw.slice(eq + 1), known);
+
+            if (value) {
+                into.push({ kind: "flag", path: value });
+            }
+
+            continue;
+        }
+
+        const value = script ? wordValue(raw, known) : null;
+
+        if (value && pathShaped(value) && !value.startsWith("-")) {
+            into.push({ kind: "argument", path: value });
+        }
+    }
+}
+
 /**
  * Every directory this command could have worked in: the session cwd, plus the target of
  * EVERY `cd` it names, relative ones included. The first entry is the session cwd and the last
@@ -293,15 +409,64 @@ function cdTargets(command: string): string[] {
  * not catch.
  */
 export function commandDirs(command: string, cwd: string): string[] {
+    return walkDirs(command, cwd, false).dirs;
+}
+
+/**
+ * The folders the command hands a program to work in, which no `cd` reaches: the value of a folder flag
+ * (`fable-replace --cwd <checkout>`, `git -C <checkout> apply`, `make -C <dir>`), and a repository's top folder given
+ * to a script runner (`bun renames.ts <checkout>`). Session a1523c66 on 2026-11-24 edited a second checkout both ways
+ * from a cwd in the first, and the hook watched only the first: the `renames.ts` edit printed nothing.
+ *
+ * A relative value is read from the folder the command is in at that point, then from the cwd. A flag's value must be
+ * a directory; an argument must hold a `.git`, because any other folder a script names (an output folder, a cache) is
+ * not where it edits tracked files, and each root costs a `git rev-parse` and a `git status`. The cwd and the `cd`
+ * targets are left out: `commandDirs` has them.
+ */
+export function programDirs(command: string, cwd: string): string[] {
+    const walked = walkDirs(command, cwd, true);
+
+    return walked.programs.filter((dir) => !walked.dirs.includes(dir));
+}
+
+function isDirectory(path: string): boolean {
+    try {
+        return statSync(path).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
+/** `withPrograms: false` tests no program target, so a caller that wants only the `cd` folders pays no `stat` for them. */
+function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: string[]; programs: string[] } {
     const dirs = [cwd];
+    const programs: string[] = [];
     // A relative `cd` moves from wherever the PREVIOUS one landed: `cd packages && cd api` works
     // in `<cwd>/packages/api`, which resolving both against the session cwd never finds. The
     // session cwd stays the fallback for a `cd` that ran in a subshell, which the text alone
     // cannot always tell apart; a guess that does not exist is dropped below either way.
     let current = cwd;
 
-    for (const target of cdTargets(command)) {
-        const candidates = isAbsolute(target) ? [target] : [resolve(current, target), resolve(cwd, target)];
+    for (const target of dirTargets(command)) {
+        const candidates = isAbsolute(target.path)
+            ? [target.path]
+            : [resolve(current, target.path), resolve(cwd, target.path)];
+
+        if (target.kind !== "cd") {
+            if (!withPrograms) {
+                continue;
+            }
+
+            const fits = target.kind === "flag" ? isDirectory : (dir: string) => existsSync(resolve(dir, ".git"));
+            const dir = candidates.find(fits);
+
+            if (dir && !programs.includes(dir)) {
+                programs.push(dir);
+            }
+
+            continue;
+        }
+
         const dir = candidates.find((candidate) => existsSync(candidate));
 
         if (!dir) {
@@ -319,7 +484,7 @@ export function commandDirs(command: string, cwd: string): string[] {
         dirs.push(current);
     }
 
-    return dirs;
+    return { dirs, programs };
 }
 
 /** `~` and `~/x` only. `~user` is a different lookup and is left alone. */
