@@ -100,28 +100,12 @@ struct WidgetInboxEntryDetail: View {
     /// A staged decision's Send and Unstage, and for a set its recommended set in one click. The hover list
     /// (`compact`) adds Send now (all N): it has no staged chip, which the overview draws above its list.
     private func stagedActions(_ item: WidgetInboxItem) -> some View {
-        let staged = item.kind == "decision" && item.needsAnswer
-            && model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft)
-        let others = compact && staged ? model.stagedForLeave.filter { $0.sourceId != item.sourceId } : []
-        return WidgetStagedActions(
-            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-            takesSeveral: item.takesSeveral,
-            recommendedSet: item.takesSeveral
-                ? DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0) : nil,
-            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-            staged: staged, busy: model.sendingDecisionIDs.contains(item.sourceId),
-            othersStaged: others.count, placement: .row,
+        WidgetStagedActions(
+            host: WidgetItemStagingHost(model: model, item: item, surface: surface, sendsAll: compact), placement: .row,
             identifier: (item.takesSeveral ? "widget.overview.sendSet." : "widget.overview.sendStaged.") + item.sourceId,
             sendAllIdentifier: "widget.overview.sendAll." + item.sourceId,
             unstageIdentifier: "widget.overview.unstage." + item.sourceId,
-            unstageTooltip: "Clears the staged pick and note. Undo brings them back.",
-            send: { model.sendStaged([item.sourceId], known: [item]) },
-            unstage: { model.holdDiscard([item.sourceId]) },
-            sendAll: others.isEmpty ? nil : {
-                let all = [item] + others
-                model.sendStaged(all.map(\.sourceId), known: all)
-            },
-            pickRecommended: { model.pickSet(item, option: $0) })
+            unstageTooltip: "Clears the staged pick and note. Undo brings them back.")
             .padding(.top, 2)
     }
 

@@ -2453,11 +2453,9 @@ struct InboxDecisionCard: View, Equatable {
             footerRow
         }
         .padding(13)
-        .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(item.isOpen ? 0.045 : 0.025)))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(borderColor))
-        // The main list's key card: the system's focus colour, as the widget's keyboard option draws it.
-        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(keyed ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear,
-                                                                 lineWidth: 1.5).allowsHitTesting(false))
+        // The widget's decision chrome: the main list's key card wears the system's focus ring, a closed card its state.
+        .decisionChrome(waiting: item.isOpen, staged: staged, open: item.isOpen, focused: keyed,
+                        closedTint: item.isOpen ? nil : closedTint.opacity(0.3))
         // The key card and an open note keep the controls live without the pointer.
         .rowLive(live)
         .findRow(item.id, cornerRadius: 11)
@@ -2490,11 +2488,16 @@ struct InboxDecisionCard: View, Equatable {
         }
     }
 
-    private var borderColor: Color {
-        if !item.isOpen {
-            return closedTint.opacity(0.3)
-        }
-        return staged ? SessionPalette.blue.opacity(0.7) : InboxStyle.accent.opacity(0.3)
+    /// The card's stage and actions for the shared staged block, from its values and its note.
+    private var stagingHost: HubInboxDecisionHost {
+        HubInboxDecisionHost(inbox: inbox, session: session, item: item, state: state,
+                             note: { noteDirty ? note : nil }, field: { note },
+                             afterUnstage: { noteDirty = !note.isEmpty },
+                             openTranscript: {
+                                 guard let hubSession = state.hubSession else { return }
+                                 model.transcriptQuery = "DECISION \(item.number ?? 0)"
+                                 model.openSession(hubSession)
+                             })
     }
 
     private var headerRow: some View {
@@ -2733,29 +2736,12 @@ struct InboxDecisionCard: View, Equatable {
             HStack(spacing: 10) {
                 // A staged decision sends from its own card, next to the pick, or leaves the staged list (F2).
                 if staged, pickable {
-                    // A set's Send names the ticked letters: "Send a + b + c".
-                    let namesSet = item.takesSeveral && !letters.isEmpty
-                    Button {
-                        inbox.sendNow(item, in: session, note: noteDirty ? note : nil)
-                    } label: {
-                        Label(DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral),
-                              systemImage: "paperplane.fill").font(.system(size: 12))
-                    }
-                    .buttonStyle(.genPrimary())
-                    .fixedSize()
-                    .disabled(sessionSending || writing)
-                    .instantTooltip(sessionSending ? "This session's send is running"
-                        : namesSet ? DecisionAnswering.setSendTooltip(letters)
-                        : "Send this staged decision alone, without the others")
-                    LiveButton(tooltip: "Take the pick and the note off the staged list; the note stays here",
-                               enabled: !(sessionSending || writing), pressable: true) {
-                        inbox.unstage(item, in: session, keeping: note)
-                        noteDirty = !note.isEmpty
-                    } label: {
-                        Text("Unstage")
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.renamed)
+                    // The shared staged block: "Sending…" while this session's send runs.
+                    WidgetStagedActions(host: stagingHost, placement: .footer, sendSymbol: "paperplane.fill",
+                                        identifier: "hub.inbox.send." + item.id,
+                                        unstageTooltip: "Take the pick and the note off the staged list; the note stays here")
+                        .buttonStyle(.genHoverPlain())
+                        .font(.system(size: 11.5))
                 }
                 if writing {
                     ProgressView().controlSize(.small)
@@ -2816,11 +2802,8 @@ struct InboxDecisionCard: View, Equatable {
         let multiple = item.takesSeveral
         // A second pick while the session's send runs would race it (P14).
         let enabled = pickable && !sessionSending
-        let choose = {
-            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
-            inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
-                         shift: flags.contains(.shift), command: flags.contains(.command))
-        }
+        let host = stagingHost
+        let choose = { host.choose(choice.id) }
         return DecisionOptionButton(
             live: live, enabled: enabled,
             tooltip: !item.isOpen

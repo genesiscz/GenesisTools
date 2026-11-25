@@ -797,23 +797,12 @@ public struct LiveWidgetView: View {
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
                     // Every staged decision at once, this one included, from the card being read (Martin,
                     // 2026-10-28), while another one is staged too.
-                    let others = model.stagedForLeave.filter { $0.sourceId != card.sourceId }
                     WidgetStagedActions(
-                        letters: model.shownStagedOption(card.sourceId, stored: card.draftOption),
-                        takesSeveral: card.takesSeveral, recommendedSet: nil,
-                        phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
-                        staged: staged(card), busy: model.sendingDecisionIDs.contains(card.sourceId),
-                        othersStaged: others.count, placement: .footer,
+                        host: WidgetCardStagingHost(model: model, card: card), placement: .footer,
                         identifier: "widget.card.send." + card.sourceId,
                         sendAllIdentifier: "widget.card.sendAll." + card.sourceId,
                         unstageTooltip: card.draft == nil ? "Clears the staged pick."
-                            : "Clears the staged pick and puts the note back into the answer field.",
-                        send: { model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)]) },
-                        unstage: { model.unstage(card) },
-                        sendAll: {
-                            let all = [WidgetModel.inboxItem(card)] + others
-                            model.sendStaged(all.map(\.sourceId), known: all)
-                        })
+                            : "Clears the staged pick and puts the note back into the answer field.")
                 } else if card.kind == "decision" && card.status == "answered" {
                     // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
                     let sending = model.sendingDecisionIDs.contains(card.sourceId)

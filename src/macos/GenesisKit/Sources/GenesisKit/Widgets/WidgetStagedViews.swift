@@ -512,20 +512,12 @@ struct WidgetStagedDecisionRow: View {
                     }
                     // This one decision's Send and Unstage sit under its options.
                     WidgetStagedActions(
-                        letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-                        takesSeveral: item.takesSeveral,
-                        recommendedSet: item.takesSeveral
-                            ? DecisionAnswering.recommendedSet(item.recommended, count: options.count) : nil,
-                        phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                        staged: model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft),
-                        busy: model.sendingDecisionIDs.contains(item.sourceId), placement: .row,
+                        host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false),
+                        placement: .row,
                         identifier: (item.takesSeveral ? "widget.staged.sendSet." : "widget.staged.sendStaged.")
                             + item.sourceId,
                         unstageIdentifier: "widget.staged.unstage." + item.sourceId,
-                        unstageTooltip: "Clears the staged pick and note. Undo brings them back.",
-                        send: { model.sendStaged([item.sourceId], known: [item]) },
-                        unstage: { model.holdDiscard([item.sourceId]) },
-                        pickRecommended: { model.pickSet(item, option: $0) })
+                        unstageTooltip: "Clears the staged pick and note. Undo brings them back.")
                 }
             }
             Button("Open in its session") {
