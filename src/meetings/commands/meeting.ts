@@ -434,8 +434,11 @@ async function joinCommand(
 
         for (const part of result.parts) {
             const renumbered = part.renumbered ? ", its items take new ids" : "";
+            const relabeled = Object.entries(part.relabeled ?? {})
+                .map(([own, joined]) => `, its "${own}" lines read as "${joined}"`)
+                .join("");
             ui.dim(
-                `  ${part.record}: ${part.lines} lines and ${part.items} items from ${formatClock(part.offsetMs / 1000)} to ${formatClock(part.endSec)}${renumbered}`
+                `  ${part.record}: ${part.lines} lines and ${part.items} items from ${formatClock(part.offsetMs / 1000)} to ${formatClock(part.endSec)}${renumbered}${relabeled}`
             );
         }
 

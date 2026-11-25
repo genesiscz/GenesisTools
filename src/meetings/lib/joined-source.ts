@@ -8,10 +8,16 @@ import { toJoinedSec } from "./join-clock";
 /** Opens a meeting source by its id (`meetingSource`); a test passes a fake one. */
 export type SourceOpener = (sourceId: string) => Promise<TranscriptSource>;
 
+/** The label a part's own speaker label carries on the joined record (`JoinPart.speakerLabels`), else the same label. */
+export function partSpeakerLabel(part: Pick<JoinPart, "speakerLabels">, label: string): string {
+    const labels = part.speakerLabels;
+    return labels && Object.hasOwn(labels, label) ? labels[label]! : label;
+}
+
 /**
  * One recording's transcript on the joined clock: every start and word time moved by the part's offset, every line
- * tagged with its source meeting, and the last line ended where it ended alone, so it never runs over the gap into
- * the next recording's first line.
+ * tagged with its source meeting and under its joined speaker label, and the last line ended where it ended alone, so it
+ * never runs over the gap into the next recording's first line.
  */
 export function joinedTranscript(part: JoinPart, transcript: readonly TranscriptEntry[]): TranscriptEntry[] {
     const lines = new TranscriptLines(transcript);
@@ -20,6 +26,7 @@ export function joinedTranscript(part: JoinPart, transcript: readonly Transcript
         const ownEnd = index === last ? lines.end(index) : entry.endSec;
         return {
             ...entry,
+            speaker: partSpeakerLabel(part, entry.speaker),
             sourceMeetingId: part.sourceMeetingId,
             ...(entry.startSec === undefined ? {} : { startSec: toJoinedSec(entry.startSec, part.offsetMs) }),
             ...(ownEnd === undefined ? {} : { endSec: toJoinedSec(ownEnd, part.offsetMs) }),
@@ -101,7 +108,11 @@ export function joinedMeeting(
         ...(meetings.at(-1)?.end ? { end: meetings.at(-1)?.end } : {}),
         participants: byName(meetings.map((meeting, index) => movedParticipants(meeting.participants, parts[index]!))),
         ...(observations.length > 0 ? { observations } : {}),
-        speakers: byName<Participant>(meetings.map((meeting) => meeting.speakers)),
+        speakers: byName<Participant>(
+            meetings.map((meeting, index) =>
+                meeting.speakers.map((speaker) => ({ ...speaker, name: partSpeakerLabel(parts[index]!, speaker.name) }))
+            )
+        ),
         transcript: meetings.flatMap((meeting, index) => joinedTranscript(parts[index]!, meeting.transcript)),
         ...(calendar ? { calendar } : {}),
         folders: [...new Set(meetings.flatMap((meeting) => meeting.folders))],

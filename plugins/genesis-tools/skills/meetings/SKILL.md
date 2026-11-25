@@ -90,6 +90,9 @@ A missing meeting names only the store that was searched. To find which store ho
      (below). To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
      to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
+   - A join of two recordings that both use a speaker label (`Speaker 1`) gives the later recording's lines that label
+     as `Speaker 1 (2)`, so two people never share one label; `tools meetings join <a> <b> --json` and
+     `await meetings.join({ meetings: [a, b] })` name the map in `parts[].relabeled`.
    - After a join, a line keeps one sample: its sample saved under the later recording's old id counts for the joined
      meeting, and backfill reports it as present. A backfill from before this fix may have saved such a line a second
      time. Run `tools meetings voices dedupe --dry-run` (`await meetings.dedupeVoices({ dryRun: true })`) to list

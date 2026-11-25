@@ -156,6 +156,28 @@ class JoinedPartStore extends MeetingStore {
     }
 }
 
+/**
+ * The joined record's label names as one recording reads them: a label the join renamed for this recording
+ * (`[own, joined]` pairs) names its person under the recording's own label again, in place of the other recording's.
+ */
+function partSpeakerNames(
+    names: Readonly<Record<string, string>>,
+    renamed: ReadonlyArray<[string, string]>
+): Record<string, string> {
+    const own = { ...names };
+
+    for (const [label, joined] of renamed) {
+        delete own[label];
+        delete own[joined];
+
+        if (Object.hasOwn(names, joined)) {
+            own[label] = names[joined]!;
+        }
+    }
+
+    return own;
+}
+
 /** A joined record as the single recording `part` was: its id, source, preserved sound and channel calibration. */
 function partRecord(joined: MeetingRecord, part: JoinPart): MeetingRecord {
     return {
@@ -675,7 +697,12 @@ export class OpenedMeeting {
     private readingOf(view: JoinedPartView): PartReading {
         const offsetMs = view.part.offsetMs;
         // The items' line addresses count on the joined transcript; this part's own transcript starts at its first line.
-        const back = clockMove(-offsetMs, -(view.part.firstLine ?? 0));
+        // A label the join gave this recording's lines reads as the recording's own label again.
+        const ownLabels = Object.entries(view.part.speakerLabels ?? {});
+        const back = {
+            ...clockMove(-offsetMs, -(view.part.firstLine ?? 0)),
+            labels: new Map(ownLabels.map(([own, joined]) => [joined, own])),
+        };
         const inside = (sec: number | undefined) => sec !== undefined && sec >= view.fromSec && sec < view.untilSec;
         const where = (item: MeetingRecord["items"][number]) => ("fromSec" in item ? item.fromSec : item.atSec);
         const assignments = (this.current.speakers.assignments ?? []).filter((one) => inside(one.fromSec));
@@ -683,7 +710,7 @@ export class OpenedMeeting {
             ...view.opened.record,
             items: this.current.items.filter((item) => inside(where(item))).map((item) => movedValue(item, back)),
             speakers: {
-                labels: this.current.speakers.labels,
+                labels: partSpeakerNames(this.current.speakers.labels, ownLabels),
                 ...(assignments.length > 0 ? { assignments: movedValue(assignments, back) } : {}),
             },
             participants: movedValue(this.current.participants, back),
