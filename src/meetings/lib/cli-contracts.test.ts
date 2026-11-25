@@ -47,6 +47,7 @@ import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { momentCacheDir, planMoment } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
+import { MEETING_OUTPUT_NAMES, undeclaredOutputKeys } from "./output-types";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { decisionReachSchema, voicesList, voicesMove, voicesRemove, voicesRename } from "./service/api";
 import { InProcessMeetingsClient } from "./service/client";
@@ -779,6 +780,12 @@ test("evidence --raw names the screen record and gives a vocabulary run the scre
     });
     expect(off).toMatchObject({ screen: { recorded: true, leads: { linesPerLead: 0 } } });
     expect(off.terms.runs[0]).not.toHaveProperty("screen");
+    // The printed JSON has no key its declared shape (tools meetings schema evidence) lacks; a new key fails here.
+    expect(undeclaredOutputKeys("evidence", led)).toEqual([]);
+    expect(undeclaredOutputKeys("evidence", off)).toEqual([]);
+    expect(
+        undeclaredOutputKeys("evidence", { ...led, lines: [{ ...led.lines[0], surprise: true }], extra: 1 })
+    ).toEqual(["$.lines[0].surprise", "$.extra"]);
     // The other outputs name the same record: --json as a typed key, the table in its summary lines.
     expect(json).toMatchObject({ screen: { recorded: true, frames: 1, fromSec: 40 } });
     expect(json.screen).not.toHaveProperty("leads");
@@ -1967,9 +1974,11 @@ test("items, seats and voices preview print the compact form in a pipe and the t
         expect(lines.join("\n")).toContain("STATUS");
         await run(false, "items", "items", record.id, "--json");
         expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject([{ id: "i1" }]);
+        expect(undeclaredOutputKeys("items", SafeJSON.parse(results[0] ?? "", { strict: true }))).toEqual([]);
 
         await run(false, "seats", "seats", record.id);
         expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({ meeting: record.id, saved: false });
+        expect(undeclaredOutputKeys("seats", SafeJSON.parse(results[0] ?? "", { strict: true }))).toEqual([]);
         await run(false, "seats", "seats", record.id, "--format", "tsv");
         expect(results[0]?.split("\n")[0]).toBe("person\tcurrent\tsuggested\treason");
         expect(results[0]).toContain("\n# Current seats: not set");
@@ -1979,6 +1988,14 @@ test("items, seats and voices preview print the compact form in a pipe and the t
 
         await run(false, "voices", "voices", "preview", record.id);
         expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({ lines: [{ index: 3 }] });
+        expect(undeclaredOutputKeys("voices-preview", SafeJSON.parse(results[0] ?? "", { strict: true }))).toEqual([]);
+        await run(false, "schema", "schema", "evidence");
+        expect(results[0]).toContain("speaking: string[]");
+        expect(results[0]?.length).toBeLessThan(4000);
+        await run(false, "schema", "schema", "voices-preview", "--format", "json-schema");
+        expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({ type: "object" });
+        await run(false, "schema", "schema");
+        expect(results[0]?.split("\n").map((line) => line.split(":")[0])).toEqual([...MEETING_OUTPUT_NAMES]);
         await run(false, "voices", "voices", "preview", record.id, "--format", "tsv");
         expect(results[0]).toBe(
             "idx\tfrom\tto\tcurrent\tperson\tscore\treason\tmargin\tnext\ttext\n3\t01:01\t01:04\tSpeaker 1\tReed\t0.81\tnamed\t\tLake 0.50\tTwo words"

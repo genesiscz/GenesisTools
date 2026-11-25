@@ -17,6 +17,7 @@ import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
 import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
 import { lineTableTsv, readLineTable } from "../lib/line-table";
 import { OpenedMeeting } from "../lib/opened-meeting";
+import type { EvidenceOutput } from "../lib/output-types";
 import { compactEvidence } from "../lib/raw";
 import { rawEvidence, withDeviceFacts } from "../lib/raw-evidence";
 import {
@@ -182,7 +183,8 @@ async function evidence(
                 screenLines,
                 voice,
             });
-            out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(raw, null, 2));
+            const json: EvidenceOutput = raw;
+            out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(json, null, 2));
             return;
         }
 

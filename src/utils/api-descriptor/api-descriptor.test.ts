@@ -4,7 +4,16 @@ import { JSON_RPC_ERRORS } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
 import { defineApi, defineMethod, effectLabel } from "./descriptor";
 import { assertReach, runInMethodScope, UndeclaredReachError } from "./reach";
-import { jsonSchemaOf, methodSignature, renderDocs, toMcpTools, typeText } from "./render";
+import {
+    jsonSchemaOf,
+    methodSignature,
+    renderDocs,
+    jsonSchemaOf as schemaOf,
+    toMcpTools,
+    typeDeclarations,
+    typeText,
+    undeclaredKeys,
+} from "./render";
 import { callArguments, handleHandlers, toRpcTable } from "./rpc";
 
 const api = defineApi({
@@ -284,5 +293,33 @@ describe("declared reaches", () => {
                 assertReach("user", "post to the inbox")
             )
         ).toThrow("x.y is declared [reversible · paid], so it may not post to the inbox (that reaches: user)");
+    });
+});
+
+describe("typeDeclarations and undeclaredKeys", () => {
+    const part = z.object({ id: z.string() }).meta({ title: "Part" });
+    const shape = z.object({
+        parts: z.array(part),
+        either: z.union([z.object({ a: z.number() }), z.object({ b: z.number() })]),
+        counts: z.record(z.string(), z.number()),
+        anything: z.unknown(),
+    });
+
+    test("a titled part is declared once and named where it is used", () => {
+        expect(typeDeclarations("Whole", schemaOf(shape, "output")).split("\n")).toEqual([
+            "type Whole = { parts: Part[]; either: { a: number } | { b: number }; counts: Record<string, number>; anything: unknown };",
+            "type Part = { id: string };",
+        ]);
+    });
+
+    test("every key the schema does not declare is named by its path; a union takes its closest member", () => {
+        const value = {
+            parts: [{ id: "x", more: 1 }],
+            either: { b: 2 },
+            counts: { any: 1 },
+            anything: { free: true },
+            extra: 1,
+        };
+        expect(undeclaredKeys(value, schemaOf(shape, "output"))).toEqual(["$.parts[0].more", "$.extra"]);
     });
 });

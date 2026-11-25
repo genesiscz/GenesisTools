@@ -17,7 +17,9 @@ export {
     methodSignature,
     renderDocs,
     toMcpTools,
+    typeDeclarations,
     typeText,
+    undeclaredKeys,
 } from "./render";
 export {
     callArguments,

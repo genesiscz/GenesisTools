@@ -158,6 +158,85 @@ export function typeText(schema: JsonSchema, depth = 3): string {
     }
 }
 
+/** Each sub-schema with a title, once, in the order a reader meets them: the named types `typeText` prints by name. */
+function namedSchemas(schema: JsonSchema, found: Map<string, JsonSchema>): Map<string, JsonSchema> {
+    if (schema.title && !found.has(schema.title)) {
+        found.set(schema.title, schema);
+    }
+
+    const items = Array.isArray(schema.items) ? schema.items : schema.items ? [schema.items] : [];
+    const extra = typeof schema.additionalProperties === "object" ? [schema.additionalProperties] : [];
+    for (const child of [
+        ...Object.values(schema.properties ?? {}),
+        ...items,
+        ...(schema.prefixItems ?? []),
+        ...(schema.anyOf ?? []),
+        ...(schema.oneOf ?? []),
+        ...(schema.allOf ?? []),
+        ...extra,
+    ]) {
+        namedSchemas(child, found);
+    }
+
+    return found;
+}
+
+/**
+ * A schema as TypeScript type declarations: `type <name> = …` for the whole, then one declaration for each titled
+ * sub-schema (zod `.meta({ title })`), which the others name instead of repeating it.
+ */
+export function typeDeclarations(name: string, schema: JsonSchema, depth = 4): string {
+    const untitled = (one: JsonSchema): JsonSchema => ({ ...one, title: undefined });
+    const named = namedSchemas(untitled(schema), new Map());
+    return [
+        `type ${name} = ${typeText(untitled(schema), depth)};`,
+        ...[...named].map(([title, one]) => `type ${title} = ${typeText(untitled(one), depth)};`),
+    ].join("\n");
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The paths of the keys in `value` that `schema` does not declare (`$.lines[0].extra`): an object schema with
+ * properties declares only those, unless its additionalProperties is a schema; a union takes the member that leaves
+ * the fewest. A schema with no type (`{}`, unknown) declares everything below it.
+ */
+export function undeclaredKeys(value: unknown, schema: JsonSchema, path = "$"): string[] {
+    const union = schema.anyOf ?? schema.oneOf;
+    if (union?.length) {
+        const tries = union.map((member) =>
+            undeclaredKeys(value, { ...schema, anyOf: undefined, oneOf: undefined, ...member }, path)
+        );
+        return tries.reduce((best, one) => (one.length < best.length ? one : best));
+    }
+
+    if (Array.isArray(value)) {
+        const items = Array.isArray(schema.items) ? undefined : schema.items;
+        return items ? value.flatMap((one, index) => undeclaredKeys(one, items, `${path}[${index}]`)) : [];
+    }
+
+    if (!isPlainRecord(value)) {
+        return [];
+    }
+
+    const properties = schema.properties;
+    const extra = typeof schema.additionalProperties === "object" ? schema.additionalProperties : undefined;
+    if (!properties && !extra) {
+        return [];
+    }
+
+    return Object.entries(value).flatMap(([key, child]) => {
+        const declared = properties?.[key] ?? extra;
+        if (!declared) {
+            return schema.additionalProperties === true ? [] : [`${path}.${key}`];
+        }
+
+        return undeclaredKeys(child, declared, `${path}.${key}`);
+    });
+}
+
 function isEmptyObject(schema: JsonSchema): boolean {
     return schema.type === "object" && Object.keys(schema.properties ?? {}).length === 0;
 }

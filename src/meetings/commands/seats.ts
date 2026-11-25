@@ -7,6 +7,7 @@ import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import type { SeatsOutput } from "../lib/output-types";
 import { applySuggestedSeats } from "../lib/seat-suggest";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, listingFormat, TOOL } from "../lib/shared";
@@ -83,7 +84,8 @@ async function seats(ref: string, opts: Options): Promise<void> {
             return { ...view, saved, unresolved };
         });
         if (format === "json") {
-            out.result(windowJson(report));
+            const json: SeatsOutput = report;
+            out.result(windowJson(json));
             return;
         }
         const current = seatLabels(report.current);
