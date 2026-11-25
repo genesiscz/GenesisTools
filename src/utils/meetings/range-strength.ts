@@ -26,6 +26,14 @@ export function rangeStrength(item: Ranked): RangeStrength {
     return first === MeetingRule.Agent || first === MeetingRule.User ? RangeStrength.Stated : RangeStrength.Automatic;
 }
 
+/**
+ * Whether a suggested range names its line at any confidence: one a person or an agent stated does, because its
+ * confidence is their own doubt (a note on the line), not a rule's score held back under the apply threshold.
+ */
+export function namesAtAnyConfidence(item: Ranked): boolean {
+    return rangeStrength(item) !== RangeStrength.Automatic;
+}
+
 /** The range that names a line: the strongest, and the latest of equals (a record keeps its items in the order added). */
 export function strongestRange<T extends Ranked>(ranges: readonly T[]): T | undefined {
     let best: T | undefined;

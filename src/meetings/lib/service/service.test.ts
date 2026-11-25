@@ -347,7 +347,8 @@ test("two speaker ranges in one second keep their lines through decision.apply, 
         { status: "applied", lines: [{ index: 1 }] },
         { status: "applied", lines: [{ index: 2 }] },
     ]);
-    const guessed = correctTranscript({
+    // Ranges an agent stated name their lines over the apply threshold too, each line its own.
+    const stated = correctTranscript({
         record,
         transcript,
         config,
@@ -355,10 +356,7 @@ test("two speaker ranges in one second keep their lines through decision.apply, 
         withSuggested: true,
         applyAbove: 0.7,
     });
-    expect(guessed.entries.slice(1, 3).map((entry) => entry.speaker)).toEqual([
-        "[Alice Example: 50 %]",
-        "[Bob Example: 55 %]",
-    ]);
+    expect(stated.entries.slice(1, 3).map((entry) => entry.speaker)).toEqual(["Alice Example", "Bob Example"]);
 
     const open = spyOn(OpenedMeeting, "of").mockReturnValue(OpenedMeeting.of(store, record, linkedSource(record)));
     try {

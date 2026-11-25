@@ -1,7 +1,12 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
-import { strongestFirst, strongestRange, weakestFirst } from "@genesiscz/utils/meetings/range-strength";
+import {
+    namesAtAnyConfidence,
+    strongestFirst,
+    strongestRange,
+    weakestFirst,
+} from "@genesiscz/utils/meetings/range-strength";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
@@ -199,7 +204,8 @@ export function rangeLineWarnings(items: readonly MeetingItem[]): string[] {
 /**
  * What a transcript applies: renames, then the confirmed items, then the dictionary. With `withSuggested` a suggested
  * item is applied too when its confidence reaches `global.suggest.applyAbove` (one with no confidence, a person's
- * own, always); a lower one is marked unclear, as an open question is.
+ * own, always); a lower one is marked unclear, as an open question is. A speaker range a person or an agent stated
+ * names its line at any confidence: its confidence stays on the line as a note (`namesAtAnyConfidence`).
  */
 export function correctionsOf(
     record: MeetingRecord,
@@ -226,7 +232,9 @@ export function correctionsOf(
             item.status === "suggested" &&
             !needsSpeakerReview(item) &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
-            (item.confidence === undefined || item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove)));
+            (item.confidence === undefined ||
+                item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove) ||
+                (item.kind === "speaker-range" && namesAtAnyConfidence(item))));
     const used = record.items
         .filter(applies)
         .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
