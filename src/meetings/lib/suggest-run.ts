@@ -27,7 +27,7 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
 import { contextEntryText } from "./context-file";
-import { indicatorGaps } from "./indicator-facts";
+import { indicatorGapLine, indicatorGapSummary, indicatorGaps } from "./indicator-facts";
 
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
@@ -326,9 +326,16 @@ async function readSuggestInputs(
     const evidence = needsSpeakerInputs ? await prof.measureAsync("evidence.read", () => opened.evidence()) : null;
 
     // Only indicator evidence that was read can show a gap: a terms-only run, or a source without it, has none to judge.
+    // The warnings carry one line for all of them; the debug log (`--verbose`) has each.
     if (evidence) {
-        for (const gap of prof.measure("evidence.indicator-gaps", () => indicatorGaps({ meeting, evidence }))) {
-            warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
+        const gaps = prof.measure("evidence.indicator-gaps", () => indicatorGaps({ meeting, evidence }));
+        for (const gap of gaps) {
+            log.debug(indicatorGapLine(gap));
+        }
+
+        const summary = indicatorGapSummary(gaps);
+        if (summary) {
+            warnings.push(summary);
         }
     }
 

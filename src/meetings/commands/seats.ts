@@ -1,4 +1,5 @@
 import { ui } from "@genesiscz/utils/cli/ui";
+import { tsvLine } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import { type MeetingSeats, type RemoteSeat, roomSeatNames, seatSpan } from "@genesiscz/utils/meetings/seats";
@@ -8,7 +9,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { applySuggestedSeats } from "../lib/seat-suggest";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, listingFormat, TOOL } from "../lib/shared";
 import { windowJson } from "../lib/window-reads";
 
 interface Options {
@@ -17,7 +18,10 @@ interface Options {
     room?: string[];
     remote?: string[];
     json?: boolean;
+    format?: string | boolean;
 }
+
+const SEAT_FORMATS = ["table", "json", "tsv"] as const;
 
 /** Every saved seat of a person, in order: one person can sit remote for several intervals. */
 export function seatLabels(seats: MeetingSeats | null): Map<string, string> {
@@ -52,6 +56,12 @@ function handChoice(options: { command: string; opts: Options; name: string; sea
 }
 
 async function seats(ref: string, opts: Options): Promise<void> {
+    const format = await listingFormat({ opts, values: SEAT_FORMATS, piped: "json", subcommand: ["seats"] });
+
+    if (!format) {
+        return;
+    }
+
     try {
         const report = await withMeetingsClient(async (client) => {
             const view = await client.call("meeting.seats.suggest", {
@@ -72,18 +82,18 @@ async function seats(ref: string, opts: Options): Promise<void> {
                 }));
             return { ...view, saved, unresolved };
         });
-        if (opts.json) {
+        if (format === "json") {
             out.result(windowJson(report));
             return;
         }
         const current = seatLabels(report.current);
         const suggested = seatLabels(report.suggestion.seats);
-        const table = createBoxTable(["PERSON", "CURRENT", "SUGGESTED", "REASON"]);
+        const rows: string[][] = [];
         const listed = new Set<string>();
         for (const person of report.suggestion.people) {
             const key = nameKey(person.name);
             listed.add(key);
-            table.push([person.name, current.get(key) ?? "—", suggested.get(key) ?? person.seat, person.reason]);
+            rows.push([person.name, current.get(key) ?? "—", suggested.get(key) ?? person.seat, person.reason]);
         }
         for (const name of [
             ...roomSeatNames(report.current ?? undefined),
@@ -91,21 +101,41 @@ async function seats(ref: string, opts: Options): Promise<void> {
         ]) {
             if (!listed.has(nameKey(name))) {
                 listed.add(nameKey(name));
-                table.push([name, current.get(nameKey(name)) ?? "—", "—", "Only in the saved seats."]);
+                rows.push([name, current.get(nameKey(name)) ?? "—", "—", "Only in the saved seats."]);
             }
         }
-        if (!report.current) {
-            out.println("Current seats: not set");
-        }
-        out.println(table.toString());
-        for (const offer of report.suggestion.deviceOffers ?? []) {
-            out.println(`${offer.question} (${offer.meetings.join(", ")})`);
-        }
-        for (const mic of report.current?.microphones ?? []) {
-            out.println(`Current microphone ${mic.label ?? mic.id}: ${mic.people.join(", ")}`);
-        }
-        for (const person of report.unresolved) {
-            out.println(`${person.name}: ${person.room}\n  or: ${person.remote}`);
+        const notes = [
+            ...(report.suggestion.deviceOffers ?? []).map(
+                (offer) => `${offer.question} (${offer.meetings.join(", ")})`
+            ),
+            ...(report.current?.microphones ?? []).map(
+                (mic) => `Current microphone ${mic.label ?? mic.id}: ${mic.people.join(", ")}`
+            ),
+        ];
+        if (format === "tsv") {
+            // One row per person; the facts below the table follow as comment lines, so a reader keeps every one.
+            out.result(
+                [
+                    tsvLine(["person", "current", "suggested", "reason"]),
+                    ...rows.map(tsvLine),
+                    ...(report.current ? [] : ["# Current seats: not set"]),
+                    ...notes.map((note) => `# ${note}`),
+                    ...report.unresolved.map((person) => `# ${person.name}: ${person.room} or: ${person.remote}`),
+                ].join("\n")
+            );
+        } else {
+            const table = createBoxTable(["PERSON", "CURRENT", "SUGGESTED", "REASON"]);
+            table.push(...rows);
+            if (!report.current) {
+                out.println("Current seats: not set");
+            }
+            out.println(table.toString());
+            for (const note of notes) {
+                out.println(note);
+            }
+            for (const person of report.unresolved) {
+                out.println(`${person.name}: ${person.room}\n  or: ${person.remote}`);
+            }
         }
         if (report.saved) {
             ui.ok("Saved seats.");
@@ -133,6 +163,7 @@ export function registerSeatsCommand(program: Command): void {
             "--remote <names...>",
             "seat these people on the call; saved when no seats are set yet, else add --replace"
         )
+        .option("--format [format]", `${SEAT_FORMATS.join(" | ")} (default: table in a terminal, json in a pipe)`)
         .option("--json", "print the preview and save result as JSON")
         .action(seats);
 }

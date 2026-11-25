@@ -464,3 +464,13 @@ export function formatCountdown(remainingMs: number): string {
 
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+/**
+ * One line of tab-separated values. A tab, carriage return or newline inside a cell becomes one space, so a cell never
+ * splits a row; an absent cell is empty.
+ */
+export function tsvLine(cells: ReadonlyArray<string | number | undefined | null>): string {
+    return cells
+        .map((cell) => (cell === undefined || cell === null ? "" : String(cell).replace(/[\t\r\n]+/g, " ")))
+        .join("\t");
+}

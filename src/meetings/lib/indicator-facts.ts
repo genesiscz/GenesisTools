@@ -1,4 +1,5 @@
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { formatClock } from "@genesiscz/utils/transcribe/clock";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 
@@ -48,6 +49,30 @@ export function indicatorGaps(options: IndicatorInputs): IndicatorGap[] {
         }
     }
     return gaps;
+}
+
+/** One gap's own line: the one `--verbose` lists, and the whole warning when a meeting has a single gap. */
+export function indicatorGapLine(gap: IndicatorGap): string {
+    return `Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`;
+}
+
+/**
+ * The gaps of a suggestion pass as one warning, so each run does not print the same list again: one gap keeps its
+ * own line, more gaps give their count and the longest one.
+ */
+export function indicatorGapSummary(gaps: readonly IndicatorGap[]): string | undefined {
+    const [first] = gaps;
+
+    if (!first) {
+        return undefined;
+    }
+
+    if (gaps.length === 1) {
+        return indicatorGapLine(first);
+    }
+
+    const longest = gaps.reduce((a, b) => (b.toSec - b.fromSec > a.toSec - a.fromSec ? b : a), first);
+    return `${gaps.length} speaking indicator gaps, longest ${formatClock(longest.toSec - longest.fromSec)} at ${formatClock(longest.fromSec)}; --verbose or evidence --raw (meeting.indicatorGaps) lists them`;
 }
 
 export function indicatorLabels(options: IndicatorInputs): LabelPrehistory[] {

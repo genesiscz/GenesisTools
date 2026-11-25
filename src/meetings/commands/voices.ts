@@ -2,6 +2,7 @@ import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions"
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { tsvLine } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, missingMeetingText } from "@genesiscz/utils/meetings/record";
@@ -15,7 +16,7 @@ import { callerActor } from "../lib/decision-journal";
 import { confirmVoiceSample } from "../lib/person-door";
 import { type MeetingsParams, type MeetingsResult, voicesReject } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, resolveEnum, TOOL } from "../lib/shared";
+import { fail, listingFormat, resolveEnum, TOOL } from "../lib/shared";
 import { playSoundSlice } from "../lib/sound-playback";
 import { addVoiceSample, applyVoices, previewVoices } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
@@ -32,6 +33,31 @@ interface VoiceOptions {
     start?: boolean;
     preview?: boolean;
     planToken?: string;
+    format?: string | boolean;
+}
+
+const PREVIEW_FORMATS = ["table", "json", "tsv"] as const;
+
+/** The voice proposals as tab-separated rows, one per line, keyed by the transcript line index. */
+function previewTsv(lines: Awaited<ReturnType<typeof previewVoices>>["lines"]): string {
+    const rows = lines.map((line) =>
+        tsvLine([
+            line.index,
+            formatClock(line.fromSec),
+            formatClock(line.toSec),
+            line.current,
+            line.person,
+            line.score?.toFixed(2),
+            line.reason,
+            line.margin?.toFixed(2),
+            line.next ? `${line.next.person} ${line.next.score.toFixed(2)}` : undefined,
+            line.text,
+        ])
+    );
+    return [
+        tsvLine(["idx", "from", "to", "current", "person", "score", "reason", "margin", "next", "text"]),
+        ...rows,
+    ].join("\n");
 }
 
 function oneSelection(value: string, previous?: string): string {
@@ -445,44 +471,69 @@ export function registerVoicesCommand(program: Command): void {
         );
 
     for (const name of ["preview", "apply"] as const) {
-        voices
+        const command = voices
             .command(`${name} <meeting>`)
             .description(
                 name === "preview"
                     ? "Read voice proposals, scores, current names and refusal reasons; saves nothing"
                     : "Run the meeting's speaker suggestion pass; confirms no name"
             )
-            .option("--json", "print the structured result")
-            .action((meeting: string, opts: VoiceOptions) =>
-                guarded(async () => {
-                    const result = await (name === "preview" ? previewVoices : applyVoices)({
-                        store: new MeetingStore(),
-                        meeting,
-                    });
-                    if (opts.json || voices.opts<VoiceOptions>().json) {
-                        out.result(SafeJSON.stringify(result));
-                        return;
-                    }
-                    if ("lines" in result) {
-                        for (const line of result.lines) {
-                            const score =
-                                line.score === undefined
-                                    ? ""
-                                    : ` ${line.reason === "exclusion" ? "confidence" : "by voice"} ${line.score.toFixed(2)}`;
-                            const margin = line.margin === undefined ? "" : `, margin ${line.margin.toFixed(2)}`;
-                            out.println(
-                                `${formatClock(line.fromSec)}–${formatClock(line.toSec)} ${line.current} → ${line.person ?? "unnamed"}${score} [${line.reason}${margin}]${line.next ? `; next ${line.next.person} ${line.next.score.toFixed(2)}` : ""}: ${line.text}`
-                            );
-                        }
-                        ui.info(`${result.lines.length} voice proposals; nothing saved.`);
-                    } else {
-                        ui.ok(`${result.added} speaker suggestions added.`);
-                        for (const warning of result.warnings) {
-                            ui.warn(warning);
-                        }
-                    }
-                })
+            .option("--json", "print the structured result");
+        if (name === "preview") {
+            command.option(
+                "--format [format]",
+                `${PREVIEW_FORMATS.join(" | ")} (default: table in a terminal, json in a pipe)`
             );
+        }
+        command.action((meeting: string, opts: VoiceOptions) =>
+            guarded(async () => {
+                const json = opts.json || voices.opts<VoiceOptions>().json;
+                const format =
+                    name === "preview"
+                        ? await listingFormat({
+                              opts: { format: opts.format, json },
+                              values: PREVIEW_FORMATS,
+                              piped: "json",
+                              subcommand: ["voices", "preview"],
+                          })
+                        : json
+                          ? "json"
+                          : "table";
+                if (!format) {
+                    return;
+                }
+                const result = await (name === "preview" ? previewVoices : applyVoices)({
+                    store: new MeetingStore(),
+                    meeting,
+                });
+                if (format === "json") {
+                    out.result(SafeJSON.stringify(result));
+                    return;
+                }
+                if (format === "tsv" && "lines" in result) {
+                    out.result(previewTsv(result.lines));
+                    return;
+                }
+                if ("lines" in result) {
+                    for (const line of result.lines) {
+                        const score =
+                            line.score === undefined
+                                ? ""
+                                : ` ${line.reason === "exclusion" ? "confidence" : "by voice"} ${line.score.toFixed(2)}`;
+                        const margin = line.margin === undefined ? "" : `, margin ${line.margin.toFixed(2)}`;
+                        out.println(
+                            `${formatClock(line.fromSec)}–${formatClock(line.toSec)} ${line.current} → ${line.person ?? "unnamed"}${score} [${line.reason}${margin}]${line.next ? `; next ${line.next.person} ${line.next.score.toFixed(2)}` : ""}: ${line.text}`
+                        );
+                    }
+                    ui.info(`${result.lines.length} voice proposals; nothing saved.`);
+                } else {
+                    ui.ok(`${result.added} speaker suggestions added.`);
+                    for (const warning of result.warnings) {
+                        ui.warn(warning);
+                    }
+                }
+            })
+        );
     }
 
     voices

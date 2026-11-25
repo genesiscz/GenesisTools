@@ -6,7 +6,7 @@ import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { parseDuration } from "@genesiscz/utils/format";
+import { parseDuration, tsvLine } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -48,7 +48,16 @@ import { missingProjectWarning, projectRequired, resolveProject } from "../lib/p
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL, unknownMeetingText } from "../lib/shared";
+import {
+    errorText,
+    fail,
+    formatFlag,
+    hintIfSeatsUnset,
+    listingFormat,
+    resolveEnum,
+    TOOL,
+    unknownMeetingText,
+} from "../lib/shared";
 import { linkedSource, localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
@@ -109,6 +118,25 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
     }
 
     out.println(table.toString());
+}
+
+const ITEM_FORMATS = ["table", "json", "tsv"] as const;
+
+/** The items as tab-separated rows for an agent: one row per item, the full text, no padding and no colour. */
+function itemsTsv(record: MeetingRecord, items: MeetingItem[]): string {
+    const rows = items.map((item) => {
+        const row = reviewRow(record, item);
+        return tsvLine([
+            item.id,
+            item.kind === "question" ? row.label : "",
+            item.kind,
+            item.status,
+            item.confidence === undefined ? "" : Math.round(item.confidence * 100),
+            item.kind === "term" ? itemWhat(item) : row.what,
+            item.rules.join(","),
+        ]);
+    });
+    return [tsvLine(["id", "q", "kind", "status", "conf", "what", "rules"]), ...rows].join("\n");
 }
 
 /** A row part in one line for the terminal; `when` and `asks` are the row's head line instead. */
@@ -353,7 +381,16 @@ async function suggest(
     }
 }
 
-async function items(ref: string, opts: { status?: string | boolean; kind?: string; json?: boolean }): Promise<void> {
+async function items(
+    ref: string,
+    opts: { status?: string | boolean; kind?: string; json?: boolean; format?: string | boolean }
+): Promise<void> {
+    const format = await listingFormat({ opts, values: ITEM_FORMATS, piped: "tsv", subcommand: ["items"] });
+
+    if (!format) {
+        return;
+    }
+
     const record = requireMeeting(new MeetingStore(), ref);
 
     if (!record) {
@@ -380,8 +417,13 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
 
     const listed = record.items.filter((item) => (!status || item.status === status) && (!kind || item.kind === kind));
 
-    if (opts.json) {
+    if (format === "json") {
         out.result(SafeJSON.stringify(listed, null, 2));
+        return;
+    }
+
+    if (format === "tsv") {
+        out.result(itemsTsv(record, listed));
         return;
     }
 
@@ -1084,6 +1126,7 @@ export function registerItemCommands(program: Command): void {
         .description("The meeting's items with their status, confidence and rules")
         .option("--status [status]", ITEM_STATUSES.join(" | "))
         .option("--kind <kind>", "speaker-range | label | join | term | question")
+        .option("--format [format]", `${ITEM_FORMATS.join(" | ")} (default: table in a terminal, tsv in a pipe)`)
         .option("--json", "print JSON")
         .action(items)
         .command("add")
