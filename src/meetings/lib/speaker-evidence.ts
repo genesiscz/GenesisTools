@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { DEFAULT_SEAT_RETIRE, type SeatRetireMode } from "@genesiscz/utils/meetings/config";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
@@ -179,13 +180,35 @@ export function scoresEvidence(scores: SpeakerScore[]): { candidateScores?: Spea
     return scores.length > 0 ? { candidateScores: scores } : {};
 }
 
-/** An outstanding automatic seat answer can predate calibration. Leave decisions and unrelated ranges alone. */
+/**
+ * An outstanding automatic seat answer can predate calibration. Leave decisions and unrelated ranges alone. With
+ * `mode` `contradicted`, an answer the calibrated share no longer supports stays unless another range on the line or
+ * the speaking indicator names someone else.
+ */
 export function retireContradictedSeats(options: {
     record: MeetingRecord;
     lines: LineEvidence[];
     applyAbove?: number;
+    mode?: SeatRetireMode;
 }) {
     const byIndex = new Map(options.lines.map((line) => [line.index, line]));
+    const onlyContradicted = (options.mode ?? DEFAULT_SEAT_RETIRE) === "contradicted";
+    const namesSomeoneElse = (seat: MeetingItem & { kind: "speaker-range" }, line: LineEvidence) =>
+        Object.keys(line.speaking).some((name) => !seat.speaker || !sameName(name, seat.speaker)) ||
+        options.record.items.some(
+            (other) =>
+                other !== seat &&
+                other.kind === "speaker-range" &&
+                other.status !== "rejected" &&
+                other.label === line.label &&
+                other.fromSec <= line.startSec &&
+                other.toSec >= line.startSec &&
+                (other.fromSec !== other.toSec ||
+                    typeof other.evidence?.transcriptLine !== "number" ||
+                    other.evidence.transcriptLine === line.index) &&
+                !!other.speaker &&
+                (!seat.speaker || !sameName(other.speaker, seat.speaker))
+        );
     for (const item of options.record.items) {
         const evidence = item.evidence;
         if (
@@ -207,7 +230,8 @@ export function retireContradictedSeats(options: {
                 seat: evidence.seat,
                 energyMic: line.energyMic ?? line.energyMicRaw,
                 applyAbove: options.applyAbove,
-            }) === undefined
+            }) === undefined &&
+            (!onlyContradicted || namesSomeoneElse(item, line))
         ) {
             item.status = "rejected";
             item.evidence = { ...evidence, retired: "calibrated-seat" };

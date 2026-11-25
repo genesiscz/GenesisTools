@@ -2,6 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
+    fusedConfidence,
     namedByVoice,
     namesAtAnyConfidence,
     showsAsGuess,
@@ -41,18 +42,22 @@ function unclearPassages(
         termBelow?: number;
         applied?: (item: MeetingItem) => boolean;
         guesses?: boolean;
+        /** Count the findings that agree with a speaker range (`speakerLabels.fusion.mode`). */
+        fused?: boolean;
         unclearLabel: string;
     }
 ): UnclearPassage[] {
     const applied = opts.applied ?? (() => false);
     const open = openQuestions(record);
     const asked = new Set(open.flatMap((question) => question.decides));
+    const confidenceOf = (item: MeetingItem) =>
+        opts.fused && item.kind === "speaker-range" ? fusedConfidence(item) : item.confidence;
     const unaskedLow = (item: MeetingItem) =>
         item.status === "suggested" &&
         !applied(item) &&
         !asked.has(item.id) &&
         (needsSpeakerReview(item) ||
-            (item.confidence ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below));
+            (confidenceOf(item) ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below));
     // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
     // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
     const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
@@ -210,7 +215,9 @@ export function rangeLineWarnings(items: readonly MeetingItem[]): string[] {
  * item is applied too when its confidence reaches `global.suggest.applyAbove` (one with no confidence, a person's
  * own, always); a lower one is marked unclear, as an open question is. A speaker range built on the user's answer or
  * stated by an agent takes part at any confidence, so the order of ranges (`compareRanges`) decides its line; when an
- * agent's range under the threshold wins, the line shows it as a guess (`[Name: 60 %]`, `showsAsGuess`).
+ * agent's range under the threshold wins, the line shows it as a guess (`[Name: 60 %]`, `showsAsGuess`). With
+ * `speakerLabels.fusion.mode` `independent`, a range's confidence counts the findings a pass recorded as agreeing with
+ * it from different evidence (`fusedConfidence`), so a name two independent findings give is shown plainly.
  */
 export function correctionsOf(
     record: MeetingRecord,
@@ -228,6 +235,9 @@ export function correctionsOf(
         throw new RangeError("applyAbove must be between 0 and 1");
     }
     const termApplyAbove = opts.applyAbove ?? config.global.suggest.terms.applyAbove;
+    const fused = config.global.speakerLabels.fusion.mode === "independent";
+    const confidenceOf = (item: MeetingItem) =>
+        fused && item.kind === "speaker-range" ? fusedConfidence(item) : item.confidence;
     const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
@@ -238,7 +248,7 @@ export function correctionsOf(
             !needsSpeakerReview(item) &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
             (item.confidence === undefined ||
-                item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove) ||
+                (confidenceOf(item) ?? 1) >= (item.kind === "term" ? termApplyAbove : applyAbove) ||
                 (item.kind === "speaker-range" && namesAtAnyConfidence(item))));
     const used = record.items
         .filter(applies)
@@ -254,6 +264,7 @@ export function correctionsOf(
                   termBelow: termApplyAbove,
                   applied: applies,
                   guesses: true,
+                  fused,
                   unclearLabel,
               })
             : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
@@ -275,7 +286,7 @@ export function correctionsOf(
         item.status === "suggested" &&
         item.confidence !== undefined &&
         opts.include?.includes(item.id) !== true &&
-        showsAsGuess(item, applyAbove)
+        showsAsGuess(item, applyAbove, { fused })
             ? { guess: item.confidence }
             : {};
     const itemRanges = weakestFirst(used).flatMap((item) =>

@@ -434,8 +434,28 @@ const playbackSchema = z.object({
 export const DEFAULT_APPLY_ABOVE = 0.7;
 
 /**
+ * How findings that agree on a line's speaker combine (`speakerLabels.fusion.mode`). `independent`: findings that
+ * rest on different evidence add up by noisy-OR. `off`: each finding keeps its own confidence.
+ */
+export const SPEAKER_FUSION_MODES = ["independent", "off"] as const;
+export type SpeakerFusionMode = (typeof SPEAKER_FUSION_MODES)[number];
+export const DEFAULT_SPEAKER_FUSION: SpeakerFusionMode = "independent";
+/** The lead a voice match needs over its rival to count as agreement (`speakerLabels.fusion.voiceMargin`). */
+export const DEFAULT_FUSION_VOICE_MARGIN = 0.15;
+
+/**
+ * When a pass sets aside a seat name that the calibrated audio no longer puts on that seat
+ * (`speakerLabels.seat.retire`). `calibration`: always. `contradicted`: only when something else on the line names
+ * another person.
+ */
+export const SEAT_RETIRE_MODES = ["calibration", "contradicted"] as const;
+export type SeatRetireMode = (typeof SEAT_RETIRE_MODES)[number];
+export const DEFAULT_SEAT_RETIRE: SeatRetireMode = "calibration";
+
+/**
  * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
  * block). `seat` names a line by the seat it was heard on, `voice` by compatible samples in the voice library.
+ * `fusion` is not a labeler: it says how the findings of the labelers, the rules and an agent combine on one line.
  */
 const speakerLabelsSchema = z.object({
     /** Minimum difference in median left-channel share between tagged mic and call audio. */
@@ -447,6 +467,35 @@ const speakerLabelsSchema = z.object({
             enabled: z.boolean().default(true),
             /** Distinct meetings with a roster join at the same room microphone before asking the owner. */
             deviceOfferMinMeetings: z.number().int().positive().default(2),
+            /**
+             * A seat name written before the audio was calibrated can sit on a line that the calibrated share now
+             * puts on the other seat. `calibration` sets that name aside on the share alone, and the line waits for
+             * another answer. `contradicted` sets it aside only when another range or the speaking indicator names
+             * someone else on the line, and keeps the name otherwise. Measured 2026-11-25 on the lines people decided:
+             * the truth set holds no such line, and the historical table says a line under half on the microphone was
+             * the user on 5 % of lines, so `calibration` is the default.
+             */
+            retire: z.enum(SEAT_RETIRE_MODES).default(DEFAULT_SEAT_RETIRE),
+        })
+        .prefault({}),
+    fusion: z
+        .object({
+            /**
+             * `independent`: findings that name the same person on a line and rest on different evidence (the
+             * audio levels behind the seat and the channel rules, a voice match that had a rival to compare, the
+             * platform's own readings, the transcript's words, an agent's statement) combine into one confidence,
+             * `1 - (1 - a)(1 - b)`, so two agreeing 0.6 findings show the name plainly. Findings from the same
+             * evidence never add up, a voice match with no rival adds nothing, and a finding for another person
+             * leaves the mark. `off`: each finding keeps its own confidence, as before 2026-11-25.
+             */
+            mode: z.enum(SPEAKER_FUSION_MODES).default(DEFAULT_SPEAKER_FUSION),
+            /**
+             * The lead (cosine) a voice match needs over its rival before it counts as agreement with another
+             * finding. Higher than the naming gate's margin (`voice.gate.margin`): on the lines people decided, every
+             * agreeing voice match with a lead of 0.16 or more was right (19 lines), and one with 0.12 named a person
+             * who never spoke.
+             */
+            voiceMargin: z.number().min(0).max(1).default(DEFAULT_FUSION_VOICE_MARGIN),
         })
         .prefault({}),
     voice: z

@@ -1407,3 +1407,49 @@ test("a multi-voice split cuts only its own source line, with distinct ids, word
         { location: 7, length: 9 },
     ]);
 });
+
+test("a guess that a finding from other evidence agrees with shows the plain name; with fusion off, or agreement from the same evidence, it stays a guess", () => {
+    const stated = (agreeing?: Record<string, number>) =>
+        item({
+            id: "i1",
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Speaker 2",
+            fromSec: 30,
+            toSec: 30,
+            speaker: "Alice Example",
+            confidence: 0.4,
+            ...(agreeing ? { evidence: { agreeing } } : {}),
+        });
+    const shown = (one: ReturnType<typeof item>, settings = config) =>
+        correctTranscript({
+            record: { ...base, items: [one] },
+            transcript,
+            config: settings,
+            format: "json",
+            withSuggested: true,
+        }).entries[3];
+    const off = meetingsConfigSchema.parse({ global: { speakerLabels: { fusion: { mode: "off" } } } });
+
+    // The agent said 40 %; the seat's reading of the audio levels names the same person at 0.95.
+    expect(shown(stated({ levels: 0.95 }))).toMatchObject({ speaker: "Alice Example", guess: false, confidence: 0.4 });
+    expect(shown(stated({ voice: 0.55 }))).toMatchObject({ speaker: "Alice Example", guess: false });
+    // Negative controls: no agreement, agreement too weak to reach the threshold, the agent's own kind of evidence,
+    // and the old behaviour.
+    expect(shown(stated())).toMatchObject({ speaker: "[Alice Example: 40 %]", guess: true });
+    expect(shown(stated({ voice: 0.3 }))).toMatchObject({ speaker: "[Alice Example: 40 %]", guess: true });
+    expect(shown(stated({ agent: 0.95 }))).toMatchObject({ speaker: "[Alice Example: 40 %]", guess: true });
+    expect(shown(stated({ levels: 0.95 }), off)).toMatchObject({ speaker: "[Alice Example: 40 %]", guess: true });
+
+    // A rule's own range under the threshold applies plainly once another kind of evidence agrees with it.
+    const seat = (agreeing?: Record<string, number>) =>
+        item({
+            ...stated(),
+            confidence: 0.62,
+            rules: [MeetingRule.Attendance],
+            evidence: { labeler: "seat", reason: "seat-of-one", score: 0.62, ...(agreeing ? { agreeing } : {}) },
+        });
+    expect(shown(seat({ voice: 0.7 }))).toMatchObject({ speaker: "Alice Example", guess: false });
+    expect(shown(seat())).toMatchObject({ speaker: "[Alice Example: 62 %]", guess: true });
+    expect(shown(seat({ voice: 0.7 }), off)).toMatchObject({ speaker: "[Alice Example: 62 %]", guess: true });
+});

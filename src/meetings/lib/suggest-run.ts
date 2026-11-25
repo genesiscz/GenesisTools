@@ -603,6 +603,8 @@ function configuredPlan(inputs: SuggestInputs, config: MeetingsConfig, features?
         planSuggestions({
             ...inputs,
             applyAbove: config.global.suggest.applyAbove,
+            fusion: config.global.speakerLabels.fusion,
+            seatRetire: config.global.speakerLabels.seat.retire,
             termThresholds: config.global.suggest.terms,
             listenBelow: config.global.suggest.listenBelow,
             questionBudget: config.global.suggest.questionCap,

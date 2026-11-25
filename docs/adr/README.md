@@ -100,3 +100,11 @@ Util `src/utils/ai/agent-instructions.ts`.
 | Number | Decision | Status | Date | Source |
 | --- | --- | --- | --- | --- |
 | 0049 | [Give every instruction for an agent one shape](0049-agent-instructions.md) | Accepted | 2026-11-24 | D443 |
+
+## Speaker precision
+
+Benchmark `scripts/benchmarks/meetings/speaker-precision.ts`.
+
+| Number | Decision | Status | Date | Source |
+| --- | --- | --- | --- | --- |
+| 0050 | [Count agreeing speaker findings once per kind of evidence](0050-agreeing-evidence.md) | Accepted | 2026-11-25 | Speaker precision measurement |
