@@ -663,6 +663,25 @@ test("the user's answer names its line over a later agent's range; between agent
         confidence: 0.9,
         look: "Alice Example",
     });
+    // A voice suggestion the user answered names its line by the answer: the line carries no voice note.
+    const voiced = (rules: MeetingRule[]) => {
+        const record = {
+            ...base,
+            items: [{ ...range("i1", "Alice Example", 0.9, rules), evidence: { score: 0.64 } }],
+        };
+        const line = correctTranscript({ record, transcript, config, format: "json", withSuggested: true }).entries[3];
+        return { speaker: line?.speaker, nameSource: line?.nameSource, nameScore: line?.nameScore };
+    };
+    expect(voiced([MeetingRule.VoiceEmbedding, MeetingRule.User])).toEqual({
+        speaker: "Alice Example",
+        nameSource: undefined,
+        nameScore: undefined,
+    });
+    expect(voiced([MeetingRule.VoiceEmbedding])).toEqual({
+        speaker: "Alice Example",
+        nameSource: "voice",
+        nameScore: 0.64,
+    });
     // Under the apply threshold an agent's range wins its line and still shows as a guess.
     expect(shown([range("i1", "Alice Example", 0.6), range("i2", "Bob Example", 0.45)])).toMatchObject({
         speaker: "[Alice Example: 60 %]",

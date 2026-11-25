@@ -1,3 +1,4 @@
+import { namedByVoice } from "@genesiscz/utils/meetings/range-strength";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { presentAt } from "@genesiscz/utils/transcribe/evidence";
@@ -777,7 +778,7 @@ export function questionView(
                       item.status === "suggested" &&
                       item.speaker &&
                       !needsSpeakerReview(item) &&
-                      item.rules.includes(MeetingRule.VoiceEmbedding)
+                      namedByVoice(item)
                           ? [
                                 {
                                     nameSource: "voice" as const,
