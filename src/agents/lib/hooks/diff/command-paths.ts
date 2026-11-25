@@ -429,6 +429,16 @@ export function programDirs(command: string, cwd: string): string[] {
     return walked.programs.filter((dir) => !walked.dirs.includes(dir));
 }
 
+/**
+ * The folders a call works in: `commandDirs`, then, for a command that may write, its `programDirs`. The pre phase takes
+ * its roots and the bases of its named paths from here, and the post phase reads the named paths against them again.
+ */
+export function workDirs(command: string, cwd: string, readOnly: boolean): string[] {
+    const walked = walkDirs(command, cwd, !readOnly);
+
+    return [...walked.dirs, ...walked.programs.filter((dir) => !walked.dirs.includes(dir))];
+}
+
 function isDirectory(path: string): boolean {
     try {
         return statSync(path).isDirectory();

@@ -60,7 +60,7 @@ import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
-import { commandDirs, namedArguments, programDirs } from "./command-paths";
+import { commandDirs, namedArguments, programDirs, workDirs } from "./command-paths";
 import { writeFullDiff } from "./full";
 import { activeSessions, covers, fileTimesOf, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
@@ -760,6 +760,9 @@ describe("a command that edits a sibling repository", () => {
         expect(programDirs(`bun x.ts ${parent}`, repo)).toEqual([]);
         // The `cd` folders stay where they were: the shell moves there, no program is handed one.
         expect(commandDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([repo]);
+        // The pre phase and the post phase read a named path against the same folders.
+        expect(workDirs(`bun x.ts --cwd ${other} src/a.ts`, repo, false)).toEqual([repo, other]);
+        expect(workDirs(`bun x.ts --cwd ${other} src/a.ts`, repo, true)).toEqual([repo]);
     });
 
     it("gives a command that only reads no program folder, so `git -C <dir> log` costs no second root", () => {

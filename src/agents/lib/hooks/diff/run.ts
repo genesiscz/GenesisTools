@@ -66,7 +66,7 @@ import { transcriptOf } from "./capture";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
-import { commandDirs, namedArguments } from "./command-paths";
+import { namedArguments, workDirs } from "./command-paths";
 import { type FullDiffPart, fullDiffLine, overflowPart, writeFullDiff } from "./full";
 import {
     activeSessions,
@@ -2191,7 +2191,10 @@ function attributionContext({
     // file fell to "others" (11 calls on 2026-10-14).
     const named = mentionsFrom([
         ...mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }),
-        ...namedArguments(payload.command, commandDirs(payload.command, payload.cwd)).map(canonical),
+        ...namedArguments(
+            payload.command,
+            workDirs(payload.command, payload.cwd, readOnlyCommand(payload.command))
+        ).map(canonical),
     ]);
     let siblings: Set<string> | undefined;
     let mentions: Mentions | undefined;
