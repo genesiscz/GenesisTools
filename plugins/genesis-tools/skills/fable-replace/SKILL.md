@@ -61,10 +61,18 @@ heredoc, and do not parse the printed lines.
 
 - **The report** of both doors: `ok`, `exitCode` (0 landed, 1 a MISS and nothing written, 2
   refused, 3 written but the verify failed), `written`, `backupDir`, `verify`, `warnings`, and
-  `files`. Each file has `file`, `renamedTo` (the new path of a renamed file, relative like
-  `file`), `action`, `sha256Before` (the hash of the content the run read), `diffStat`, `diff`
-  and `ops`. Each op has `status` (OK, MISS or SKIP), `found`, `expected`, `reason`, `lines`, and
-  on a rewrite MISS `currentSha256`.
+  `files`. `written` holds plain paths: after a rename it names the new path, and the file's
+  `renamedTo` carries the pair. `backupDir` is there only when the run backed a file up: a run
+  that writes nothing (a MISS, a refusal) has none and leaves no empty folder behind.
+- **Each file** has `file`, `renamedTo` (the new path of a renamed file, relative like `file`),
+  `action`, `sha256Before` (the hash of the content the run read), `diffStat`, `diff` and `ops`.
+  A file that a pre-flight check refused (exit 2, for example a rewrite without `expectSha256` on
+  a real run) is `{ file, action: "refused", reason }` with no ops.
+- **Each op** has `status` (OK, MISS or SKIP), `found`, `expected` (the declared count: a
+  number, or `"all"`), `lines` (the 1-based line of each occurrence it found), `reason`, and on a
+  rewrite MISS `currentSha256`. `expected` and `lines` are there on OK and MISS alike, so a count
+  mismatch reads as data: `found: 3, expected: 1, lines: [1, 1, 4]`. An insert or a block reports
+  the line of its anchor; append and rewrite have no needle, so their `lines` is empty.
 - **Diff levels** (`--diff <level>`, or `diff` on a FileEdit and on the MCP call): in the printed
   output `none` gives each file's header line, `stat` adds `+N -M`, and `full` adds the diff. In
   the report every changed file carries `diffStat`, and `full` adds its `diff` text. Unset on the

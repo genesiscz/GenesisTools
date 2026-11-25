@@ -571,6 +571,12 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
 
     // ── pre-flight validation ──────────────────────────────────────────────
     const preflightErrors: string[] = [...moveErrors];
+    // A refusal that names one file is data too: the report lists that file as "refused" with its reason.
+    const refusedFiles = new Map<string, string[]>();
+    const refuseFile = (file: string, reason: string): void => {
+        preflightErrors.push(`${file}: ${reason}`);
+        refusedFiles.set(file, [...(refusedFiles.get(file) ?? []), reason]);
+    };
     // An unknown option is a typo that would otherwise do nothing: `dry: true` instead of
     // `dryRun: true` once nearly turned a preview into a real write.
     for (const key of Object.keys(opts)) {
@@ -586,70 +592,74 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     for (const edit of allEdits) {
         const abs = resolve(edit.file);
         if (seen.has(abs)) {
-            preflightErrors.push(
-                `${edit.file}: listed twice in one batch — merge the ops into one FileEdit, or wrap the batch in mergeFileEdits()`
+            refuseFile(
+                edit.file,
+                "listed twice in one batch — merge the ops into one FileEdit, or wrap the batch in mergeFileEdits()"
             );
         }
         seen.add(abs);
         if (!opts.allowNodeModules && abs.includes(`${path.sep}node_modules${path.sep}`)) {
-            preflightErrors.push(
-                `${edit.file}: refusing to edit inside node_modules (set allowNodeModules to override)`
-            );
+            refuseFile(edit.file, "refusing to edit inside node_modules (set allowNodeModules to override)");
         }
         if (opts.allowGenerated !== true && edit.allowGenerated !== true && !edit.delete) {
             const why = looksGenerated(abs);
             if (why !== null) {
-                preflightErrors.push(
-                    `${edit.file}: refusing to edit a GENERATED file (${why}) — the next codegen run discards the change. Fix the generator, or pass allowGenerated: true.`
+                refuseFile(
+                    edit.file,
+                    `refusing to edit a GENERATED file (${why}) — the next codegen run discards the change. Fix the generator, or pass allowGenerated: true.`
                 );
             }
         }
         const structural = validateEdit(edit);
         if (structural) {
-            preflightErrors.push(`${edit.file}: ${structural}`);
+            refuseFile(edit.file, structural);
         }
 
         // The hash guards the write, and a code-mode caller has no hasher: its dry run hands back sha256Before.
         if (!dryRun && edit.ops?.some((op) => op.kind === "rewrite" && op.expectSha256 === undefined)) {
-            preflightErrors.push(
-                `${edit.file}: a rewrite needs expectSha256 on a real run. Dry-run it first, then send that report's sha256Before for this file as expectSha256.`
+            refuseFile(
+                edit.file,
+                "a rewrite needs expectSha256 on a real run. Dry-run it first, then send that report's sha256Before for this file as expectSha256."
             );
         }
         if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
             // Reading it threw a bare EISDIR from deep inside the runner.
-            preflightErrors.push(`${edit.file}: is a directory, not a file`);
+            refuseFile(edit.file, "is a directory, not a file");
         }
         if (edit.renameTo) {
             const target = resolve(edit.renameTo);
             const claimedBy = renameTargets.get(target);
             if (claimedBy !== undefined) {
-                preflightErrors.push(`${edit.file}: renames to ${edit.renameTo}, which ${claimedBy} also claims`);
+                refuseFile(edit.file, `renames to ${edit.renameTo}, which ${claimedBy} also claims`);
             }
             renameTargets.set(target, edit.file);
             // The destination is a write to a protected path as much as the source is.
             if (!opts.allowNodeModules && target.includes(`${path.sep}node_modules${path.sep}`)) {
-                preflightErrors.push(
-                    `${edit.file}: refusing to rename into node_modules (${edit.renameTo}; set allowNodeModules to override)`
+                refuseFile(
+                    edit.file,
+                    `refusing to rename into node_modules (${edit.renameTo}; set allowNodeModules to override)`
                 );
             }
             if (opts.allowGenerated !== true && edit.allowGenerated !== true && target !== abs) {
                 const why = looksGenerated(target);
                 if (why !== null) {
-                    preflightErrors.push(
-                        `${edit.file}: refusing to rename onto a GENERATED path ${edit.renameTo} (${why}) — pass allowGenerated: true.`
+                    refuseFile(
+                        edit.file,
+                        `refusing to rename onto a GENERATED path ${edit.renameTo} (${why}) — pass allowGenerated: true.`
                     );
                 }
             }
             if (target !== abs && fs.existsSync(target) && !edit.overwrite) {
-                preflightErrors.push(
-                    `${edit.file}: renameTo target already exists: ${edit.renameTo} — set overwrite: true to replace it`
+                refuseFile(
+                    edit.file,
+                    `renameTo target already exists: ${edit.renameTo} — set overwrite: true to replace it`
                 );
             }
         }
     }
     for (const [target, claimedBy] of renameTargets) {
         if (seen.has(target)) {
-            preflightErrors.push(`${claimedBy}: renameTo target is also edited in this batch: ${target}`);
+            refuseFile(claimedBy, `renameTo target is also edited in this batch: ${target}`);
         }
     }
     if (opts.backupDir !== undefined && opts.backupOverwrite !== true && !dryRun) {
@@ -687,7 +697,24 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         for (const e of preflightErrors) {
             console.error(paint(COLORS.miss, `PRE-FLIGHT: ${e}`));
         }
-        bail(`fable-replace pre-flight failed:\n${preflightErrors.join("\n")}`, 2);
+        const refused = [...refusedFiles].map(
+            ([file, reasons]): FileResult => ({
+                file,
+                action: "refused",
+                reason: reasons.join("; "),
+                ops: [],
+                postConditionFailures: [],
+                changed: false,
+            })
+        );
+        bail(`fable-replace pre-flight failed:\n${preflightErrors.join("\n")}`, 2, {
+            ok: false,
+            files: refused,
+            written: [],
+            writtenPaths: [],
+            missCount: 0,
+            warnings,
+        });
     }
 
     // ── phase 1: apply everything in memory ────────────────────────────────
@@ -916,6 +943,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
 
     // ── phase 3: write (or not) ────────────────────────────────────────────
     const written: string[] = [];
+    const writtenPaths: string[] = [];
+    /** opts.backupDir once a file is backed up into it: a run that backs nothing up reports no backupDir. */
+    let backedUpTo: string | undefined;
     const touched: string[] = [];
     // A new file is created exclusively and joins `touched` the moment its descriptor
     // exists: a write that fails after creation (ENOSPC) leaves a partial file the recovery
@@ -965,8 +995,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     ok: false,
                     files: planned.map((p) => p.result),
                     written,
+                    writtenPaths,
                     missCount,
-                    backupDir: opts.backupDir,
+                    backupDir: backedUpTo,
                     verify,
                     warnings,
                 }
@@ -1011,6 +1042,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 return targets;
             });
             writeBackup({ dir: opts.backupDir, files: paths, overwrite: opts.backupOverwrite === true });
+            backedUpTo = opts.backupDir;
             console.log(paint(COLORS.dim, `\nBacked up ${paths.length} path(s) to ${opts.backupDir}`));
         }
         try {
@@ -1029,6 +1061,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     touched.push(plan.abs);
                     fs.rmSync(plan.abs);
                     written.push(`${plan.edit.file} (deleted)`);
+                    writtenPaths.push(plan.edit.file);
                     continue;
                 }
 
@@ -1084,6 +1117,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     fs.rmSync(plan.abs);
                 }
                 written.push(plan.edit.renameTo ? `${plan.edit.file} → ${plan.edit.renameTo}` : plan.edit.file);
+                writtenPaths.push(plan.edit.renameTo ?? plan.edit.file);
             }
         } catch (err) {
             // An I/O failure (EACCES, ENOSPC, a read-only file) leaves the batch half
@@ -1157,8 +1191,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                             ok: false,
                             files: planned.map((p) => p.result),
                             written,
+                            writtenPaths,
                             missCount,
-                            backupDir: opts.backupDir,
+                            backupDir: backedUpTo,
                             verify: result,
                             warnings,
                         }
@@ -1205,8 +1240,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         ok: !failed && leftoverProse === 0,
         files: planned.map((p) => p.result),
         written,
+        writtenPaths,
         missCount,
-        backupDir: opts.backupDir,
+        backupDir: backedUpTo,
         verify,
         warnings,
     };

@@ -30,7 +30,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "node:util";
 import { printApi } from "./api";
-import { pruneScratch, rollback, scratchDir } from "./backup-and-rollback";
+import { pruneScratch, removeEmptyDir, rollback, scratchDir } from "./backup-and-rollback";
 import { FableReplaceError } from "./internal";
 import { appendJournal, estimateTokens, type JournalEntry, printHistory, printStats } from "./journal";
 import { recon } from "./recon";
@@ -553,6 +553,9 @@ const runDoor = async (): Promise<void> => {
         `${door}: ${edits.length} file(s), ${opCount} op(s)${creates > 0 ? `, ${creates} create` : ""}${dryRun ? " — DRY RUN" : ""}`
     );
 
+    // The run backs up into this folder only when it writes; a run that writes nothing leaves it empty, and the
+    // folder goes again, so no empty backup reads as one to roll back to.
+    const backupDir = flag("--no-backup") || dryRun ? undefined : scratchDir("cli", { cwd: runCwd });
     let report: RunReport;
     try {
         report = await run({
@@ -564,7 +567,7 @@ const runDoor = async (): Promise<void> => {
             diff: diffLevel ?? (flag("--quiet") && !flag("--diff") ? "stat" : undefined),
             verbose: !flag("--quiet"),
             partial: flag("--partial"),
-            backupDir: flag("--no-backup") || dryRun ? undefined : scratchDir("cli", { cwd: runCwd }),
+            backupDir,
             verifyCommand: value("--verify"),
             verifyControl,
             throwOnFailure: true,
@@ -593,6 +596,7 @@ const runDoor = async (): Promise<void> => {
             },
         });
     } catch (err) {
+        removeEmptyDir(backupDir);
         if (err instanceof FableReplaceError) {
             const failed = err.report;
             entry.written = failed?.written.length;
@@ -631,6 +635,7 @@ const runDoor = async (): Promise<void> => {
         return finish(1, reportToJson({ error: err, dryRun, warnings: specWarnings }));
     }
 
+    removeEmptyDir(backupDir);
     entry.outcome = dryRun ? "dry-ok" : "ok";
     entry.written = report.written.length;
     entry.backupDir = report.backupDir;

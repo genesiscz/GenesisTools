@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rollback } from "./backup-and-rollback";
@@ -84,6 +84,9 @@ describe("the rewrite op through run()", () => {
         expect(op?.currentSha256).toBe(sha256(OLD));
         expect(reportToJson({ error: failure, dryRun: false }).files[0].ops[0].currentSha256).toBe(sha256(OLD));
         expect(failure.report?.written).toEqual([]);
+        // Nothing was backed up, so the report names no backupDir and the folder was never made.
+        expect(failure.report?.backupDir).toBeUndefined();
+        expect(existsSync(backupDir)).toBe(false);
         expect(readFileSync(target, "utf8")).toBe(OLD);
     });
 
@@ -102,6 +105,15 @@ describe("the rewrite op through run()", () => {
         const refused = await missOf(run({ cwd: work, backupDir, verbose: false, edits: rewrite() }));
         expect(refused.code).toBe(2);
         expect(refused.message).toContain("Dry-run it first, then send that report's sha256Before for this file");
+        expect(reportToJson({ error: refused, dryRun: false }).files).toEqual([
+            {
+                file: "notes.md",
+                action: "refused",
+                reason: expect.stringContaining("a rewrite needs expectSha256 on a real run"),
+                ops: [],
+                postConditionFailures: [],
+            },
+        ]);
         expect(readFileSync(target, "utf8")).toBe(OLD);
 
         const landed = await run({ cwd: work, backupDir, verbose: false, edits: rewrite(entry.sha256Before) });

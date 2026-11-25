@@ -48,6 +48,7 @@ export {
     pruneScratch,
     recordGitMove,
     recordPostWriteHashes,
+    removeEmptyDir,
     rollback,
     scratchDir,
     scratchHarnessSession,

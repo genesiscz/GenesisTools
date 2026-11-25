@@ -55,6 +55,21 @@ const cli = (args: string[], options: { cwd: string; stdin?: string }): Promise<
 /** The run report of a --json call: stdout must be exactly one JSON object, or the parse throws. */
 const reportOf = (child: Child): RunReportJson => JSON.parse(child.stdout);
 
+/** The CLI's backup folders (cli-*) under `dir` that hold nothing. */
+const emptyBackupDirs = (dir: string): string[] => {
+    if (!fs.existsSync(dir)) {
+        return [];
+    }
+
+    return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .flatMap((entry) => {
+            const full = path.join(dir, entry.name);
+            return entry.name.startsWith("cli-") && fs.readdirSync(full).length === 0 ? [full] : emptyBackupDirs(full);
+        });
+};
+
 beforeAll(() => {
     base = fs.mkdtempSync(path.join(os.tmpdir(), "cli-json-"));
     env = {
@@ -129,6 +144,62 @@ describe("--edits - --json", () => {
         expect(report).toMatchObject({ ok: false, exitCode: 2 });
         expect(report.error).toContain("the input is not JSON");
     });
+
+    test("every op carries expected and lines as data, on a count mismatch MISS and on an OK alike", async () => {
+        put("edits/count.ts", "const Bar = 1; Bar;\nconst x = 2;\n\nBar();\n");
+        const edits = [
+            {
+                file: "count.ts",
+                ops: [
+                    { find: "Bar", replace: "Baz" },
+                    { find: "const x = 2", replace: "const x = 3" },
+                ],
+            },
+        ];
+        const child = await cli(["--edits", "-", "--json", "--dry", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: JSON.stringify(edits),
+        });
+
+        expect(child.status).toBe(1);
+        const [missed, kept] = reportOf(child).files[0].ops;
+        expect(missed).toMatchObject({ status: "MISS", found: 3, expected: 1, lines: [1, 1, 4] });
+        expect(missed.reason).toContain("expected exactly 1 occurrence(s), found 3 at line(s) 1, 1, 4");
+        expect(kept).toMatchObject({ status: "OK", found: 1, expected: 1, lines: [2] });
+    });
+
+    test("a real run that writes nothing reports no backupDir and leaves no empty backup folder; a refused file is data", async () => {
+        put("edits/whole.ts", "export const whole = 1;\n");
+        const refusedRun = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: JSON.stringify([
+                { file: "whole.ts", ops: [{ kind: "rewrite", content: "export const whole = 2;\n" }] },
+            ]),
+        });
+        const missRun = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: JSON.stringify([{ file: "whole.ts", ops: [{ find: "absent-needle", replace: "y" }] }]),
+        });
+
+        expect(refusedRun.status).toBe(2);
+        const refused = reportOf(refusedRun);
+        expect(refused).toMatchObject({ ok: false, exitCode: 2, written: [] });
+        expect(refused.files).toEqual([
+            {
+                file: "whole.ts",
+                action: "refused",
+                reason: expect.stringContaining("a rewrite needs expectSha256 on a real run"),
+                ops: [],
+                postConditionFailures: [],
+            },
+        ]);
+        expect(missRun.status).toBe(1);
+        const miss = reportOf(missRun);
+        expect(miss).toMatchObject({ ok: false, exitCode: 1, written: [] });
+        expect(["backupDir" in refused, "backupDir" in miss]).toEqual([false, false]);
+        expect(emptyBackupDirs(path.join(base, "scratch"))).toEqual([]);
+        expect(read("edits/whole.ts")).toBe("export const whole = 1;\n");
+    });
 });
 
 describe("a git fixture: --find, --rename-module, --rollback and an untracked gitMove", () => {
@@ -193,7 +264,7 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
 
         expect(child.status).toBe(0);
         const report = reportOf(child);
-        expect(report).toMatchObject({ ok: true, written: ["Foo.ts → Bar.ts", "lib/deep.ts", "use.ts"] });
+        expect(report).toMatchObject({ ok: true, written: ["Bar.ts", "lib/deep.ts", "use.ts"] });
         expect(report.files[0]).toMatchObject({ file: "Foo.ts", renamedTo: "Bar.ts", action: "renamed" });
         expect(report.files.every((file) => /^[0-9a-f]{64}$/.test(file.sha256Before ?? ""))).toBe(true);
         expect(report.files.flatMap((file) => file.ops).every((op) => op.expected === op.found)).toBe(true);
@@ -210,6 +281,10 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
         expect(report.files[2].diff).toContain('+ import { Bar } from "./Bar";');
         backupDir = report.backupDir ?? "";
         expect(backupDir.startsWith(path.join(base, "scratch"))).toBe(true);
+        // A run that writes reports the backupDir, and the folder holds the manifest and the originals.
+        expect(fs.readdirSync(backupDir)).toEqual(
+            expect.arrayContaining(["fable-replace-manifest.json", "0000-Foo.ts"])
+        );
     });
 
     test("--rollback of that run unstages the git rename and restores every file", async () => {
@@ -229,7 +304,7 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
         expect(child.status).toBe(0);
         expect(reportOf(child)).toMatchObject({
             ok: true,
-            written: ["loose.ts → kept.ts"],
+            written: ["kept.ts"],
             warnings: ["loose.ts: renamed without git mv (git does not track it)."],
         });
         expect(child.stderr).toBe("");
