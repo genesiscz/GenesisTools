@@ -80,33 +80,26 @@ struct WidgetInboxEntryDetail: View {
     @State private var groupLimit = 5
     @State private var loadedLimit = 0
 
-    /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
-    /// row, so this list, the alert and a session's inbox draw an option one way.
-    @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
-        if ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options, !options.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    let letter = WidgetInboxOverview.letter(index)
-                    WidgetOptionButton(model: model, item: item, index: index, option: option,
-                                           focused: focusRow && focusedOption == letter)
-                        .id(item.id + "#" + letter)
+    /// An open decision on the shared decision body: its summary, or its card's text and sections while that session's
+    /// cards are cached here, its options (each staging or sending, by the setting), the compact own answer and the
+    /// staged Send and Unstage. The hover list (`compact`) adds Send now (all N): it has no staged chip, which the
+    /// overview draws above its list.
+    private func decision(_ item: WidgetInboxItem) -> some View {
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: model.card(for: item)),
+            surface: .feed(compact: compact),
+            host: WidgetItemStagingHost(model: model, item: item, surface: surface, sendsAll: compact),
+            focusedOption: focusRow ? focusedOption : nil,
+            ownAnswer: {
+                if item.kind == "decision" {
+                    // No typing in place: the list is no session, so the click opens the decision with its full field.
+                    WidgetCompactOwnAnswer(text: model.ownAnswerText(for: item),
+                                           identifier: "widget.overview.ownAnswer." + item.sourceId) {
+                        model.openAlert(item, on: surface, ownAnswer: true)
+                    }
                 }
-                // Send and Unstage of a staged pick or note, beside the options they send.
-                stagedActions(item)
-            }
-        }
-    }
-
-    /// A staged decision's Send and Unstage, and for a set its recommended set in one click. The hover list
-    /// (`compact`) adds Send now (all N): it has no staged chip, which the overview draws above its list.
-    private func stagedActions(_ item: WidgetInboxItem) -> some View {
-        WidgetStagedActions(
-            host: WidgetItemStagingHost(model: model, item: item, surface: surface, sendsAll: compact), placement: .row,
-            identifier: (item.takesSeveral ? "widget.overview.sendSet." : "widget.overview.sendStaged.") + item.sourceId,
-            sendAllIdentifier: "widget.overview.sendAll." + item.sourceId,
-            unstageIdentifier: "widget.overview.unstage." + item.sourceId,
-            unstageTooltip: "Clears the staged pick and note. Undo brings them back.")
-            .padding(.top, 2)
+            },
+            footer: { EmptyView() })
     }
 
     @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
@@ -118,7 +111,11 @@ struct WidgetInboxEntryDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            summary(item)
+            if WidgetDecisionValue.answerable(item) {
+                decision(item)
+            } else {
+                summary(item)
+            }
             if let message = item.message {
                 WidgetOverviewMessage(message: message, clamp: compact ? 8 : 14, imageHeight: compact ? 64 : 96,
                                       showMedia: { model.showMedia?($0) }, load: { try await model.messageBody(for: item) })
@@ -140,7 +137,6 @@ struct WidgetInboxEntryDetail: View {
             if let count = item.count, count > 1, item.reply != nil || item.message != nil {
                 earlierEntries(count - 1)
             }
-            choices(item)
             if !compact, let session {
                 HStack(spacing: 8) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)

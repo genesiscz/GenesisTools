@@ -1275,6 +1275,53 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertFalse(hidden.contains("free space is 8.3 GB"), "the setting hides the description: \(hidden)")
     }
 
+    /// An open entry of the inbox of every session draws its card's Context and the agent's pick under its option while
+    /// that session's cards are cached here, and only while the list shows context (`overviewSummary`); without the
+    /// card it draws the item's summary as before. Every open decision has the compact own answer, whose click opens
+    /// the decision in its session.
+    func testAFeedEntryDrawsItsCardsContextWhenTheSessionIsCached() throws {
+        var item = Self.item(key + "0", number: 1, options: ["a) allow at 1 GB or more", "b) allow any size",
+                                                              "c) keep the block, fix the message"])
+        item["summary"] = "Whether an agent may open the approval dialog by itself."
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        let field = "widget.overview.ownAnswer.d1"
+        func entryText(_ model: WidgetModel, _ name: String) throws -> String {
+            FrameProbe.reset()
+            return try recognizedText(try XCTUnwrap(openOverviewEntry(model, name: name).cgImage))
+                .replacingOccurrences(of: "\n", with: " ")
+        }
+
+        let cached = try model(cards: [Self.contextCard(key + "0")], inbox: [item])
+        defer { cached.stop() }
+        XCTAssertNotNil(cached.card(for: try XCTUnwrap(cached.inboxFor(key + "0")?.pendingItem)), "the card is cached")
+        let text = try entryText(cached, "overview-context-cached")
+        for expected in ["Context", "Show more", "it matches both of your instructions", "approval dialog by itself"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        XCTAssertNotNil(FrameProbe.frames[field], "the open entry has the compact own answer")
+
+        let quiet = try model(preferences: ["overviewSummary": false], cards: [Self.contextCard(key + "0")], inbox: [item])
+        defer { quiet.stop() }
+        let hidden = try entryText(quiet, "overview-context-quiet")
+        XCTAssertFalse(hidden.contains("Context"), "the list's switch hides the card's sections too: \(hidden)")
+        XCTAssertFalse(hidden.contains("it matches both"), hidden)
+        XCTAssertTrue(hidden.contains("keep the block"), hidden)
+
+        let bare = try model(inbox: [item])
+        defer { bare.stop() }
+        let plain = try entryText(bare, "overview-context-bare")
+        XCTAssertTrue(plain.contains("approval dialog by itself"), "the summary as before: \(plain)")
+        XCTAssertFalse(plain.contains("Context"), plain)
+        XCTAssertFalse(plain.contains("it matches both"), plain)
+        XCTAssertNotNil(FrameProbe.frames[field], "every open decision has the compact own answer")
+
+        let opened = try XCTUnwrap(bare.inboxFor(key + "0")?.pendingItem)
+        bare.openAlert(opened, on: nil, ownAnswer: true)
+        XCTAssertEqual(bare.selectedCardID, opened.id, "the click opens the decision in its session")
+        XCTAssertEqual(bare.ownAnswerFocusRequest, opened.id, "with its full field ready to type")
+    }
+
     /// Decision 31's card in its session's inbox: the options say their words, and the agent's reasoning sits under
     /// the recommended option behind the lightbulb, never under the Context label (the hub's Inbox card agrees:
     /// `HubInboxUXTests`).

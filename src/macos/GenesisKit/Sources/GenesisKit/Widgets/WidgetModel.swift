@@ -1796,9 +1796,10 @@ public final class WidgetModel: ObservableObject {
         acknowledgeOpenedInbox()
     }
 
-    /// The alert card's header, Open and Write my own answer: the alert's own item opens in its session (not the
-    /// session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a staged note.
-    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, ownAnswer: Bool = false) {
+    /// The alert card's header, Open and Write my own answer, and a list entry's Write my own answer: the item opens in
+    /// its session (not the session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a
+    /// staged note. A nil surface is the open panel itself (the inbox of every session).
+    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID?, ownAnswer: Bool = false) {
         openInboxItem(item, on: surface)
         // The card the popup opened flashes, so the eye finds it in the session's list.
         reveal("card-" + item.id)
