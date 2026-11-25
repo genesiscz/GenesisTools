@@ -251,6 +251,9 @@ final class RequestPresentTests: XCTestCase {
         // The CLI's own JSON line names the code only as the message's lead when it wraps the refusal.
         let wrapped = #"{"error":{"code":-32000,"message":"[no-transcript-source] m has no source with a transcript."}}"#
         XCTAssertEqual(PlayMeetingButton.problem(status: 1, stderr: wrapped).sentence, "This meeting has no sound to play yet.")
+        // play --no-start refuses a Moment that cannot play here with the plan's code as the lead.
+        let noFfmpeg = #"{"error":{"code":-32603,"message":"[no-ffmpeg] ffmpeg is not installed (brew install ffmpeg)."}}"#
+        XCTAssertEqual(PlayMeetingButton.problem(status: 1, stderr: noFfmpeg).sentence, "ffmpeg is not installed, so the clip cannot be cut.")
     }
 
     func testOpenLinkOpensOnlyAWebPage() throws {

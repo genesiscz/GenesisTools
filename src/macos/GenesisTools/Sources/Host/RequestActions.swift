@@ -237,6 +237,10 @@ final class PlayMeetingButton: RequestActionButton {
         switch code {
         case "no-transcript-source", "no-audio", "no-sound", "no-source-audio", "unplayable":
             "This meeting has no sound to play yet."
+        case "no-ffmpeg":
+            "ffmpeg is not installed, so the clip cannot be cut."
+        case "recording":
+            "The meeting is still being recorded."
         default:
             "The clip could not play."
         }

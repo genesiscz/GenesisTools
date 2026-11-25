@@ -459,6 +459,15 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(player.phase, .playing)
     }
 
+    func testTheCommandFallbackReadsWhyAMomentCannotPlayFromTheRefusalLead() {
+        let refused = MeetingsCLI.Failure(sentence: "No source keeps the recording on this Mac.", detail: "exit 1", code: "no-audio")
+        XCTAssertEqual(MomentPlayer.Engine.cannot(of: refused),
+                       MomentCannot(code: "no-audio", message: "No source keeps the recording on this Mac."))
+        XCTAssertTrue(MomentPlayer.Engine.cannot(of: refused)?.isState == true, "a state reason disables every play control")
+        XCTAssertNil(MomentPlayer.Engine.cannot(of: MeetingsCLI.Failure(sentence: "The meetings command failed.", detail: "exit 1")),
+                     "a failure that names no code stays a failure")
+    }
+
     func testTargetRefusalsAreFoundWithScreenSuppressed() async throws {
         engine.planAnswer = .init(moment: nil, cannot: MomentCannot(code: "unknown-item", message: "No such item."))
         let player = makePlayer()
