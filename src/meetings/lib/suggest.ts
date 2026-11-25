@@ -467,8 +467,8 @@ function agreeing(first: NewItem, second: NewItem, applyAbove = DEFAULT_APPLY_AB
 }
 
 /**
- * The names that the ranges a person or an agent stated give the line of `label` at `at` (a one-second range with a
- * line address names only that line). A rule's pass may agree with them, never replace them (`rangeStrength`).
+ * The names that the ranges a person or an agent stated, or a user's answer decided, give the line of `label` at `at`
+ * (a one-second range with a line address names only that line). A rule's pass may agree with them, never replace them (`rangeStrength`).
  */
 function statedNames(items: readonly MeetingItem[]) {
     const byLabel = new Map<string, Array<Extract<MeetingItem, { kind: "speaker-range" }>>>();
@@ -478,7 +478,7 @@ function statedNames(items: readonly MeetingItem[]) {
             item.kind === "speaker-range" &&
             item.status === "suggested" &&
             item.speaker &&
-            rangeStrength(item) === RangeStrength.Stated
+            rangeStrength(item) >= RangeStrength.Stated
         ) {
             byLabel.set(item.label, [...(byLabel.get(item.label) ?? []), item]);
         }

@@ -29,7 +29,7 @@ import {
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { DEFAULT_POLISHED_PHRASES, POLISHED_PHRASES_BY_LANGUAGE } from "./polished";
-import { RangeStrength, rangeStrength, strongestRange } from "./range-strength";
+import { RangeStrength, rangeStrength, strongestFirst, strongestRange, weakestFirst } from "./range-strength";
 import {
     JOIN_PART_FILE,
     JOINED_RECORD_VERSION,
@@ -1878,12 +1878,13 @@ describe("a later recording's old id after a join", () => {
 });
 
 describe("speaker range strength", () => {
-    test("the rule that made a range says who named it; rules a pass or a carried answer appended do not", () => {
+    test("a confirmed range outranks the user's answer, that an agent's range, and that a rule's, whatever their age", () => {
         const range = (status: "suggested" | "confirmed", rules: string[]) => ({ status, rules });
         expect(rangeStrength(range("suggested", ["agent"]))).toBe(RangeStrength.Stated);
-        expect(rangeStrength(range("suggested", ["agent", "user"]))).toBe(RangeStrength.Stated);
-        expect(rangeStrength(range("suggested", ["user"]))).toBe(RangeStrength.Stated);
-        expect(rangeStrength(range("suggested", ["voice-embedding", "agent", "user"]))).toBe(RangeStrength.Automatic);
+        expect(rangeStrength(range("suggested", ["agent", "user"]))).toBe(RangeStrength.UserDerived);
+        expect(rangeStrength(range("suggested", ["user"]))).toBe(RangeStrength.UserDerived);
+        expect(rangeStrength(range("suggested", ["voice-embedding", "agent", "user"]))).toBe(RangeStrength.UserDerived);
+        expect(rangeStrength(range("suggested", ["voice-embedding", "agent"]))).toBe(RangeStrength.Automatic);
         expect(rangeStrength(range("suggested", ["RA"]))).toBe(RangeStrength.Automatic);
         expect(rangeStrength(range("confirmed", ["RA", "agent"]))).toBe(RangeStrength.Confirmed);
 
@@ -1893,5 +1894,32 @@ describe("speaker range strength", () => {
         expect(strongestRange([older, newer])?.id).toBe("stated");
         expect(strongestRange([older, newer, later])?.id).toBe("agent again");
         expect(strongestRange([])).toBeUndefined();
+    });
+
+    test("within one kind the higher confidence names the line and the later only on a tie; a person's later decision replaces the earlier", () => {
+        const range = (id: string, status: "suggested" | "confirmed", rules: string[], confidence: number) => ({
+            id,
+            status,
+            rules,
+            confidence,
+        });
+        const answered = range("answered", "suggested", ["agent", "user"], 0.9);
+        const sure = range("sure agent", "suggested", ["agent"], 0.6);
+        const doubtful = range("doubtful agent", "suggested", ["agent"], 0.45);
+        const tied = range("tied agent", "suggested", ["agent"], 0.45);
+        expect(strongestRange([answered, sure, doubtful])?.id).toBe("answered");
+        expect(strongestRange([sure, doubtful])?.id).toBe("sure agent");
+        expect(strongestRange([doubtful, tied])?.id).toBe("tied agent");
+        expect(weakestFirst([sure, doubtful, tied, answered]).map((one) => one.id)).toEqual([
+            "doubtful agent",
+            "tied agent",
+            "sure agent",
+            "answered",
+        ]);
+        expect(strongestFirst([doubtful, tied]).map((one) => one.id)).toEqual(["tied agent", "doubtful agent"]);
+
+        const decided = range("decided", "confirmed", ["agent"], 0.95);
+        const decidedAgain = range("decided again", "confirmed", ["voice-embedding", "user"], 0.5);
+        expect(strongestRange([decided, decidedAgain, answered])?.id).toBe("decided again");
     });
 });

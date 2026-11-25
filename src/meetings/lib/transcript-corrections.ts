@@ -261,8 +261,9 @@ export function correctionsOf(
     };
     // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's;
     // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list. The items'
-    // ranges go weakest first: a confirmed range wins over a stated one, and a stated one over a rule's, whatever their
-    // age; among equals the latest wins.
+    // ranges go weakest first (`compareRanges`): a confirmed range wins over one built on the user's answer, that over
+    // an agent's, and that over a rule's, whatever their age; within one kind the higher confidence wins, the latest on
+    // a tie.
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
     const itemRanges = weakestFirst(used).flatMap((item) =>
         item.kind === "speaker-range" && item.speaker

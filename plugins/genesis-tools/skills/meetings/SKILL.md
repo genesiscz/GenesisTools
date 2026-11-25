@@ -109,7 +109,9 @@ A missing meeting names only the store that was searched. To find which store ho
      their lines to add a sample.
      Run `tools meetings voices apply <meeting>` (REPL: `meetings.voices.apply({ meeting })`) to save the speaker
      suggestions for review. It fills only the lines that nobody named: a range you add with `items add` outranks every
-     automatic seat or voice range on its line, whatever their age, and a confirmed range outranks both. One pass runs
+     automatic seat or voice range on its line, whatever their age, a range built on the user's answer outranks yours,
+     and a confirmed range outranks all of them. Between two ranges of one kind the higher confidence names the line,
+     the later one only on a tie. One pass runs
      per meeting at a time, also across the service and the CLI: a second call waits for the running one, then runs. A
      pass that an answer overtook plans again from the saved record, so it never overwrites the answer, and a pass that
      changes nothing leaves the record as it was. When the voice later names someone else at or above the apply

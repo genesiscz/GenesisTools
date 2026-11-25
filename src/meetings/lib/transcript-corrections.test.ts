@@ -626,6 +626,54 @@ test("a range a person or an agent stated names its line over a newer rule's ran
     });
 });
 
+test("the user's answer names its line over a later agent's range; between agents the higher confidence wins, the later on a tie", () => {
+    const range = (id: string, speaker: string, confidence: number, rules = [MeetingRule.Agent]) =>
+        item({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Speaker 2",
+            fromSec: 30,
+            toSec: 30,
+            speaker,
+            confidence,
+            rules,
+        });
+    const shown = (items: ReturnType<typeof item>[]) => {
+        const record = { ...base, items };
+        const corrected = correctTranscript({ record, transcript, config, format: "json", withSuggested: true });
+        const facts = lineSpeakerFacts(record, { fromSec: 0, toSec: 40 })({
+            index: 3,
+            label: "Speaker 2",
+            startSec: 30,
+        });
+        const line = corrected.entries[3];
+        return {
+            speaker: line?.speaker,
+            guess: line?.guess,
+            confidence: line?.confidence,
+            look: facts.suggested?.speaker,
+        };
+    };
+    const answered = range("i1", "Alice Example", 0.9, [MeetingRule.Agent, MeetingRule.User]);
+
+    expect(shown([answered, range("i2", "Bob Example", 0.45)])).toEqual({
+        speaker: "Alice Example",
+        guess: false,
+        confidence: 0.9,
+        look: "Alice Example",
+    });
+    expect(shown([range("i1", "Alice Example", 0.6), range("i2", "Bob Example", 0.45)])).toMatchObject({
+        speaker: "Alice Example",
+        look: "Alice Example",
+    });
+    expect(shown([range("i1", "Alice Example", 0.45), range("i2", "Bob Example", 0.45)])).toMatchObject({
+        speaker: "Bob Example",
+        guess: false,
+        look: "Bob Example",
+    });
+});
+
 test("a range an agent stated names its line at any confidence, kept on the line as a note; a rule's low range stays a guess", () => {
     const stated = item({
         id: "i1",
