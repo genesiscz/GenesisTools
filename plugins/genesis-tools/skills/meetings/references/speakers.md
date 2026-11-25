@@ -180,7 +180,9 @@ markers lean to Pavel (-2 for Petr). For Petr, `net = 5 + 3 - 2 = 6` over weight
 (`global.suggest.applyAbove`) and a lower named guess as `[<name>: NN %]`. A range you state (`items add`) wins its line
 over a rule's range at any confidence, but under 70 % the line still shows your guess with your confidence, so give an
 honest one rather than raising it to get the name shown: only the user's answer or a confirmation makes a name plain at
-any confidence. Under 60 % (`listenBelow`) a range that matters is a question candidate (below).
+any confidence. A guess for the person the line's own label (a platform name, or a rename) already gives stays plain,
+because it agrees with the label; a label item that says the label tracks no one person, or an open question on the
+line, keeps the guess. Under 60 % (`listenBelow`) a range that matters is a question candidate (below).
 
 | Rule | Weight | Statement | Status |
 |---|---|---|---|
