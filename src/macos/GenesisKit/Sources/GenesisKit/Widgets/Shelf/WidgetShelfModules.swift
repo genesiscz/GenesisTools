@@ -57,7 +57,7 @@ struct WidgetShelfModuleView: View {
                     }
                 }
                 .mediaPreviewHost()
-                .padding(16)
+                .padding(WidgetModuleMetrics.padding)
                 .background(dropTargeted ? tint.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 16))
                 .dropDestination(for: URL.self) { urls, _ in
                     guard !store.isBusy else { return false }
@@ -72,10 +72,7 @@ struct WidgetShelfModuleView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol).foregroundStyle(tint)
-            Text(title).font(.system(size: 15, weight: .semibold))
-            Spacer()
+        WidgetModuleHeader(symbol: symbol, title: title, tint: tint) {
             // "Staged" is the inbox's word for a decision answer kept to send later; the shelf keeps items.
             Text(Plural.count(displayedItems.count, captureOnly ? "capture" : "item"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
