@@ -214,6 +214,18 @@ describe("adoptPolishedMarkdown", () => {
         expect(config.overrides?.sections?.transcript).toContain("**Alice Example** [[t:00:00]] Ahoj.");
         expect(config.overrides?.sections?.unresolved).toBe("**U1** a question");
         expect(config.overrides?.sections?.questions).toBeNull();
+        expect(config.adopted?.frontmatterKeys).toEqual([
+            "meeting_record",
+            "title",
+            "status",
+            "written",
+            "wisprflow_id",
+            "share_link",
+            "start",
+            "end",
+            "source",
+            "waiting_for",
+        ]);
         expect(
             report.notes.some((note) =>
                 note.startsWith("Play links: 3 became [[<token>:MM:SS]] tokens, 3 stay as written")
@@ -390,7 +402,14 @@ describe("buildPolished", () => {
         const handFolder = mkdtempSync(join(tmpdir(), "meetings-polish-hand-"));
         const handMd = join(handFolder, "Hand.polished.md");
         const written = readFileSync(first.outPath, "utf8");
-        writeFileSync(handMd, stripStamp(written).body);
+        // Written by hand under the older key names, which the first build replaces with its own.
+        writeFileSync(
+            handMd,
+            stripStamp(written)
+                .body.replace(/^meeting_records:.*\n(?: {2}- .*\n)*/m, `meeting_record: ${record.id}\n`)
+                .replace(/^wisprflow_ids:.*\n(?: {2}- .*\n)*/m, "wisprflow_id: abc\n")
+        );
+        expect(readFileSync(handMd, "utf8")).toContain(`wisprflow_id: abc\nmeeting_record: ${record.id}\n`);
         const init = await initPolished({ from: handMd, store });
         writeFileSync(
             init.path,
@@ -399,6 +418,10 @@ describe("buildPolished", () => {
         expect(init.path).toBe(join(handFolder, "Hand.polished.ts"));
         expect((await buildPolished({ file: init.path, store, linked })).outcome).toBe("refused");
         expect((await buildPolished({ file: init.path, store, linked, force: true })).outcome).toBe("written");
+        const rebuiltFront = splitFrontmatter(stripStamp(readFileSync(handMd, "utf8")).body).raw ?? "";
+        expect(rebuiltFront).toContain("meeting_records:");
+        expect(rebuiltFront).toContain("wisprflow_ids:");
+        expect(rebuiltFront).not.toMatch(/^(meeting_record|wisprflow_id):/m);
         expect(splitFrontmatter(stripStamp(readFileSync(handMd, "utf8")).body).body.trimEnd()).toBe(
             splitFrontmatter(stripStamp(written).body).body.trimEnd()
         );

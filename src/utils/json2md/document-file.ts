@@ -309,6 +309,11 @@ export interface GeneratedWriteOptions<R extends GeneratedBuild> {
     force?: boolean;
     dryRun?: boolean;
     mergeFrontmatter?: boolean;
+    /**
+     * Front matter keys of a file no build stamped yet that the generator's input took over (an adoption mapped them
+     * to other names): replacing that file drops them instead of carrying them beside the generator's own keys.
+     */
+    adoptedKeys?: readonly string[];
 }
 
 /**
@@ -366,6 +371,13 @@ export async function writeGenerated<R extends GeneratedBuild>(
     const fresh = await options.build();
     const legacy = check.stamp ? legacyOwnedKeys(check.stamp, stripStamp(current).body) : null;
     const owned = legacy ?? ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set<string>();
+
+    if (!check.stamp) {
+        for (const key of options.adoptedKeys ?? []) {
+            owned.add(key);
+        }
+    }
+
     // The previous ownership set prevents removed generator keys from being carried back.
     const { markdown, carried } =
         options.mergeFrontmatter === false

@@ -441,20 +441,13 @@ function adoptFrontmatter(input: {
         }
     }
 
-    const renamed = [...used].filter((key) =>
-        [
-            "meeting_record",
-            "record",
-            "meeting_id",
-            "share_link",
-            "share",
-            ...MEETING_SOURCE_IDS.map((id) => `${id}_id`),
-        ].includes(key)
-    );
+    // The build keeps the markdown's own sessions list; every other key taken here is the config's now.
+    const adopted = [...used].filter((key) => key !== "sessions" && front[key] !== undefined);
 
-    if (renamed.length > 0) {
+    if (adopted.length > 0) {
+        config.adopted = { frontmatterKeys: adopted };
         report.notes.push(
-            `${renamed.join(", ")}: the build writes these under its own names (meeting_records, share_links, <source>_ids) and keeps the old keys of the markdown it replaces; delete the old ones after the first build.`
+            `adopted.frontmatterKeys: the first build drops ${adopted.join(", ")} from the markdown and writes its own keys (meeting_records, share_links, <source>_ids, the ones the records give).`
         );
     }
 

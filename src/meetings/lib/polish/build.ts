@@ -249,7 +249,13 @@ export async function buildPolished(options: {
         return { ...base, check, carried: [] };
     }
 
-    const written = await writeGenerated({ outPath, build, force: options.force, dryRun: mode === "dry-run" });
+    const written = await writeGenerated({
+        outPath,
+        build,
+        force: options.force,
+        dryRun: mode === "dry-run",
+        adoptedKeys: config.adopted?.frontmatterKeys,
+    });
     log.debug({ file: modulePath, out: outPath, outcome: written.outcome }, "polish: build");
     return { ...base, outcome: written.outcome, check: written.check, carried: written.carried };
 }
