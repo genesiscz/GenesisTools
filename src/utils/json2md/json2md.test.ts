@@ -15,6 +15,7 @@ import {
     lineDiff,
     loadDocumentModule,
     writeDocument,
+    writeGenerated,
 } from "./document-file";
 import { Json2mdError, pointerOf } from "./errors";
 import { displayWidth, escapeCell, escapeInline, escapeUrl, truncateToWidth } from "./escape";
@@ -1240,6 +1241,25 @@ describe("front matter another tool adds", () => {
         expect(result.carried).toEqual(["extra"]);
         expect(result.markdown).not.toContain("old");
         expect(result.markdown).toContain("extra: kept");
+    });
+
+    test("replacing a file no build stamped drops its adopted keys and carries the rest", async () => {
+        const { modulePath } = await scratchDoc([1]);
+        const outPath = modulePath.replace(/\.ts$/, ".md");
+        await Bun.write(outPath, "---\nrecord: r1\nsessions: [a]\n---\nbody\n");
+        const build = async (generatedAt?: string) => {
+            const body = "---\nrecords: [r1]\n---\nbody\n";
+            const markdown = stampMarkdown(body, { source: "s", generated: generatedAt ?? "2026-11-25 01:00" });
+            return { markdown, body, sourceHash: "s" };
+        };
+
+        expect((await writeGenerated({ outPath, build, adoptedKeys: ["record"] })).outcome).toBe("refused");
+        const written = await writeGenerated({ outPath, build, force: true, adoptedKeys: ["record"] });
+        const text = await Bun.file(outPath).text();
+
+        expect(written.carried).toEqual(["sessions"]);
+        expect(text).toContain("records: [r1]");
+        expect(text).not.toContain("record: r1");
     });
 
     test("an untouched legacy stamp permits removal of a generator-owned key", async () => {

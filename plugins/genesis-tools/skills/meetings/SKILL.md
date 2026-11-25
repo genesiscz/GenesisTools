@@ -238,7 +238,8 @@ A missing meeting names only the store that was searched. To find which store ho
    `meetings.polish.init(from)`); so does a hand-written `<name>.polished.md` with no `.ts`
    (`--from <md> [--record <id...>]`, REPL: `meetings.polish.init(md, undefined, records)`): the sections the records
    would write stay frozen as `overrides.sections`, so run `--check`, then `--force` once, then delete an override to
-   hand that section back to the records. A vault folder needs `tools link install` once so the import resolves.
+   hand that section back to the records. That first build also drops the front matter keys the `.ts` took over
+   (`adopted.frontmatterKeys`: `meeting_record`, `share_link`, `<source>_id`) and writes its own names. A vault folder needs `tools link install` once so the import resolves.
 7. **Report**: the file link, the count of changes per kind, the `[nejasné: ...]` count, and every decision that
    contradicts the documents.
 

@@ -264,6 +264,15 @@ export const meetingsPolishedSchema = z
             .optional(),
         /** Fields kept from an adopted draft that the build does not read; never rendered. */
         extras: z.record(z.string(), z.unknown()).optional(),
+        /**
+         * What `polish init --from <md>` took from a hand-written markdown. `frontmatterKeys` are its front matter keys
+         * this config holds now (meeting_record as parts[].record, share_link as a part's shareLink): the first build
+         * drops them from the markdown it replaces instead of keeping them beside the keys it writes.
+         */
+        adopted: z
+            .object({ frontmatterKeys: z.array(z.string().min(1)) })
+            .strict()
+            .optional(),
     })
     .strict()
     .superRefine((config, ctx) => {
