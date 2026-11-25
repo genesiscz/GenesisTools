@@ -113,7 +113,8 @@ function unclearPassages(
 
             const decided = record.items.filter((item) => question.decides.includes(item.id));
 
-            if (question.heard) {
+            // A speaker question's heard words only place its playback: what it doubts is the speaker, not the words.
+            if (question.heard && question.about !== "speaker") {
                 if (decided.some(applied)) {
                     return [];
                 }

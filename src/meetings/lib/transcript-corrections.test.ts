@@ -1082,6 +1082,38 @@ test("only an open speaker question marks its lines questioned", () => {
     expect(questioned({ about: "term", heard: "Jak", status: "suggested" })).toBeUndefined();
 });
 
+test("a speaker question's heard words stay as said; a term question's heard words are marked", () => {
+    const rendered = (fields: Record<string, unknown>) =>
+        correctTranscript({
+            record: meetingRecordSchema.parse({
+                ...base,
+                items: [
+                    item({
+                        id: "i1",
+                        kind: "question",
+                        status: "suggested",
+                        fromSec: 20,
+                        toSec: 20,
+                        question: "Is this the second voice?",
+                        heard: "Pošlu to Adě",
+                        choices: ["Yes", "No"],
+                        ...fields,
+                    }),
+                ],
+            }),
+            transcript,
+            config,
+            format: "txt",
+            withSuggested: true,
+            dictionary: false,
+        }).entries[2]!;
+
+    const speaker = rendered({ about: "speaker" });
+    expect(speaker.text).toBe(transcript[2]!.text);
+    expect(speaker.speaker).toBe("Carol Example");
+    expect(rendered({ about: "term" }).text).not.toBe(transcript[2]!.text);
+});
+
 test("speaker metadata uses each source line's own range when two lines start in one second", () => {
     const source: TranscriptEntry[] = [
         { id: "l1", speaker: "Voice A", startSec: 10, text: "The glimble is ready." },
