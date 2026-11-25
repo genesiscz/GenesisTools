@@ -995,6 +995,17 @@ Under an open diff the mod draws a second row: `[ ↑ top ]` jumps to the top of
 scroll to the block's top first and fold after that; otherwise the window would stay where the block's end was.
 `config set mods.diff.bottomRow false --write` removes the row (on by default).
 
+An open file whose diff is longer than `mods.diff.foldAfterLines` lines (20) draws its first 20 lines and
+`[ show all 1,974 lines ]` under them. The whole diff then ends with `[ fold to 20 lines ]`, which scrolls to the
+block's top and folds it back; the choice holds for that file through a redraw and a reload of the mod. The mod does
+the same for the result of a Write over an existing file and of an Edit, which Claude Code draws with every line of
+the diff (a new file it already folds to its first lines), also when a REPL script's `write()` made the call: the
+folded result shows Claude Code's own `Added 987 lines, removed 987 lines` line, the first 20 lines and the button;
+open, it is Claude Code's own drawing with `[ fold to 20 lines ]` under it. The ctrl+o transcript and `--verbose`
+show it whole, and a file in the session's scratchpad folder keeps Claude Code's summary line. A diff of 20 lines or
+fewer looks as before. `config set mods.diff.foldAfterLines 40 --write` sets another limit (0 to 10,000), and `0`
+never folds.
+
 #### The idle-compaction mod (`mods.idleCompact`, on)
 
 The plugin compacts an idle Claude session 56 minutes after its last turn (`mods.idleCompact.minutes`, 1 to 59),

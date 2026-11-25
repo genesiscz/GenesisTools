@@ -1,6 +1,7 @@
 import type { On } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
-import { fromTop } from "../hooks/sections";
+import { diffLines, foldedPatch, fromTop } from "../hooks/sections";
+import { MODS_DEFAULTS, modsSettings } from "../hooks/settings";
 
 // Run with `claude plugin test plugins/genesis-tools-mods`; the repo's bun runner skips this folder.
 
@@ -305,4 +306,275 @@ test("a fold from under the block scrolls to the block's top first, and a refuse
     );
 
     expect(order).toEqual(["scroll group-9", "fold", "fold after a refusal"]);
+});
+
+/** A unified-diff hunk of `count` changed lines of a file: each old line removed and its new one added. */
+function longHunk(count: number): string[] {
+    const removed = Math.ceil(count / 2);
+    const added = count - removed;
+
+    return [
+        `@@ -1,${removed} +1,${added} @@`,
+        ...Array.from({ length: removed }, (_, index) => `-old ${index + 1}`),
+        ...Array.from({ length: added }, (_, index) => `+new ${index + 1}`),
+    ];
+}
+
+/** A diff-hook note with one file of `count` diff lines. */
+function longNote(count: number): string {
+    const removed = Math.ceil(count / 2);
+
+    return [
+        "# Diff of toolu_a",
+        "",
+        `## /repo/src/long.ts (+${count - removed} -${removed})`,
+        "",
+        "```diff",
+        ...longHunk(count),
+        "```",
+    ].join("\n");
+}
+
+/** A Write over an existing file, as Claude Code stores its result: one hunk of `count` diff lines. */
+function writeResult(count: number): Record<string, unknown> {
+    const [header = "", ...lines] = longHunk(count);
+    const [, oldLines = "0", newLines = "0"] = /^@@ -1,(\d+) \+1,(\d+) @@$/.exec(header) ?? [];
+
+    return {
+        type: "update",
+        filePath: "/tmp/cc/test/lines.tsv",
+        content: "",
+        structuredPatch: [{ oldStart: 1, oldLines: Number(oldLines), newStart: 1, newLines: Number(newLines), lines }],
+        originalFile: "",
+    };
+}
+
+/** The engine's own result block under a Write or Edit row, beneath the plugin. */
+function resultEngine(on: On, files: Record<string, string>): void {
+    engine(on, files);
+    on("ui.render", { component: "ToolResult" }, async ($, e) => {
+        const { Text } = $.ui.resolve(e);
+
+        return <Text>engine diff</Text>;
+    });
+}
+
+const RESULT = {
+    tool_use_id: "toolu_w",
+    tool: "Write",
+    output: undefined as unknown,
+    isErrored: false,
+    isExpanded: false,
+};
+
+/** The source of every Code element the drawing holds, in order. */
+async function codeSources(ui: {
+    findAll: (query: { type: string }) => Promise<{ props: Record<string, unknown> }[]>;
+}) {
+    return (await ui.findAll({ type: "Code" })).map((code) => String(code.props.source));
+}
+
+test("mods.diff.foldAfterLines: 20 by default; 0 and up to 10,000 are kept, anything else falls back to 20", () => {
+    const read = (foldAfterLines: unknown) =>
+        modsSettings(JSON.stringify({ mods: { diff: { foldAfterLines } } })).diff.foldAfterLines;
+
+    expect(MODS_DEFAULTS.diff.foldAfterLines).toBe(20);
+    expect(modsSettings(undefined).diff.foldAfterLines).toBe(20);
+    expect(read(0)).toBe(0);
+    expect(read(40)).toBe(40);
+    expect(read(10_000)).toBe(10_000);
+    expect(read(-1)).toBe(20);
+    expect(read(10_001)).toBe(20);
+    expect(read(2.5)).toBe(20);
+    expect(read("30")).toBe(20);
+    expect(read(null)).toBe(20);
+});
+
+test("a patch past the limit keeps its first lines, and the cut hunk's header counts only what it keeps", () => {
+    const patch = ["@@ -1,2 +1,2 @@ fn", " same", "-old", "+new", "@@ -9,1 +9,1 @@", "-a", "+b"].join("\n");
+
+    expect(diffLines(patch)).toBe(5);
+    expect(foldedPatch(patch, 5)).toBe(patch);
+    expect(foldedPatch(patch, 0)).toBe(patch);
+    expect(foldedPatch(patch, 2)).toBe(["@@ -1,2 +1,1 @@ fn", " same", "-old"].join("\n"));
+    expect(foldedPatch(patch, 4)).toBe(
+        ["@@ -1,2 +1,2 @@ fn", " same", "-old", "+new", "@@ -9,1 +9,0 @@", "-a"].join("\n")
+    );
+    // `\ No newline at end of file` stays with the line it belongs to and is not counted.
+    const tail = ["@@ -1,2 +1,2 @@", "-x", "\\ No newline at end of file", "+y", "+z"].join("\n");
+    expect(diffLines(tail)).toBe(3);
+    expect(foldedPatch(tail, 1)).toBe(["@@ -1,1 +1,0 @@", "-x", "\\ No newline at end of file"].join("\n"));
+});
+
+test("a Write past 20 diff lines draws its first 20 and show all, which opens the engine's diff and folds back", async ($, on) => {
+    resultEngine(on, {});
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolResult",
+        props: { ...RESULT, output: writeResult(25) },
+        requestId: "toolu_w",
+    });
+
+    expect(await ui.find({ text: "engine diff" })).toBeUndefined();
+    expect((await ui.find({ key: "toolu_w:lines" }))?.text).toBe("show all 25 lines");
+    expect(await ui.find({ text: "Added 12 lines, removed 13 lines" })).toBeDefined();
+    const [folded = ""] = await codeSources(ui);
+    expect(diffLines(folded)).toBe(20);
+    expect(folded.startsWith("@@ -1,13 +1,7 @@")).toBe(true);
+
+    await ui.press({ key: "toolu_w:lines" });
+
+    expect(await ui.find({ text: "engine diff" })).toBeDefined();
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    expect((await ui.find({ key: "toolu_w:lines" }))?.text).toBe("fold to 20 lines");
+
+    await ui.press({ key: "toolu_w:lines" });
+
+    expect(await ui.find({ text: "engine diff" })).toBeUndefined();
+    expect((await ui.find({ key: "toolu_w:lines" }))?.text).toBe("show all 25 lines");
+    await ui.unmount();
+});
+
+test("a Write or Edit of 20 diff lines, a new file and the ctrl+o view draw as the engine does", async ($, on) => {
+    resultEngine(on, {});
+
+    const mount = (props: Record<string, unknown>, id: string) =>
+        $.ui.mount({
+            plugin: "genesis-tools-mods",
+            surface: "terminal",
+            component: "ToolResult",
+            props: { ...RESULT, ...props, tool_use_id: id },
+            requestId: id,
+        });
+    const drawn = [
+        await mount({ output: writeResult(20) }, "toolu_1"),
+        await mount({ tool: "Edit", output: { ...writeResult(20), type: undefined } }, "toolu_2"),
+        await mount({ output: { ...writeResult(25), type: "create" } }, "toolu_3"),
+        await mount({ output: writeResult(25), isExpanded: true }, "toolu_4"),
+    ];
+
+    for (const [index, ui] of drawn.entries()) {
+        expect(await ui.find({ text: "engine diff" })).toBeDefined();
+        expect(await ui.find({ key: `toolu_${index + 1}:lines` })).toBeUndefined();
+        await ui.unmount();
+    }
+
+    // An Edit past the limit folds like a Write.
+    const edit = await mount({ tool: "Edit", output: { ...writeResult(30), type: undefined } }, "toolu_5");
+    expect((await edit.find({ key: "toolu_5:lines" }))?.text).toBe("show all 30 lines");
+    await edit.unmount();
+});
+
+test("a Write past the limit into the session's scratchpad folder is left to the engine, which draws it collapsed", async ($, on) => {
+    resultEngine(on, {});
+    let asked = 0;
+    on("session.info", async () => {
+        asked += 1;
+        return { value: { transcriptPath: "", scratchpadDir: "/tmp/cc/test/" } };
+    });
+
+    const inside = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolResult",
+        props: { ...RESULT, output: writeResult(25) },
+        requestId: "toolu_w",
+    });
+
+    expect(asked).toBe(1);
+    expect(await inside.find({ text: "engine diff" })).toBeDefined();
+    expect(await inside.find({ key: "toolu_w:lines" })).toBeUndefined();
+    await inside.unmount();
+
+    // A sibling folder whose name only starts with the scratchpad's is not inside it.
+    const beside = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolResult",
+        props: { ...RESULT, tool_use_id: "toolu_b", output: { ...writeResult(25), filePath: "/tmp/cc/tester/a.tsv" } },
+        requestId: "toolu_b",
+    });
+
+    expect((await beside.find({ key: "toolu_b:lines" }))?.text).toBe("show all 25 lines");
+    await beside.unmount();
+});
+
+test("mods.diff.foldAfterLines 0 never folds a Write, and a shell block's file draws whole", async ($, on) => {
+    resultEngine(on, {
+        [NOTE_PATH]: longNote(40),
+        "/home/test/.genesis-tools/agents/hooks.json": '{"mods":{"diff":{"foldAfterLines":0}}}',
+    });
+
+    const result = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolResult",
+        props: { ...RESULT, output: writeResult(2_000) },
+        requestId: "toolu_w",
+    });
+
+    expect(await result.find({ text: "engine diff" })).toBeDefined();
+    expect(await result.find({ key: "toolu_w:lines" })).toBeUndefined();
+    await result.unmount();
+
+    const block = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: GROUP,
+        requestId: "group-20",
+    });
+
+    expect((await codeSources(block)).map(diffLines)).toEqual([40]);
+    expect(await block.find({ key: "group-20|toolu_a|/repo/src/long.ts:lines" })).toBeUndefined();
+    await block.unmount();
+});
+
+test("a shell block's open file past 20 lines draws its first 20 and show all, which opens it and folds it back", async ($, on) => {
+    engine(on, { [NOTE_PATH]: longNote(25) });
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: GROUP,
+        requestId: "group-21",
+        viewport: { columns: 160, rows: 40 },
+    });
+    const LINES = "group-21|toolu_a|/repo/src/long.ts:lines";
+
+    expect((await codeSources(ui)).map(diffLines)).toEqual([20]);
+    expect((await ui.find({ key: LINES }))?.text).toBe("show all 25 lines");
+
+    await ui.press({ key: LINES });
+
+    expect((await codeSources(ui)).map(diffLines)).toEqual([25]);
+    expect((await ui.find({ key: LINES }))?.text).toBe("fold to 20 lines");
+
+    await ui.press({ key: LINES });
+
+    expect((await codeSources(ui)).map(diffLines)).toEqual([20]);
+    // The file's own [-] still folds it to its name.
+    await ui.press({ key: "group-21|toolu_a|/repo/src/long.ts:fold" });
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    expect(await ui.find({ key: LINES })).toBeUndefined();
+    await ui.unmount();
+});
+
+test("a shell block's file of 20 lines draws whole, with no line button", async ($, on) => {
+    engine(on, { [NOTE_PATH]: longNote(20) });
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: GROUP,
+        requestId: "group-22",
+    });
+
+    expect((await codeSources(ui)).map(diffLines)).toEqual([20]);
+    expect(await ui.find({ key: "group-22|toolu_a|/repo/src/long.ts:lines" })).toBeUndefined();
+    await ui.unmount();
 });

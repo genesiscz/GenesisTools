@@ -33,6 +33,16 @@ import {
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
 import {
+    editDiffOf,
+    foldedEdit,
+    foldLabel,
+    isInScratchpad,
+    openEdit,
+    openedDiffs,
+    setWhole,
+    showAllLabel,
+} from "./line-fold";
+import {
     appendLinkedPullRequestNote,
     linksStep,
     PR_REFERENCE_SECTION,
@@ -45,7 +55,9 @@ import {
     type CallSection,
     collapseGitSyncEnabled,
     commandOf,
+    diffLines,
     diffRowSettings,
+    foldedPatch,
     fromTop,
     fullDiffEnabled,
     gitSyncOf,
@@ -94,6 +106,8 @@ interface Diffs {
     bottomRow: boolean;
     /** `mods.diff.filesOnly`: every block starts as its file names, until the session's own answer (`foldAll`). */
     filesOnly: boolean;
+    /** `mods.diff.foldAfterLines`: an open file past this many lines draws its first lines and `show all`; 0 never. */
+    foldAfterLines: number;
 }
 
 /**
@@ -119,7 +133,14 @@ async function hooksFileOf(host: Host, dir: string): Promise<string | undefined>
 }
 
 async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
-    const none: Diffs = { sections: [], syncs: new Map(), omitted: [], bottomRow: false, filesOnly: false };
+    const none: Diffs = {
+        sections: [],
+        syncs: new Map(),
+        omitted: [],
+        bottomRow: false,
+        filesOnly: false,
+        foldAfterLines: 0,
+    };
     const host = hostOf($);
     const dir = calls.length > 0 ? await agentsDir(host) : undefined;
 
@@ -244,7 +265,9 @@ const shownCalls = atom({ plugin: "genesis-tools-mods", key: "shown" } as const,
  * `show diff from git pull` Button, and a `hide diff from git pull` Button folds it back. Each file has its own `[-]`/`[+]` Button that folds its diff to its name and
  * back; the row's Button folds every file, or opens them all once every file is folded. `files only (everywhere)`
  * does that for every block of the session (`foldAll`). Under an open diff the same buttons stand again beside
- * `↑ top` (`mods.diff.bottomRow`), and they scroll to the block's top before they fold. A click elsewhere on the
+ * `↑ top` (`mods.diff.bottomRow`), and they scroll to the block's top before they fold. An open file past
+ * `mods.diff.foldAfterLines` draws its first lines and `show all <n> lines`; open whole, `fold to <n> lines` under it
+ * scrolls to the block's top and folds it back (`wholeDiffs`). A click elsewhere on the
  * drawing reaches the engine's row, which opens the group's calls (the person's "expansion in expansion").
  *
  * The inner Box's `width="100%"` stretches the diffs to the transcript's width: without it they were as wide as
@@ -315,6 +338,34 @@ async function drawDiffs(
         </Button>
     );
     const hasOpen = keys.some((_, index) => isOpen(index));
+    const opened = await openedDiffs($);
+    const limit = diffs.foldAfterLines;
+    /** An open file's diff: whole at or under the limit, else its first lines and a Button that opens or folds it. */
+    const fileDiff = (section: CallSection, key: string) => {
+        const lines = diffLines(section.patch);
+        const code = (source: string) => <Code source={source} format="diff" path={section.path} />;
+
+        if (limit === 0 || lines <= limit) {
+            return code(section.patch);
+        }
+
+        const isWhole = opened.has(key);
+
+        return (
+            <Box key={`${key}:diff`} flexDirection="column">
+                {code(isWhole ? section.patch : foldedPatch(section.patch, limit))}
+                <Button
+                    key={`${key}:lines`}
+                    dimColor
+                    onPress={() =>
+                        isWhole ? fromTop(toTop, row, () => setWhole($, key, false)) : setWhole($, key, true)
+                    }
+                >
+                    {isWhole ? foldLabel(limit) : showAllLabel(lines)}
+                </Button>
+            </Box>
+        );
+    };
 
     return (
         <Box flexDirection="column">
@@ -363,7 +414,7 @@ async function drawDiffs(
                                 <Text color="diffRemoved">-{section.removed}</Text>
                                 {isDeletion(section) ? <Text dimColor>deleted</Text> : null}
                             </Box>
-                            {isFolded ? null : <Code source={section.patch} format="diff" path={section.path} />}
+                            {isFolded ? null : fileDiff(section, key)}
                         </Box>
                     );
                 })}
@@ -1147,6 +1198,41 @@ export const register: Register = (on) => {
 
         return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }], time });
     });
+
+    // The line fold (`line-fold.tsx`): a Write over an existing file or an Edit whose diff is past
+    // `mods.diff.foldAfterLines` draws its first lines and `show all`, also when a REPL script made the call (its
+    // calls are rows of their own). The ctrl+o transcript and `--verbose` draw it whole, as the engine does.
+    on(
+        "ui.render",
+        { component: "ToolResult", surface: "terminal", props: { tool: ["Write", "Edit"] } },
+        async ($, e, next) => {
+            const diff = e.props.isErrored || e.props.isExpanded ? undefined : editDiffOf(e.props.tool, e.props.output);
+            const limit = diff ? (await settingsOf(hostOf($))).diff.foldAfterLines : 0;
+
+            if (!diff || limit === 0 || diff.lines <= limit || (await isInScratchpad($, diff.path))) {
+                return next(e);
+            }
+
+            const ui = $.ui.resolve(e);
+            const id = e.props.tool_use_id;
+
+            if ((await openedDiffs($)).has(id)) {
+                return openEdit(ui, {
+                    id,
+                    limit,
+                    drawn: await next(e),
+                    fold: () =>
+                        fromTop(
+                            (target) => hostOf($).scroll(target),
+                            id,
+                            () => setWhole($, id, false)
+                        ),
+                });
+            }
+
+            return foldedEdit(ui, { id, diff, limit, open: () => setWhole($, id, true) });
+        }
+    );
 };
 /** The band's first row: the git row at the left, the chips (decisions, inbox, hooks) at the right edge. */
 function topRow(ui: ElementTable, git: RenderElement | null, chips: readonly RenderElement[]): RenderElement | null {

@@ -843,6 +843,22 @@ describe("applySetting", () => {
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
     });
 
+    it("mods.diff.foldAfterLines: 20 by default, 0 never folds, and a value past 10,000 or below 0 is refused", () => {
+        const set = (value: string) => applySetting(DEFAULT_HOOKS_CONFIG, "mods.diff.foldAfterLines", value).mods.diff;
+        const problems: string[] = [];
+
+        expect(DEFAULT_HOOKS_CONFIG.mods.diff.foldAfterLines).toBe(20);
+        expect(set("40").foldAfterLines).toBe(40);
+        expect(set("0").foldAfterLines).toBe(0);
+        expect(() => set("-1")).toThrow("at least 0");
+        expect(() => set("10001")).toThrow("0 to 10000");
+        expect(() => set("many")).toThrow("whole number");
+        expect(HOOK_CONFIG_SECTIONS.mods.merge({ diff: { foldAfterLines: 12.5 } }, problems).diff.foldAfterLines).toBe(
+            20
+        );
+        expect(problems).toHaveLength(1);
+    });
+
     it("mods.resumeGuard: off by default, bounded, and set by a named value or any number in range", () => {
         const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods.resumeGuard;
 
