@@ -3328,6 +3328,16 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         }
     });
 
+    test("meetings.schema prints the declared output types, as tools meetings schema does", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.schema")).toContain("meetings schema");
+        const meetings = (await loadMeetings()) as unknown as { schema(input?: unknown): string };
+        expect(meetings.schema({ name: "evidence" })).toContain("type Line = { index: number;");
+        expect(meetings.schema({ name: "evidence" })).toContain("speaking: string[]");
+        expect(meetings.schema()).toContain("voices-preview: tools meetings voices preview");
+        expect(() => meetings.schema({ name: "nope" })).toThrow();
+    });
+
     test("meetings: Meeting.lineTable and Meeting.pack are evidence --format tsv and pack, through the same functions", async () => {
         const api = new MeetingsToolset().api;
         expect(describeMethod([api], "meetings.Meeting.lineTable")).toContain("meetings evidence");

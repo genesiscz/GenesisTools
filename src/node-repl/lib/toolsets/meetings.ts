@@ -12,6 +12,7 @@ import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { captureBlockersRead, quitCaptureBlockersNow } from "@app/meetings/lib/never-capture";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
+import { outputSchemaText } from "@app/meetings/lib/output-types";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { confirmVoiceSample } from "@app/meetings/lib/person-door";
 import { rawEvidence } from "@app/meetings/lib/raw-evidence";
@@ -81,6 +82,7 @@ import {
     rename,
     reopen,
     saveClip,
+    schemaMethod,
     screen,
     screenTimelineMethod,
     set,
@@ -320,6 +322,8 @@ export class MeetingsToolset extends ReplToolset {
                         undo: serviceCall("voices.undo"),
                     }
                 ),
+                schema: (input: z.input<typeof schemaMethod.params> = {}) =>
+                    outputSchemaText(schemaMethod.params.parse(input)),
                 levels: async (input: z.input<typeof levels.params> = {}) => {
                     const { meeting, seconds } = levels.params.parse(input);
                     return meeting === undefined

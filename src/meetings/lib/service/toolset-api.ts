@@ -2,6 +2,7 @@ import { meetingCommentSchema } from "@app/meetings/lib/comment-schema";
 import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { lineDecisionSchema } from "@app/meetings/lib/from-decisions";
 import { matchDraftSchema } from "@app/meetings/lib/match-preview";
+import { MEETING_OUTPUT_NAMES, SCHEMA_FORMATS } from "@app/meetings/lib/output-types";
 import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { WORD_CHECKS } from "@app/meetings/lib/word-check";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
@@ -211,6 +212,18 @@ export const evidence = defineMethod({
     result: z.unknown(),
     effect: "read",
     doc: `Read screen --at before attributing an idea shown on screen. Channel evidence; table (or raw with from/to) returns the per-line evidence of that window. raw without from/to is ${toolCommand("meetings", "evidence")} <meeting> --raw: seats, project roles, the terms (each unknown word, vocabulary run and spoken identifier with the screen OCR lines near it that sound like it: atSec, frame, form, text, score) and screen, the screen record they come from (or recorded false). wordCheck and screenLines are its --word-check and --screen-lines.`,
+});
+export const schemaMethod = defineMethod({
+    name: "schema",
+    params: z
+        .object({
+            name: z.enum(MEETING_OUTPUT_NAMES).optional(),
+            format: z.enum(SCHEMA_FORMATS).optional(),
+        })
+        .strict(),
+    result: z.string(),
+    effect: "read",
+    doc: `The declared types of a command's JSON output (${MEETING_OUTPUT_NAMES.join(", ")}), from the source types, never inferred: TypeScript declarations with each named part once, or JSON Schema with format "json-schema". Without a name, the names and the commands they describe. CLI twin: ${toolCommand("meetings", "schema")} [output] [--format ts|json-schema].`,
 });
 export const lineTable = defineMethod({
     name: "lineTable",
@@ -1110,6 +1123,7 @@ export const meetingsToolsetApi = defineApi({
         ...Object.values(voiceLibraryMethods),
         list,
         levels,
+        schemaMethod,
         open,
         look,
         measure,

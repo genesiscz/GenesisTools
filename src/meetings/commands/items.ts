@@ -43,6 +43,7 @@ import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } fro
 import { joinGaps } from "../lib/join-clock";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { attendanceDetail, attendanceIdRefusal, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
+import type { ItemsOutput } from "../lib/output-types";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { missingProjectWarning, projectRequired, resolveProject } from "../lib/project";
 import { questionLabel, questionWarnings } from "../lib/questions";
@@ -419,7 +420,8 @@ async function items(
     const listed = record.items.filter((item) => (!status || item.status === status) && (!kind || item.kind === kind));
 
     if (format === "json") {
-        out.result(SafeJSON.stringify(listed, null, 2));
+        const json: ItemsOutput = listed;
+        out.result(SafeJSON.stringify(json, null, 2));
         return;
     }
 
