@@ -1,3 +1,4 @@
+import { type CallerBrief, callerBrief } from "@genesiscz/utils/agent/identity/caller-record";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -99,6 +100,8 @@ export interface InboxDecision {
      * says a decision was answered in chat; every surface reads it from here.
      */
     answeredVia: AnsweredVia | null;
+    /** The agent that stored the answer (`answeredBy` of the row): its harness, session and model; null when none did. */
+    answeredBy: CallerBrief | null;
     /** `transcript`: read from the session's last reply only. `store`: a posted or harvested row. */
     /**
      * Where the item comes from: the last reply's `❓ DECISION` block, the decision log, or a dialog record (an
@@ -464,6 +467,7 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
         option: row.option ?? null,
         answer: row.answer ?? null,
         answeredVia: row.answeredVia ?? null,
+        answeredBy: row.answeredBy ? callerBrief(row.answeredBy) : null,
         source: "store",
         at: row.createdTs ?? row.updatedTs,
         context: row.context ?? null,
@@ -534,6 +538,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         option: null,
         answer: null,
         answeredVia: null,
+        answeredBy: null,
         source: "transcript",
         at,
         context: block.context ?? null,

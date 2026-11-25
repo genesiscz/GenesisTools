@@ -137,7 +137,7 @@ struct WidgetInboxEntryDetail: View {
                 let words = [item.option.map { "Answered " + $0.uppercased() }, item.answer]
                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
                 WidgetAnswerBlock(question: nil, answer: words, more: false, clampLines: 1,
-                                  label: WidgetAlerts.answeredViaText(item.answeredVia))
+                                  label: WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy))
             }
             if let count = item.count, count > 1, item.reply != nil || item.message != nil {
                 earlierEntries(count - 1)

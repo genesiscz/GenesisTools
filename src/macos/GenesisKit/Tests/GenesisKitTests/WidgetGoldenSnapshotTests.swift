@@ -70,6 +70,20 @@ final class WidgetGoldenSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.notifications?.sessions.first?.pendingItem?.id, card.id)
     }
 
+    /// A decision an agent answered names that agent on its card and in "answered elsewhere": its harness, session and
+    /// model.
+    func testAnAgentsAnswerNamesTheAgentThatStoredIt() throws {
+        let snapshot = try JSONDecoder().decode(
+            WidgetSnapshot.self, from: KitFixture.data("snapshot-overview.json", in: "Widget"))
+        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol")
+        let card = try XCTUnwrap(snapshot.cards.first { $0.answeredVia == "agent" })
+        XCTAssertEqual(card.answeredBy, relay)
+        XCTAssertEqual(WidgetAlerts.answeredViaText(card.answeredVia, by: card.answeredBy),
+                       "Answer recorded by Codex, session 0a1b2c3d · gpt-6.1-sol")
+        let elsewhere = snapshot.notifications?.answeredElsewhere?.first { $0.answeredVia == "agent" }
+        XCTAssertEqual(elsewhere?.answeredBy, relay)
+    }
+
     /// A kind a newer hub adds decodes to `unknown` with its text, so the rest of the snapshot still reaches the widget.
     func testAKindThisBuildDoesNotKnowDecodesAsUnknownWithItsText() throws {
         let text = try XCTUnwrap(

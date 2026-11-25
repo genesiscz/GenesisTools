@@ -233,7 +233,10 @@ or `["all"]` adds more. It is the CLI twin of the `question_update` MCP tool.
 - **`answeredVia`** on a stored row says who stored the answer: `inbox` (the move to `answered`: widget, hub, CLI
   `answer`), `agent` (a move from `open` or `drafted` to `acknowledged`), or `automatic_heuristic` (the decision Stop
   hook read an unambiguous answer from the chat; `recordChatAnswers` in `src/question/lib/decisions/store.ts`). The
-  store sets it; no `update` can claim `automatic_heuristic`.
+  store sets it; no `update` can claim `automatic_heuristic`. `answeredBy` names the agent that stored the answer
+  (its caller record). The inbox (`InboxDecision.answeredBy`), the widget snapshot and the hub show its harness,
+  session and model beside `answeredVia`: "Answer recorded by Codex, session 0a1b2c3d · gpt-6.1-sol", or "Your answer,
+  relayed by …" when an agent ran `answer` for the user.
 - **The Stop hook reads chat answers only when you turn it on.** `decisions.chatAnswers` in the agents hooks config
   is `off` by default. `record` stores each unambiguous answer as above and sends the agent back once per unclear
   one; `remind` stores nothing and sends the agent back once per decision to record what it finds:

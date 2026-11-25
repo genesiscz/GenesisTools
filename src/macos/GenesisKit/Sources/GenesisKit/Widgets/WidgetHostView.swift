@@ -791,7 +791,7 @@ struct WidgetPeekView: View {
                 Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
             }
-            Text(WidgetAlerts.answeredViaText(item.answeredVia)).font(.system(size: 11))
+            Text(WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy)).font(.system(size: 11))
                 .foregroundStyle(.secondary).padding(.horizontal, 8)
         }
         .accessibilityIdentifier("widget.peek.answered")

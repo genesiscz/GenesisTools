@@ -73,13 +73,24 @@ public enum WidgetAlerts {
         return sound == "same" ? preferences.alertSound : sound
     }
 
-    /// Who stored a decision's answer, in the words every surface uses (`answeredVia`).
-    public static func answeredViaText(_ via: String?) -> String {
+    /// Who stored a decision's answer, in the words every surface uses (`answeredVia`), naming the agent that stored
+    /// it when the row says (`answeredBy`): "Answer recorded by Claude Code, session 1a2b3c4d · opus".
+    public static func answeredViaText(_ via: String?, by agent: WidgetAnsweredBy? = nil) -> String {
+        let who = agent.map(agentText)
         switch via {
-        case "agent": return "Answer recorded by the agent"
-        case "automatic_heuristic": return "Answer read from your chat"
-        default: return "Your answer"
+        case "agent": return "Answer recorded by " + (who ?? "the agent")
+        case "automatic_heuristic": return "Answer read from your chat" + (who.map { " by " + $0 } ?? "")
+        default: return who.map { "Your answer, relayed by " + $0 } ?? "Your answer"
         }
+    }
+
+    /// An agent in the words the relayed-answers window uses for it (`callerRecordLine`): the harness's name, the
+    /// session's first 8 characters and the model's family, "Claude Code, session 1a2b3c4d · opus".
+    public static func agentText(_ agent: WidgetAnsweredBy) -> String {
+        let name = AIProviders.meta(for: agent.harness).displayName
+        let session = agent.session.map { ", session " + String($0.prefix(8)) } ?? ""
+        let model = agent.model.map { " · " + SessionNativeLog.shortModel($0) } ?? ""
+        return name + session + model
     }
 
     /// The options a decision answered elsewhere took: each chosen letter with its option's text.

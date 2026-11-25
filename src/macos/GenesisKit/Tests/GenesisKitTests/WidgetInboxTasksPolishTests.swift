@@ -1022,6 +1022,14 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.kicker(answered), "Decision 4 answered")
         XCTAssertEqual(WidgetAlerts.answeredOptions(answered).map(\.text), ["keep", "drop"], "the agent's own letter is not kept")
         XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic"), "Answer read from your chat")
+        // The row names the agent that stored the answer: its harness, the session's first 8 characters, the model.
+        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("agent"), "Answer recorded by the agent", "a row with no agent keeps the old words")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("agent", by: relay), "Answer recorded by Codex, session 0a1b2c3d · gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic", by: WidgetAnsweredBy(harness: "claude", model: "claude-opus-5-5")),
+                       "Answer read from your chat by Claude Code · opus")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("inbox", by: relay), "Your answer, relayed by Codex, session 0a1b2c3d · gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("inbox"), "Your answer")
         XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(.hubDefaults), 5)
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(.hubDefaults), "Tink")
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(try prefs(#"{"autoDecisionSound":"same","alertSound":"Ping"}"#)), "Ping")
