@@ -383,23 +383,8 @@ struct WidgetHostView: View {
 
     private func previewPane(_ selected: WidgetModuleDescriptor) -> some View {
         VStack(spacing: 0) {
-            if selected.id == "agents" {
-                // Only this part follows the alert popup, so a popup change does not build the whole panel again.
-                WidgetAlertPopupReader(popup: model.alertPopup) { item in
-                    if let item {
-                        // The alert popup (`WidgetAlertPopup`): one item, a click answers it, × or Esc closes it.
-                        // Measured like the hover list, so the panel takes the popup's own height.
-                        // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on
-                        // every side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own
-                        // edge. Only the content is measured, so the fill cannot feed its own height back (Martin's
-                        // screenshot, 2026-10-25: a short card over an empty pane, its flash border hugging the text).
-                        WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
-                            .padding(WidgetPeekView.inset)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    } else {
-                        AgentWidgetPreview(model: model, surface: surface)
-                    }
-                }
+            if selected.previewChrome == .module {
+                selected.content(.preview).environment(\.widgetSurface, surface)
             } else {
                 Button(action: expand) {
                     HStack {
@@ -1048,41 +1033,34 @@ struct WidgetPeekSummary: View, Equatable {
 
 struct AgentWidgetModuleView: View {
     @ObservedObject var model: WidgetModel
-    @ObservedObject private var popup: WidgetAlertPopup
     let presentation: WidgetModulePresentation
+    @Environment(\.widgetSurface) private var surface
 
     init(model: WidgetModel, presentation: WidgetModulePresentation) {
         _model = ObservedObject(wrappedValue: model)
-        _popup = ObservedObject(wrappedValue: model.alertPopup)
         self.presentation = presentation
     }
 
     var body: some View {
         if presentation == .expanded {
             LiveWidgetView(model: model, edge: model.expanded ?? model.side, embedded: true)
-        } else if presentation == .preview, let item = popup.item {
-            WidgetPeekView(model: model, item: item)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))
-                    .lineLimit(2)
-                if let card = model.card {
-                    Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12)).lineLimit(3)
-                    if !card.fullText.isEmpty {
-                        Text(card.fullText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
-                    }
+            // Only this part follows the alert popup, so a popup change does not build the whole panel again.
+            WidgetAlertPopupReader(popup: model.alertPopup) { item in
+                if let item {
+                    // The alert popup (`WidgetAlertPopup`): one item, a click answers it, × or Esc closes it.
+                    // Measured like the hover list, so the panel takes the popup's own height.
+                    // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on
+                    // every side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own
+                    // edge. Only the content is measured, so the fill cannot feed its own height back (Martin's
+                    // screenshot, 2026-10-25: a short card over an empty pane, its flash border hugging the text).
+                    WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
+                        .padding(WidgetPeekView.inset)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 } else {
-                    Text("Questions, screenshots and finished work are collected here.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    AgentWidgetPreview(model: model, surface: surface ?? WidgetSurfaceID(edge: model.side))
                 }
-                Divider()
-                HStack {
-                    Label(
-                        "\(model.sessions.filter { $0.status == "waiting" }.count) waiting", systemImage: "bubble.left")
-                    Spacer()
-                    Text("\(model.sessions.filter { $0.status == "working" }.count) working")
-                }.font(.caption2).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 }

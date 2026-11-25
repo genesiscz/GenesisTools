@@ -429,6 +429,18 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(WidgetFeedRunHeader(run: otherRun, model: model).subtitle, named.title)
     }
 
+    /// The Agents module draws its own preview (the hover list with its header and footer) on the surface the host
+    /// names, as every other module draws its content.
+    func testTheAgentsModuleDrawsItsOwnPreview() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        let module = AgentWidgetModuleView(model: model, presentation: .preview)
+            .environment(\.widgetSurface, WidgetSurfaceID(edge: .right))
+        let text = try WidgetInboxRender.draw(module, size: CGSize(width: 480, height: 480)).joined(separator: " ")
+        XCTAssertTrue(text.contains("Inbox"), text)
+        XCTAssertTrue(text.contains("Projects & sessions"), text)
+    }
+
     /// A session's inbox row and the inbox of every session draw one head: for one decision both values name the same
     /// title, kind, waiting state and time, and each keeps its own identifier.
     func testACardAndItsItemDrawTheSameHead() {
