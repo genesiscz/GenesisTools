@@ -259,6 +259,12 @@ export interface HookFacts {
     readToolCalls(transcriptPath: string, fromOffset: number): ToolCallsRead;
     /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
     readonly modsDrawDiffs: boolean;
+    /**
+     * Whether it draws this terminal call as a tool row of its own: the mods draw a full diff only under the call's row.
+     * Claude Code's code mode (the REPL tool) runs each shell command of a script as a call `repl_<uuid>` with no row:
+     * the script's one REPL row holds them all, so a diff left to the mod showed nowhere (918 calls in 12 hours of the hook log, 2026-11-24).
+     */
+    callHasOwnRow(toolUseId: string | undefined): boolean;
     /** Its model may come from `~/.claude/settings.json` when the transcript names none. */
     readonly settingsModel: boolean;
     /**

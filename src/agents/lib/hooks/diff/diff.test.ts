@@ -5383,6 +5383,13 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(
             modDrawsDiffs({ config: on, harness: "claude", sessionId: "s-1", isEnabled: (id) => id === "s-1" })
         ).toBe(true);
+        // A code-mode script's shell call has no Bash row for the mod to draw under, so the hook shows its diff
+        // (session a1523c66, 2026-11-24: a fable-replace sweep of 8 files was logged "the full-diff mod draws the diff"
+        // and nothing drew it).
+        expect(modDrawsDiffs({ config: on, harness: "claude", toolUseId: "repl_0f3c2a9e-1", isEnabled: yes })).toBe(
+            false
+        );
+        expect(modDrawsDiffs({ config: on, harness: "claude", toolUseId: "toolu_01AbC", isEnabled: yes })).toBe(true);
     });
 
     it("renders a file once when the command names it through another path to the same folder", () => {

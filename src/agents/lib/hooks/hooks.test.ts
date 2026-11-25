@@ -3088,6 +3088,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: true,
             readToolCalls: claudeToolCalls,
             modsDrawDiffs: true,
+            callHasOwnRow: expect.any(Function),
             settingsModel: true,
             currentModel: claudeCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3108,6 +3109,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: true,
             readToolCalls: grokToolCalls,
             modsDrawDiffs: false,
+            callHasOwnRow: expect.any(Function),
             settingsModel: false,
             currentModel: grokCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3128,6 +3130,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: false,
             readToolCalls: codexToolCalls,
             modsDrawDiffs: false,
+            callHasOwnRow: expect.any(Function),
             settingsModel: false,
             currentModel: codexCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3146,6 +3149,14 @@ describe("HARNESS_HOOK_FACTS", () => {
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();
+    });
+
+    it("a Claude code-mode script's shell call has no row of its own; a Bash tool call has one", () => {
+        expect(HARNESS_HOOK_FACTS.claude.callHasOwnRow("repl_da72304f-7185-4763-a0b9-5381f7e062c0")).toBe(false);
+        expect(HARNESS_HOOK_FACTS.claude.callHasOwnRow("toolu_01JMBRPQRSipAuSW9VpEegK7")).toBe(true);
+        expect(HARNESS_HOOK_FACTS.claude.callHasOwnRow(undefined)).toBe(true);
+        expect(HARNESS_HOOK_FACTS.codex.callHasOwnRow("repl_x")).toBe(true);
+        expect(HARNESS_HOOK_FACTS.grok.callHasOwnRow("repl_x")).toBe(true);
     });
 });
 
