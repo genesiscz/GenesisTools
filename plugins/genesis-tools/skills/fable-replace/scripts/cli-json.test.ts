@@ -200,6 +200,23 @@ describe("--edits - --json", () => {
         expect(emptyBackupDirs(path.join(base, "scratch"))).toEqual([]);
         expect(read("edits/whole.ts")).toBe("export const whole = 1;\n");
     });
+
+    test("a deleted file is a plain path in written, and its action says it was deleted", async () => {
+        put("edits/gone.ts", "export const gone = 1;\n");
+        const child = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: JSON.stringify([{ file: "gone.ts", delete: true }]),
+        });
+
+        expect(child.status).toBe(0);
+        const report = reportOf(child);
+        expect(report).toMatchObject({
+            ok: true,
+            written: ["gone.ts"],
+            files: [{ file: "gone.ts", action: "deleted" }],
+        });
+        expect(fs.existsSync(path.join(base, "edits", "gone.ts"))).toBe(false);
+    });
 });
 
 describe("a git fixture: --find, --rename-module, --rollback and an untracked gitMove", () => {
