@@ -8487,6 +8487,41 @@ test("the line table keeps two lines of one second in transcript order, each wit
     ]);
 });
 
+test("a seat saved with no end stops at the person's recorded leave in the legend, and without a leave it stays open", () => {
+    const transcript = [line("Alice Example", 0, "Hello.", 1), line("Bob Example", 30, "Bye.", 2)];
+    const seated = meetingRecordSchema.parse({
+        ...record,
+        participants: [
+            { name: "Alice Example", self: true, from: [] },
+            {
+                name: "Bob Example",
+                from: [],
+                stays: [{ fromSec: 0, toSec: 2976, source: "hand", leaveSource: "hand" }],
+            },
+            { name: "Carol Example", from: [], stays: [{ fromSec: 0, source: "platform-roster" }] },
+        ],
+        seats: {
+            room: ["Alice Example"],
+            remote: [{ name: "Bob Example", fromSec: 1 }, "Carol Example"],
+        },
+    });
+    const raw = rawMeeting({
+        record: seated,
+        meeting: { ...meeting, transcript },
+        evidence: { segments: [], speaking: [], files: [] },
+        points: [],
+        presence: [
+            { name: "Bob Example", fromSec: 0, toSec: 2976 },
+            { name: "Carol Example", fromSec: 0, toSec: 3600 },
+        ],
+    });
+    const table = lineTable({ raw, people: decisionPeople(seated), labels: {} });
+
+    expect(lineTableTsv(table).split("\n")[0]).toBe(
+        "# legend A=Alice Example (room, self); B=Bob Example (remote 00:01–49:36); C=Carol Example (remote)"
+    );
+});
+
 test("pack chunks end at the last change of label within the size, a monologue at the size, and each repeats the legend", () => {
     const row = (idx: number, label: string): LineTableRow => ({
         idx,
