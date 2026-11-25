@@ -272,10 +272,10 @@ export interface HookFacts {
     /**
      * How it names the shell calls of a code-mode script, or null where it has no code mode. The mods draw a full diff
      * only under the call's own row. A script's call draws as a row of its own in Claude Code (a virtual tool call), but
-     * a diff left to the mod with no proof of that row showed nowhere (918 calls in 12 hours of the hook log,
-     * 2026-11-24), so the hook leaves it to the mod only once the mod marked such rows in the session
-     * (`MODS_SCRIPT_ROWS_VAR`). The diff hook's `callHasOwnRow` reads it, and `scriptCallIdNotice` checks once a day
-     * that the ids still have this shape.
+     * a diff left to the mod in a session that never marked such rows showed nowhere (918 calls in 12 hours of the hook
+     * log, 2026-11-24), so the hook leaves it to the mod only where the mod marked them (`MODS_SCRIPT_ROWS_VAR`, set
+     * with the mod's session mark, so from the session's first script on). The diff hook's `callHasOwnRow` reads it, and
+     * `scriptCallIdNotice` checks once a day that the ids still have this shape.
      */
     readonly scriptCalls: ScriptCallIds | null;
     /** Its model may come from `~/.claude/settings.json` when the transcript names none. */

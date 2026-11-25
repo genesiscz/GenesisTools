@@ -579,7 +579,7 @@ test("a shell block's file of 20 lines draws whole, with no line button", async 
     await ui.unmount();
 });
 
-test("a code-mode script's shell call folds and draws like a Bash call, and its row marks the session for the diff hook", async ($, on) => {
+test("a code-mode script's shell call folds and draws like a Bash call, and its row sets the mark the announce could not", async ($, on) => {
     // Claude Code adds a REPL script's calls to the transcript as tool calls of their own (`repl_<uuid>`), so the
     // diff hook may leave their diffs to this mod once a row proved it (col-fe session, 2026-11-25: a fable-replace run
     // inside a REPL script printed the hook's own text diff, because the hook believed such a call had no row).
@@ -611,7 +611,35 @@ test("a code-mode script's shell call folds and draws like a Bash call, and its 
     await ui.unmount();
 });
 
-test("a Bash tool call's row does not mark the session as one whose script calls draw", async ($, on) => {
+test("the session announce marks the session for the diff hook before any script row draws", async ($, on) => {
+    // The hook leaves a script call's diff to this mod only in a marked session. A mark set only when the first script
+    // row drew left the first script of every session to the hook's own text diff (Martin, 2026-11-25), so the announce
+    // before a tool call sets both marks, and a second hook of the same session sets nothing more.
+    mock.env(on, { HOME: "/home/test" });
+    on("fs.read", async () => {
+        throw new Error("no file");
+    });
+    on("session.id", async () => ({ value: "sess-early" }));
+    const marks: { name: string; value?: string }[] = [];
+    on("env.set", async (_$, e) => {
+        marks.push({ name: e.name, value: e.value });
+
+        return { value: {} };
+    });
+    on("tool.call", async () => ({ result: { stdout: "", stderr: "", interrupted: false, isImage: false } }));
+
+    await $.tool.call({ tool: "Bash", command: "ls" });
+
+    expect(marks).toEqual([
+        { name: "GENESIS_TOOLS_MODS_SESSION", value: "sess-early" },
+        { name: "GENESIS_TOOLS_MODS_SCRIPT_ROWS", value: "sess-early" },
+    ]);
+
+    await $.tool.call({ tool: "Bash", command: "ls" });
+    expect(marks).toHaveLength(2);
+});
+
+test("a Bash tool call's row alone does not set the script-rows mark; the session announce does", async ($, on) => {
     engine(on, { [NOTE_PATH]: NOTE });
     const marks: string[] = [];
     on("session.id", async () => ({ value: "sess-bash" }));

@@ -887,10 +887,12 @@ export function deferredMessageParts(flushed: DiffDecision[]): string[] {
 export const MODS_SESSION_VAR = "GENESIS_TOOLS_MODS_SESSION";
 
 /**
- * Set by the full-diff mod to the id of its session once a code-mode script's call drew as a row of its own there
- * (`announceScriptRows` in plugins/genesis-tools-mods/hooks/register.tsx; the two names must stay equal). Claude Code
- * adds a script's calls to the transcript as tool calls of their own (a virtual tool_use per call, id `repl_<uuid>`),
- * so the mod draws a script's shell diff under that row; the mark is the proof the rows draw in this session.
+ * Set by the full-diff mod to the id of its session, in the same step as `MODS_SESSION_VAR` (`announceSession` in
+ * plugins/genesis-tools-mods/hooks/register.tsx; the two names must stay equal), so it exists from the session's first
+ * hook on. Claude Code adds a script's calls to the transcript as tool calls of their own (a virtual tool_use per call,
+ * id `repl_<uuid>`), so the mod draws a script's shell diff under that row; the mark is the mod's claim that the rows
+ * draw in this session. The mod sets it again when such a row first draws (`announceScriptRows`), for a session whose
+ * announce could not set it.
  */
 export const MODS_SCRIPT_ROWS_VAR = "GENESIS_TOOLS_MODS_SCRIPT_ROWS";
 
@@ -919,7 +921,9 @@ function scriptRowsDrawn(sessionId: string | undefined): boolean {
  * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.diff.fullDiff` on: the mod
  * draws each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
  * The mod draws under the call's own row. A code-mode script's shell call gets its diff drawn by the mod too once the
- * mod marked that script calls draw as rows in this session (`MODS_SCRIPT_ROWS_VAR`); before that, the hook's message.
+ * mod marked that script calls draw as rows in this session (`MODS_SCRIPT_ROWS_VAR`). The mod sets that mark with its
+ * session mark, so a script's diff goes to the mod from the session's first script on; the hook's message stays for a
+ * session without the mark (a mod older than the mark, or an `env.set` that failed).
  */
 export function modDrawsDiffs({
     config,

@@ -975,10 +975,12 @@ session's id) keeps the hook's own message, and so does a marked session whose s
 it reloads. Codex and Grok always keep the hook's message. A shell call of a code-mode script (the REPL tool, a call
 id `repl_<uuid>`) is a row of its own too: Claude Code adds each call of a script to the transcript as a tool call
 (a virtual `tool_use` with that id), and the mod draws its diff under that row, folded past
-`mods.diff.foldAfterLines` like a Bash call's. The hook leaves such a diff to the mod only after the mod marked the
-session: the first time a row with a `repl_` id draws, the mod sets `GENESIS_TOOLS_MODS_SCRIPT_ROWS` to the session's
-id. Until then (the first script of a session, or a view that does not draw script calls) the hook prints the diff
-itself, because on 2026-11-24 diffs left to the mod with no proof were drawn by no one. The id prefix is the one fact
+`mods.diff.foldAfterLines` like a Bash call's. The hook leaves such a diff to the mod only in a session the mod
+marked: it sets `GENESIS_TOOLS_MODS_SCRIPT_ROWS` to the session's id in the same step as `GENESIS_TOOLS_MODS_SESSION`,
+so the mark exists from the session's first hook on and the hook never prints its own text diff for the first script of
+a session. It sets the mark again the first time a row with a `repl_` id draws, for a session whose first attempt failed.
+A session without the mark (a mod older than it) keeps the hook's message for a script's diff, because on 2026-11-24
+diffs left to the mod in a session that never marked them were drawn by no one. The id prefix is the one fact
 the hook has (Claude Code 2.1.328). So the post phase checks it, at most once a
 day: a call whose id has neither the `toolu_` nor the `repl_` prefix, or a day with code mode on
 (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) and no `repl_` call, adds a one-line self-check note to the hook's message.
