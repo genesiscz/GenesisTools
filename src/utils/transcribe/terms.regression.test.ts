@@ -35,6 +35,26 @@ describe("meeting term regressions", () => {
         expect(matcher.score("content rows here", "ContentRows")).toBeUndefined();
     });
 
+    test("the second matcher reaches a word misheard at a first sound people confuse, and nothing else", () => {
+        const matcher = new SoundMatcher();
+
+        // A Czech č or ch for the c of an acronym, and a voiced g for a k: the other sounds carry the match, scored lower
+        // than the same words with the right first sound, and still over the screen lines' floor of 60.
+        expect(matcher.scoreOtherStart("ČNApi", "con.api")).toBeGreaterThanOrEqual(70);
+        expect(matcher.scoreOtherStart("CHNAPI", "con-api")).toBeGreaterThanOrEqual(70);
+        expect(matcher.scoreOtherStart("gontentrouz", "ContentRows")).toBeGreaterThanOrEqual(60);
+        expect(matcher.scoreOtherStart("gontentrouz", "ContentRows")).toBeLessThan(
+            matcher.score("kontentrouz", "ContentRows") ?? 0
+        );
+        // The same first sound is the first matcher's; the c rule's k and s are no mishearing (CMS, comes).
+        expect(matcher.scoreOtherStart("kontentrouz", "ContentRows")).toBeUndefined();
+        expect(matcher.scoreOtherStart("CMS", "comes")).toBeUndefined();
+        // A first sound nobody confuses, a written form of two words, and a short written word stay unmatched.
+        expect(matcher.scoreOtherStart("montentrouz", "ContentRows")).toBeUndefined();
+        expect(matcher.scoreOtherStart("gontentrouz", "the ContentRows")).toBeUndefined();
+        expect(matcher.scoreOtherStart("gita", "kita")).toBeUndefined();
+    });
+
     test("a zero phonetic threshold still needs a vocabulary candidate", () => {
         expect(findSuspectTerms({ entries: [entry("zelnworp")], vocab: [], minConfidence: 0 })).toEqual([]);
     });

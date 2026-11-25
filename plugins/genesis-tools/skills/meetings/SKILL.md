@@ -51,7 +51,9 @@ A missing meeting names only the store that was searched. To find which store ho
    no rule weights and no confidence.
    Each unknown word, vocabulary run and spoken identifier also gets a `screen` list: the OCR lines of frames within
    60 s that sound like it (`atSec`, `frame`, `form`, `text`, `score` 0 to 100, `via` when a candidate term or the
-   identifier matched). The top-level `screen` key names the screen record (`ocr`, `frames`, `fromSec`, `toSec`) or says
+   identifier matched). A one-word screen form whose first sound is one speech-to-text confuses with the heard one
+   (`ČNApi` or `CHNAPI` heard, `con-api` on screen; b/p, d/t, g/k, h/k, v/f, s/z) is listed too, at 90 % of its score;
+   about one such line in three named another word on three recorded meetings, so check it on the frame. The top-level `screen` key names the screen record (`ocr`, `frames`, `fromSec`, `toSec`) or says
    `recorded: false`. Read those lines before you ask the user about a word, then confirm with
    `tools meetings screen <meeting> --at <time>`. `--screen-lines <n>` sets the lines per entry (default 3, 0 = none);
    in the node REPL: `meetings.open(id).evidence({ raw: true, screenLines, wordCheck })`.

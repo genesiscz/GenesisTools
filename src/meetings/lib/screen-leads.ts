@@ -47,7 +47,10 @@ export interface ScreenLine {
     form: string;
     /** The whole OCR line. */
     text: string;
-    /** 0 to 100: how close `form` sounds to the lead, by the score of the vocabulary match. */
+    /**
+     * 0 to 100: how close `form` sounds to the lead, by the score of the vocabulary match, or at 90 % of it when the
+     * form has another first sound that speech-to-text confuses with the lead's (`SoundMatcher.scoreOtherStart`).
+     */
     score: number;
     /** The written form that matched, when it is not the heard words: a candidate term or the identifier. */
     via?: string;
@@ -415,7 +418,8 @@ function bestForm(options: {
         for (let size = 1; size <= query.words + 1; size++) {
             for (let start = 0; start + size <= words.length; start++) {
                 const form = words.slice(start, start + size).join(" ");
-                const score = options.matcher.score(query.text, form);
+                const score =
+                    options.matcher.score(query.text, form) ?? options.matcher.scoreOtherStart(query.text, form);
 
                 if (score !== undefined && score >= MIN_SCORE && (!found || score > found.score)) {
                     found = { form, score, ...(query.via ? { via: query.via } : {}) };

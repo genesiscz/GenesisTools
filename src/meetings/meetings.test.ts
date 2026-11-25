@@ -4076,6 +4076,22 @@ describe("evidence --raw", () => {
             });
         });
 
+        test("a word misheard at its first sound gets the screen line of the word it was", () => {
+            const misheard = (heard: string): RawTerms => ({
+                ...terms,
+                runs: [],
+                documents: undefined,
+                unknown: [{ ...terms.unknown[0]!, heard, examples: [example(60, `to je ==${heard}==`)] }],
+            });
+
+            expect(
+                withScreenLines(misheard("gontentrouz"), { read, linesPerLead: 3 }).unknown[0]?.screen?.lines
+            ).toMatchObject([{ form: "ContentRows", atSec: 70 }]);
+            expect(
+                withScreenLines(misheard("montentrouz"), { read, linesPerLead: 3 }).unknown[0]?.screen?.lines
+            ).toEqual([]);
+        });
+
         test("a term fix the screen near it spells otherwise names that screen line; a fix the screen shows does not", () => {
             const fix = { atSec: 65, heard: "content rouz", proposed: "ContentRoes" };
 
