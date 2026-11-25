@@ -8,9 +8,13 @@
  * the statement shape. A pattern anchored on `import … from` silently undercounts:
  * it misses multi-line import statements, `export … from`, dynamic `import("…")`
  * and type-only `import("…").Type` positions.
+ *
+ * `recon` answers "which files name it, how often, and which declares it" as one report
+ * that prints nothing, for a caller that reads data (`--find --json`, `genesis_replace_find`).
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { escapeRegex, FableReplaceError, identifierPattern, stateless } from "./internal";
 import { stringifyJson } from "./json";
 import type {
@@ -18,6 +22,7 @@ import type {
     FindFilesParams,
     GrepPreviewParams,
     LeftoversParams,
+    ReconReport,
     ShadowedFilesParams,
 } from "./types";
 
@@ -298,4 +303,65 @@ export const findFiles = ({ roots, containing, exts = [".ts", ".tsx"] }: FindFil
             }
         })
         .sort();
+};
+
+/**
+ * Every file under `roots` that names `pattern`, as one report a caller reads as data (`--find --json`, the MCP
+ * tool `genesis_replace_find`). It prints nothing. It composes findFiles, countMatches and shadowedFiles, so a count
+ * is countMatches' own: an identifier-shaped string matches on identifier boundaries, any other string literally, a
+ * RegExp as given. A file with no match is left out. `declares` is true on a file that declares the identifier (the
+ * definition or a local wrapper), and false on every row of any other pattern.
+ *
+ * Roots resolve against `cwd` (default: the process folder). A file inside `cwd` is reported relative to it, so its
+ * row goes straight into a FileEdit of a run with the same `cwd`; a file outside it stays absolute. No root, or a
+ * root that does not exist, is refused (code 2), so a typo never reads as "nothing names it".
+ */
+export const recon = ({
+    roots,
+    pattern,
+    exts,
+    cwd,
+}: {
+    roots: string[];
+    pattern: string | RegExp;
+    exts?: string[];
+    cwd?: string;
+}): ReconReport => {
+    const base = path.resolve(cwd ?? ".");
+    if (roots.length === 0) {
+        throw new FableReplaceError("recon: no root to search; pass at least one folder or file in roots", 2);
+    }
+
+    const resolved = roots.map((root) => path.resolve(base, root));
+    const missing = roots.filter((_root, i) => !fs.existsSync(resolved[i]));
+    if (missing.length > 0) {
+        throw new FableReplaceError(`recon: root(s) not found under ${base}: ${missing.join(", ")}`, 2);
+    }
+
+    const counts = countMatches({
+        files: findFiles({ roots: resolved, containing: pattern, exts }),
+        pattern,
+        quiet: true,
+    });
+    const hits = Object.keys(counts).filter((file) => counts[file] > 0);
+    const declaring = new Set<string>();
+    if (typeof pattern === "string" && IDENTIFIER_RE.test(pattern)) {
+        const { shadows, declarers } = shadowedFiles({ files: hits, name: pattern });
+        for (const file of [...shadows, ...declarers]) {
+            declaring.add(file);
+        }
+    }
+
+    const shown = (file: string): string => {
+        const rel = path.relative(base, file);
+        return rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel) ? file : rel;
+    };
+    const files = hits.map((file) => ({ file: shown(file), count: counts[file], declares: declaring.has(file) }));
+    return {
+        v: 1,
+        pattern: typeof pattern === "string" ? pattern : String(pattern),
+        roots: [...roots],
+        total: files.reduce((sum, row) => sum + row.count, 0),
+        files,
+    };
 };
