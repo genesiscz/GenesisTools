@@ -10,7 +10,8 @@ const DAY = 24 * HOUR;
 /**
  * Whether the call's id is a tool call the model made itself, not a code-mode script's call. A script's call draws as a
  * row of its own too (Claude Code adds it to the transcript as a virtual tool call), but the hook leaves its diff to the
- * mod only once the mod marked that such rows draw in this session (`MODS_SCRIPT_ROWS_VAR` in run.ts).
+ * mod only in a session where the mod marked that such rows draw (`MODS_SCRIPT_ROWS_VAR` in run.ts, set with the mod's
+ * session mark).
  */
 export function callHasOwnRow(facts: HookFacts, toolUseId: string | undefined): boolean {
     const ids = facts.scriptCalls;

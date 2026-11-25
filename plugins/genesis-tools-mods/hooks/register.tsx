@@ -459,10 +459,12 @@ const SCRIPT_CALL_PREFIX = "repl_";
 let announcedScriptRows: string | undefined;
 
 /**
- * Marks this session as one where a code-mode script's calls draw as rows of their own, the first time such a row
- * draws (`GENESIS_TOOLS_MODS_SCRIPT_ROWS`, `MODS_SCRIPT_ROWS_VAR` in src/agents/lib/hooks/diff/run.ts). Claude Code
- * adds a script's calls to the transcript as tool calls of their own, so the mod draws a script's shell diff under its
- * row as it does a Bash call's; the hook leaves that diff to the mod only once a row proved it draws here.
+ * Marks this session as one where a code-mode script's calls draw as rows of their own (`GENESIS_TOOLS_MODS_SCRIPT_ROWS`,
+ * `MODS_SCRIPT_ROWS_VAR` in src/agents/lib/hooks/diff/run.ts). Claude Code adds a script's calls to the transcript as
+ * tool calls of their own, so the mod draws a script's shell diff under its row as it does a Bash call's. The session
+ * announce (`announceSession`) sets the mark from the session's first hook on, so the hook never prints its own text diff
+ * for the first script of a session. This sets it again the first time such a row draws, for a session whose announce
+ * could not set it (an `env.set` that failed, or a session id that changed since).
  */
 async function announceScriptRows($: EngineInterface, ids: readonly (string | undefined)[]): Promise<void> {
     if (!ids.some((id) => id?.startsWith(SCRIPT_CALL_PREFIX))) {
@@ -481,7 +483,10 @@ async function announceScriptRows($: EngineInterface, ids: readonly (string | un
     }
 }
 
-/** Marks this session as one the mod draws in; again when the id changes (a resumed or forked session). */
+/**
+ * Marks this session as one the mod draws in, and as one where a code-mode script's calls draw as rows (the mod claims a
+ * script's diff from its first script on); again when the id changes (a resumed or forked session).
+ */
 async function announceSession($: EngineInterface): Promise<void> {
     try {
         const id = String(await $.session.id());
@@ -489,6 +494,11 @@ async function announceSession($: EngineInterface): Promise<void> {
         if (id !== announcedSession) {
             await $.env.set("GENESIS_TOOLS_MODS_SESSION", id);
             announcedSession = id;
+        }
+
+        if (id !== announcedScriptRows) {
+            await $.env.set("GENESIS_TOOLS_MODS_SCRIPT_ROWS", id);
+            announcedScriptRows = id;
         }
     } catch {
         // No mark means the hook draws the diff itself: never worse than before the mark existed.

@@ -68,6 +68,16 @@ describe("the mod's session mark", () => {
         expect(source).toContain(`$.env.set("${MODS_SESSION_VAR}", id)`);
     });
 
+    it("sets the script-rows mark in the session announce, so it exists from the session's first hook on", () => {
+        const source = readFileSync(
+            join(import.meta.dir, "../../../../plugins/genesis-tools-mods/hooks/register.tsx"),
+            "utf8"
+        );
+        const announce = source.match(/async function announceSession\([\s\S]*?\n}\n/)?.[0] ?? "";
+        expect(announce).toContain(`$.env.set("${MODS_SESSION_VAR}", id)`);
+        expect(announce).toContain(`$.env.set("${MODS_SCRIPT_ROWS_VAR}", id)`);
+    });
+
     it("marks script-call rows under the hook's variable and the Claude script-call prefix", () => {
         const source = readFileSync(
             join(import.meta.dir, "../../../../plugins/genesis-tools-mods/hooks/register.tsx"),
