@@ -31,6 +31,7 @@ mock.module("@app/ai-proxy/lib/launchd", () => ({
     AI_PROXY_LAUNCHD_LABEL: "com.genesis-tools.ai-proxy",
     aiProxyPlistPath: () => "/tmp/test-com.genesis-tools.ai-proxy.plist",
     isAiProxyLaunchdInstalled: () => launchdInstalled,
+    aiProxyLaunchdIsStale: () => false,
     installAiProxyLaunchd: async () => {
         installs += 1;
         return "/tmp/test-com.genesis-tools.ai-proxy.plist";
