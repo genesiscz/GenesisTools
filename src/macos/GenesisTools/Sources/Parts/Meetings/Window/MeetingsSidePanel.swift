@@ -64,6 +64,7 @@ struct MeetingsSidePanel: View {
         var out: [SidePanelSection] = []
         if let raw = window.settingsRaw {
             out.append(SidePanelCatalog.engineSection(listen: raw.at(Self.listenPath), presets: tonePresets))
+            out.append(SidePanelCatalog.windowPlaySection(raw.at(SidePanelCatalog.segments(SidePanelCatalog.windowPlayPath))))
         }
         return out + SidePanelCatalog.windowSections(window.defaults)
     }
