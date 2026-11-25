@@ -746,7 +746,7 @@ struct WidgetPeekView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .buttonStyle(RowButtonStyle(cornerRadius: DecisionOptionMetrics.cornerRadius))
         .instantTooltip(openTitle)
         .accessibilityLabel(kicker + ": " + title)
         .accessibilityHint(openTitle)
@@ -765,7 +765,7 @@ struct WidgetPeekView: View {
                 // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
                 // Read at the click, ⌘ included: a click that only stages never opens anything.
                 // A decision that takes any set of its options only ticks the letter, in every click mode.
-                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
+                WidgetOptionButton(model: model, item: item, index: index, option: option) {
                     if Self.sendOpensSession(model.preferences,
                         staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
                         open()
@@ -801,7 +801,12 @@ struct WidgetPeekView: View {
         let saysMore = !answer.isEmpty && !picks.contains { $0.text.caseInsensitiveCompare(answer) == .orderedSame }
             && answer.lowercased() != (item.option ?? "").lowercased()
         return VStack(alignment: .leading, spacing: 5) {
-            ForEach(picks, id: \.letter) { pick in WidgetAnsweredOptionRow(letter: pick.letter, text: pick.text) }
+            ForEach(picks, id: \.letter) { pick in
+                DecisionOptionRow(state: .answered, badge: .letter(pick.letter), recommended: false, text: pick.text,
+                                  rationale: nil)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Answered " + pick.letter + ": " + pick.text)
+            }
             if saysMore {
                 Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
@@ -843,7 +848,7 @@ struct WidgetPeekView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+                .buttonStyle(RowButtonStyle(cornerRadius: DecisionOptionMetrics.cornerRadius))
                 .instantTooltip("Show it here")
                 .accessibilityLabel(WidgetAlerts.kicker(other) + ": " + (other.title ?? ""))
                 .accessibilityHint("Shows it here")
@@ -906,7 +911,7 @@ struct WidgetPeekView: View {
             }
         }
         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DecisionOptionMetrics.cornerRadius))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("widget.peek.outcome")
     }
@@ -1031,30 +1036,6 @@ struct WidgetPeekSummary: View, Equatable {
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier(identifier)
         .frameProbe(identifier)
-    }
-}
-
-/// An option a decision took outside the widget: the option row's shape, green, with a check where the inbox puts
-/// its recommended mark.
-struct WidgetAnsweredOptionRow: View {
-    let letter: String
-    let text: String
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
-        HStack(alignment: .top, spacing: 8) {
-            WidgetOptionBadge(text: letter)
-            Text(WidgetOptionText.markdown(text)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
-            Spacer(minLength: 0)
-            Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
-                .padding(.top, 3).accessibilityHidden(true)
-        }
-        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.green.opacity(0.12), in: shape)
-        .overlay(shape.strokeBorder(Color.green.opacity(0.45), lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Answered " + letter + ": " + text)
     }
 }
 
