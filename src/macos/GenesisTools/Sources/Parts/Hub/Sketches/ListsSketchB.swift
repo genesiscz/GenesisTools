@@ -738,7 +738,7 @@ extension ListsSketchB {
             if open {
                 VStack(alignment: .leading, spacing: 8) {
                     if let task = entry.item.task {
-                        InboxTaskCard(store: inbox.tasks, task: task, session: entry.session)
+                        WidgetTaskActionsCard(store: inbox.tasks, task: task, style: .card, sourceHome: entry.session.sourceHome, identifier: "hub.inbox.task." + task.id)
                     } else if entry.item.isForm {
                         InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
                     } else {

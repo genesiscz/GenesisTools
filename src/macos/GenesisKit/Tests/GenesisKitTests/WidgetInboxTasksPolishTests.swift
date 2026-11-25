@@ -138,9 +138,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let lines = try WidgetInboxRender.draw(LiveWidgetView(model: model, edge: .right, embedded: true),
                                                size: CGSize(width: 420, height: 640)).joined(separator: " ")
         XCTAssertTrue(lines.contains("Dismiss"), "the card draws the task's actions: \(lines)")
-        XCTExpectFailure("P9: the session card draws a failed task change as red text") {
-            XCTAssertTrue(lines.contains("Details"), lines)
-        }
+        XCTAssertTrue(lines.contains("Details"), lines)
     }
 
     private func renderTasks<V: View>(_ view: V, name: String) throws -> String {
