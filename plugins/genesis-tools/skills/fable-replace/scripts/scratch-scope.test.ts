@@ -390,10 +390,8 @@ describe("fable-replace scratch follows a harness session into its session folde
         const nested = path.join(own, "deep", "fixture-repo");
         fs.mkdirSync(plain, { recursive: true });
         fs.mkdirSync(nested, { recursive: true });
-        await new Promise<void>((resolve, reject) => {
-            const child = Bun.spawn(["git", "-C", nested, "init", "-q"], { stdout: "ignore", stderr: "ignore" });
-            child.exited.then((code) => (code === 0 ? resolve() : reject(new Error(`git init exited ${code}`))));
-        });
+        const init = await run(["git", "init", "-q"], { cwd: nested });
+        expect(init.status).toBe(0);
         asSession(undefined);
         setEnv("CLAUDE_CODE_SESSION_ID", session);
 
