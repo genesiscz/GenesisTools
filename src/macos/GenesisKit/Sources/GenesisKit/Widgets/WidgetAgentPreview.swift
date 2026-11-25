@@ -281,7 +281,8 @@ struct AgentWidgetPreview: View {
         return WidgetPreviewRosterRow(
             session: session, inbox: inbox, question: question, pulse: model.inboxPulseFor(session.key),
             reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete,
-            panelOpen: cmuxPanelKey == session.key, model: model,
+            panelOpen: cmuxPanelKey == session.key, model: model, density: .preview,
+            staged: model.stagedToSend.filter { $0.key == session.key }.count,
             open: { model.openInboxNotification(on: surface, key: session.key) },
             openPanel: { cmuxPanelKey = session.key }, closePanel: { cmuxPanelKey = nil })
             .equatable()
@@ -314,6 +315,10 @@ struct WidgetPreviewRosterRow: View, Equatable {
     let panelOpen: Bool
     /// Not observed by the row: the cmux button and the cmux panel use it.
     let model: WidgetModel
+    /// The hover list's row, or the expanded view's "Sessions with inbox items" (a smaller glyph, other padding).
+    let density: WidgetSessionRowDensity
+    /// The session's decisions staged here and not sent yet.
+    let staged: Int
     let open: () -> Void
     let openPanel: () -> Void
     let closePanel: () -> Void
@@ -321,6 +326,7 @@ struct WidgetPreviewRosterRow: View, Equatable {
     static func == (a: WidgetPreviewRosterRow, b: WidgetPreviewRosterRow) -> Bool {
         a.session == b.session && a.inbox == b.inbox && a.question == b.question && a.pulse == b.pulse
             && a.reduceMotion == b.reduceMotion && a.complete == b.complete && a.panelOpen == b.panelOpen
+            && a.density == b.density && a.staged == b.staged
     }
 
     var body: some View {
@@ -347,7 +353,7 @@ struct WidgetPreviewRosterRow: View, Equatable {
 
     private var labels: some View {
         HStack(spacing: 9) {
-            AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 21)
+            AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: density == .preview ? 21 : 18)
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
                 HStack(spacing: 5) {
@@ -362,6 +368,13 @@ struct WidgetPreviewRosterRow: View, Equatable {
                 if let question {
                     Text(question)
                         .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.9)).lineLimit(1)
+                }
+                // The hub's session row says it the same way.
+                if staged > 0 {
+                    Text(verbatim: "\(staged) staged")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(SessionPalette.blue)
+                        .instantTooltip("\(Plural.count(staged, "decision")) staged here and not sent yet")
                 }
             }
             Spacer(minLength: 2)
@@ -378,10 +391,15 @@ struct WidgetPreviewRosterRow: View, Equatable {
                     .frame(width: 12, height: 12)
             }
         }
-        .padding(.horizontal, 9).padding(.vertical, 9)
+        .padding(.horizontal, density == .preview ? 9 : 10).padding(.vertical, density == .preview ? 9 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
+}
+
+/// Where a widget session row stands: the hover list (`preview`) or the expanded view's list (`expanded`).
+enum WidgetSessionRowDensity {
+    case preview, expanded
 }
 
 /// A row's popover, attached only while the row is live (`rowLive`; an open popover keeps its row live through
