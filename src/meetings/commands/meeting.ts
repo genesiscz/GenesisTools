@@ -362,7 +362,7 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         return;
     }
 
-    if (!result.repaired && !result.dryRun) {
+    if (result.reason) {
         ui.ok(`${result.meeting}: nothing to repair; ${result.reason}.`);
         return;
     }
