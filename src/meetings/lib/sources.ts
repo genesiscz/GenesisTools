@@ -9,7 +9,7 @@ import {
     type TranscriptSource,
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { joinedCopyRef, joinedSource, joinedTranscript, type RecordingRef } from "./joined-source";
+import { joinedCopyRef, type RecordingRef } from "./joined-source";
 import type { LocalSourceAudio } from "./source-audio-discovery";
 import {
     copyBackedSource,
@@ -179,14 +179,13 @@ export function recordingSource(store: MeetingStore, recording: RecordingRef): P
 /**
  * A joined record's source: its own copy of the joined meeting (`saveJoinedCopy`, written by `join` and
  * `join --repair`), so no read loads a recording's source meeting. The live source answers only the source's own
- * reads (its word list, calendar). A record joined before the copy existed, or read without its store, is composed
- * from its recordings' sources on every read until `join --repair` writes the copy.
+ * reads (its word list, calendar). A record joined before the join kept that copy is refused with the repair command.
  */
 async function joinedRecordSource(record: MeetingRecord, store: MeetingStore | undefined): Promise<TranscriptSource> {
     const owned = store ? ownedJoinedCopy(record, store) : undefined;
 
     if (!owned) {
-        return joinedSource(record, meetingSource);
+        throw uncopiedJoin(record, store);
     }
 
     const base = await meetingSource(owned.ref.sourceId).catch((error: unknown) => {
@@ -200,7 +199,22 @@ async function joinedRecordSource(record: MeetingRecord, store: MeetingStore | u
         throw new Error(`Unknown source "${owned.ref.sourceId}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
     }
 
-    return ownedCopySource({ ...owned, base }) ?? joinedSource(record, meetingSource);
+    const source = ownedCopySource({ ...owned, base });
+
+    if (!source) {
+        throw uncopiedJoin(record, store);
+    }
+
+    return source;
+}
+
+/** Why a joined record has no transcript to read: it keeps no copy of it yet, or it was read without its store. */
+function uncopiedJoin(record: MeetingRecord, store: MeetingStore | undefined): Error {
+    return new Error(
+        store
+            ? `${record.id} was joined before the join kept its transcript as its own copy; copy it once: ${toolCommand("meetings", "join", record.id, "--repair")}`
+            : `${record.id} is a joined meeting, whose transcript is its own copy; it is read with its meeting store.`
+    );
 }
 
 /** Where a joined record keeps its own copy, when it keeps one. */
@@ -231,29 +245,18 @@ function composedTranscript(entries: TranscriptEntry[]): TranscriptEntry[] {
 
 /**
  * Explicit local-only read for previews: the source registry owns the capability and no remote fallback runs. A joined
- * record with its `store` reads its own copy.
+ * record reads its own copy, which is local by nature.
  */
 export async function localMeetingTranscript(record: MeetingRecord, store?: MeetingStore): Promise<TranscriptEntry[]> {
-    const owned = store ? ownedJoinedCopy(record, store) : undefined;
-    const copy = owned ? readSourceCopy(owned.folder, "meeting", owned.ref) : undefined;
-
-    if (copy) {
-        return copy.value.transcript;
-    }
-
     if (record.join) {
-        const parts = await Promise.all(
-            record.join.parts.map(async (part) => {
-                if (!isMeetingSourceId(part.sourceId)) {
-                    throw new Error(`Unknown source "${part.sourceId}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
-                }
-                return joinedTranscript(
-                    part,
-                    composedTranscript(await MEETING_SOURCES[part.sourceId].localTranscript(part.sourceMeetingId))
-                );
-            })
-        );
-        return parts.flat();
+        const owned = store ? ownedJoinedCopy(record, store) : undefined;
+        const copy = owned ? readSourceCopy(owned.folder, "meeting", owned.ref) : undefined;
+
+        if (!copy) {
+            throw uncopiedJoin(record, store);
+        }
+
+        return copy.value.transcript;
     }
 
     const ref = sourceRefOf(record);
