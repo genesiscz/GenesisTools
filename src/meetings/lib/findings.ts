@@ -8,7 +8,7 @@ const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
 /** An agent's reason, as a saved journal line holds it: one saved before the plain-words rule (U18) still reads. */
 const reason = text;
-const PLAIN_WORDS = "Write the reason in plain words for the person who reads it";
+export const PLAIN_WORDS = "Write the reason in plain words for the person who reads it";
 /** A line's index in the source transcript: tells apart two lines that start in the same second. */
 const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */

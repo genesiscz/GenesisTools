@@ -21,6 +21,7 @@ import * as libraryHandlers from "@app/meetings/lib/service/library-handlers";
 import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { meetingSound } from "@app/meetings/lib/sound";
+import * as sourcesModule from "@app/meetings/lib/sources";
 import { deliverStartFailures } from "@app/meetings/lib/start-failures";
 import type { recordingAutostart } from "@app/meetings/lib/watcher";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -264,6 +265,7 @@ interface MeetingHandle {
     readonly record: { items: Array<{ id: string; status: string }> };
     items: {
         add(input: unknown): Promise<unknown>;
+        fromDecisions(input: unknown): Promise<unknown>;
         confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
         reopen(input: unknown): Promise<{ reopened: string[] }>;
         reject(input: unknown): Promise<{ decided: string[] }>;
@@ -2962,6 +2964,74 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             expect(new MeetingStore().read(record.id)?.items).toMatchObject([{ kind: "term", status: "suggested" }]);
         } finally {
             loaded.mockRestore();
+        }
+    });
+
+    test("meetings: items.fromDecisions names its CLI twin, previews with dryRun and adds the grouped findings", async () => {
+        const handle = new MeetingsToolset().api.handles?.find((entry) => entry.name === "Meeting")?.methods ?? [];
+        expect(handle.find((method) => method.name === "items.fromDecisions")?.doc).toContain(
+            "meetings items from-decisions"
+        );
+        const record = await new MeetingStore().create(
+            {
+                title: "Decisions",
+                start: "2026-11-25T09:30:00.000Z",
+                createdBy: "new",
+                participants: [{ name: "Alice Example", from: [] }],
+            },
+            { command: "new", change: "test" }
+        );
+        const transcript = [
+            { startSec: 0, speaker: "Speaker 1", text: "Hello there" },
+            { startSec: 5, speaker: "Speaker 1", text: "More words" },
+            { startSec: 9, speaker: "Speaker 2", text: "Other voice" },
+        ];
+        const source: SourceMeeting = {
+            sourceMeetingId: "decisions",
+            title: "Decisions",
+            start: "2026-11-25T09:30:00.000Z",
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript,
+        };
+        const loaded = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(source);
+        const local = spyOn(sourcesModule, "localMeetingTranscript").mockResolvedValue(transcript);
+        const decisions = [
+            { idx: 0, speaker: "alice example", confidence: 0.8, reason: "her voice" },
+            { idx: 1, speaker: "A", confidence: 0.6, reason: "her voice" },
+            { idx: 2, speaker: "?", confidence: 0.5, reason: "two voices at once" },
+        ];
+        try {
+            const meeting = (await loadMeetings()).open(record.id);
+            const before = readFileSync(new MeetingStore().path(record.id), "utf8");
+            expect(await meeting.items.fromDecisions({ decisions, dryRun: true })).toMatchObject({
+                warnings: [],
+                findings: [
+                    { kind: "speaker-range", lines: [{ index: 0 }, { index: 1 }] },
+                    { kind: "label", lines: [{ index: 2 }] },
+                ],
+            });
+            expect(readFileSync(new MeetingStore().path(record.id), "utf8")).toBe(before);
+            expect(await meeting.items.fromDecisions({ decisions })).toMatchObject({
+                added: [{ kind: "speaker-range" }, { kind: "label" }],
+                duplicates: [],
+                warnings: [],
+            });
+            expect(new MeetingStore().read(record.id)?.items).toMatchObject([
+                {
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    speaker: "Alice Example",
+                    fromSec: 0,
+                    toSec: 5,
+                    confidence: 0.6,
+                },
+                { kind: "label", label: "Speaker 2", meaningless: true, fromSec: 9, toSec: 9 },
+            ]);
+        } finally {
+            loaded.mockRestore();
+            local.mockRestore();
         }
     });
 

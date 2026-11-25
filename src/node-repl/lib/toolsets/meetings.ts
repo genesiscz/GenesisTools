@@ -4,6 +4,7 @@ import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/me
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
+import { findingsFromDecisions } from "@app/meetings/lib/from-decisions";
 import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels";
 import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
@@ -45,6 +46,7 @@ import {
     editPerson,
     evidence as evidenceMethod,
     exportMethod,
+    fromDecisions,
     itemsList,
     itemsRows,
     join,
@@ -546,6 +548,65 @@ export class MeetingsToolset extends ReplToolset {
                 return result;
             };
 
+        const addFindings = async (input: z.input<typeof add.params>) => {
+            const { findings, allowDuplicates, force, plan } = add.params.parse(input);
+            if (plan) {
+                // `items add --plan`: the same preview from the local transcript only, and nothing written.
+                return planFindings({
+                    findings,
+                    record: current(),
+                    transcript: await localMeetingTranscript(current()),
+                    config: await opened().config(),
+                });
+            }
+
+            // The same anchors as `items add`; with no transcript at hand, the items are added as given.
+            const source = await opened()
+                .meeting()
+                .catch((error: unknown) => {
+                    log.debug({ error, meeting: id }, "no transcript to check the finding anchors against");
+                    return undefined;
+                });
+            // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
+            // The journal drops the duplicates again under its lock; this read only names them.
+            const { duplicates } = prepareFindings({
+                findings,
+                items: current().items,
+                transcript: source?.transcript,
+                allowDuplicates,
+                force,
+            });
+            // An addition is a decision, as `items add` makes it: journaled with who made it, so Undo and
+            // `reopen --token` reach the added items.
+            const decided = await new DecisionJournal({
+                store,
+                ...(source ? { split: { transcript: async () => source.transcript } } : {}),
+            }).apply({
+                meeting: id,
+                action: {
+                    kind: "add",
+                    findings,
+                    ...(allowDuplicates ? { allowDuplicates: true } : {}),
+                    ...(force ? { force: true } : {}),
+                },
+                actor: callerActor(),
+            });
+            const warnings = decided.warnings ?? [];
+
+            for (const warning of warnings) {
+                log.warn({ meeting: id }, warning);
+            }
+
+            const record = current();
+            const added = (decided.entry?.changes ?? []).flatMap((change) => (change.after ? [change.after] : []));
+            return {
+                added: added.map((item) => itemRow(record, item)),
+                duplicates: duplicates.map((item) => item.id),
+                warnings,
+                token: decided.entry?.token ?? null,
+            };
+        };
+
         return {
             id,
             comments: () =>
@@ -697,65 +758,27 @@ export class MeetingsToolset extends ReplToolset {
                         ...(applyAbove === undefined ? {} : { applyAbove }),
                     });
                 },
-                add: async (input: z.input<typeof add.params>) => {
-                    const { findings, allowDuplicates, force, plan } = add.params.parse(input);
-                    if (plan) {
-                        // `items add --plan`: the same preview from the local transcript only, and nothing written.
+                add: addFindings,
+                fromDecisions: async (input: z.input<typeof fromDecisions.params>) => {
+                    const { decisions, dryRun } = fromDecisions.params.parse(input);
+                    if (dryRun) {
+                        // `items from-decisions --plan`: the items.add plan of the findings, from the local transcript only.
+                        const transcript = await localMeetingTranscript(current());
                         return planFindings({
-                            findings,
+                            findings: findingsFromDecisions({ record: current(), transcript }, decisions),
                             record: current(),
-                            transcript: await localMeetingTranscript(current()),
+                            transcript,
                             config: await opened().config(),
                         });
                     }
 
-                    // The same anchors as `items add`; with no transcript at hand, the items are added as given.
-                    const source = await opened()
-                        .meeting()
-                        .catch((error: unknown) => {
-                            log.debug({ error, meeting: id }, "no transcript to check the finding anchors against");
-                            return undefined;
-                        });
-                    // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
-                    // The journal drops the duplicates again under its lock; this read only names them.
-                    const { duplicates } = prepareFindings({
-                        findings,
-                        items: current().items,
-                        transcript: source?.transcript,
-                        allowDuplicates,
-                        force,
-                    });
-                    // An addition is a decision, as `items add` makes it: journaled with who made it, so Undo and
-                    // `reopen --token` reach the added items.
-                    const decided = await new DecisionJournal({
-                        store,
-                        ...(source ? { split: { transcript: async () => source.transcript } } : {}),
-                    }).apply({
-                        meeting: id,
-                        action: {
-                            kind: "add",
-                            findings,
-                            ...(allowDuplicates ? { allowDuplicates: true } : {}),
-                            ...(force ? { force: true } : {}),
-                        },
-                        actor: callerActor(),
-                    });
-                    const warnings = decided.warnings ?? [];
-
-                    for (const warning of warnings) {
-                        log.warn({ meeting: id }, warning);
+                    const { transcript } = await opened().meeting();
+                    const findings = findingsFromDecisions({ record: current(), transcript }, decisions);
+                    if (findings.length === 0) {
+                        return { added: [], duplicates: [], warnings: [], token: null };
                     }
 
-                    const record = current();
-                    const added = (decided.entry?.changes ?? []).flatMap((change) =>
-                        change.after ? [change.after] : []
-                    );
-                    return {
-                        added: added.map((item) => itemRow(record, item)),
-                        duplicates: duplicates.map((item) => item.id),
-                        warnings,
-                        token: decided.entry?.token ?? null,
-                    };
+                    return addFindings({ findings });
                 },
                 preview: async (input: z.input<typeof preview.params> = {}) => {
                     const { rules = [...SUGGEST_RULES] } = preview.params.parse(input);

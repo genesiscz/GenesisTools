@@ -66,6 +66,7 @@ import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { correctedTranscriptRead, speakerStatsRead, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
+import { registerFromDecisions } from "./items-from-decisions";
 
 const { log } = logger.scoped("meetings-items");
 
@@ -1171,6 +1172,8 @@ export function registerItemCommands(program: Command): void {
         .option("--allow-duplicates", "append even when an equal open finding exists")
         .option("--force", "store a line-scoped term with a dead anchor, retaining its diagnostic")
         .action(addItems);
+
+    registerFromDecisions(itemsCommand);
 
     for (const [name, status] of [
         ["confirm", "confirmed"],

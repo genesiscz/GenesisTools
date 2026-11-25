@@ -9,6 +9,8 @@ import { Storage } from "@genesiscz/utils/storage";
 import { planFindings, prepareFindings } from "./add-findings";
 import { DecisionJournal } from "./decision-journal";
 import { findingsFileSchema } from "./findings";
+import { decisionsFileSchema, findingsFromDecisions } from "./from-decisions";
+import { personInitials } from "./person-initials";
 
 const findings = findingsFileSchema.parse([
     { kind: "question", from: 0, to: 10, question: "Who speaks?", choices: ["Alice", "Bob"], decides: ["voice"] },
@@ -554,5 +556,152 @@ describe("an agent's reason is written for the person who reads it (U18)", () =>
         ]) {
             expect(findingSchema.safeParse({ ...label, reason }).success).toBe(true);
         }
+    });
+});
+
+describe("findings from per-line decisions", () => {
+    // Three labels; lines 11 and 12 are one label's two lines in one second; line 8 and line 21 have no decision.
+    const lines: Array<[number, string]> = [
+        [0, "Speaker 1"],
+        [4, "Speaker 2"],
+        [8, "Speaker 2"],
+        [12, "Speaker 1"],
+        [15, "Speaker 2"],
+        [20, "Speaker 3"],
+        [23, "Speaker 3"],
+        [27, "Speaker 2"],
+        [30, "Speaker 3"],
+        [33, "Speaker 3"],
+        [36, "Speaker 3"],
+        [40, "Speaker 2"],
+        [40, "Speaker 2"],
+        [44, "Speaker 2"],
+        [47, "Speaker 2"],
+        [50, "Speaker 1"],
+        [53, "Speaker 1"],
+        [56, "Speaker 3"],
+        [59, "Speaker 3"],
+        [62, "Speaker 1"],
+        [65, "Speaker 1"],
+        [68, "Speaker 2"],
+    ];
+    const transcript = lines.map(([startSec, speaker], index) => ({ startSec, speaker, text: `Line number ${index}` }));
+    const record = meetingRecordSchema.parse({
+        id: "2026-11-25_10-00-decisions",
+        title: "Decisions",
+        start: "2026-11-25T10:00:00.000Z",
+        createdAt: "2026-11-25T10:00:00.000Z",
+        createdBy: "new",
+        participants: ["Alice Example", "Bob Example", "Carol Example"].map((name) => ({ name, from: [] })),
+        speakers: { labels: { "Speaker 1": "Alice Example" } },
+    });
+    const bob = "Bob's voice and he answers the question before";
+    const carol = "Carol's voice, she presents the plan";
+    const alice = "Alice runs the call";
+    const decisions = decisionsFileSchema.parse([
+        { idx: 0, speaker: "Alice Example", confidence: 0.9, reason: alice },
+        { idx: 1, speaker: "Bob Example", confidence: 0.9, reason: bob },
+        { idx: 2, speaker: "Bob Example", confidence: 0.7, reason: bob },
+        // An initial, as the legend prints it, of the label's own person.
+        { idx: 3, speaker: "A", confidence: 0.95, reason: alice },
+        { idx: 4, speaker: "Bob Example", confidence: 0.8, reason: bob },
+        { idx: 5, speaker: "Carol Example", confidence: 0.6, reason: carol },
+        { idx: 6, speaker: "Carol Example", confidence: 0.9, reason: carol },
+        { idx: 7, speaker: "Carol Example", confidence: 0.8, reason: carol },
+        // A full name in another case.
+        { idx: 9, speaker: "carol example", confidence: 0.9, reason: carol },
+        { idx: 10, speaker: "Carol Example", confidence: 0.9, reason: carol },
+        { idx: 11, speaker: "Carol Example", confidence: 0.85, reason: carol },
+        { idx: 12, speaker: "Bob Example", confidence: 0.9, reason: bob },
+        { idx: 13, speaker: "B", confidence: 0.9, reason: bob },
+        { idx: 14, speaker: "Bob Example", confidence: 0.6, reason: bob },
+        { idx: 15, speaker: "?", confidence: 0.5, reason: "Two people talk over each other" },
+        { idx: 16, speaker: "Alice Example", confidence: 0.9, reason: alice },
+        { idx: 17, speaker: "Bob Example", confidence: 0.7, reason: "Bob names his own task" },
+        { idx: 18, speaker: "Bob Example", confidence: 0.7, reason: "Bob answers Carol" },
+        { idx: 19, speaker: "Bob Example", confidence: 0.8, reason: "Bob sits at Alice's microphone" },
+        { idx: 20, speaker: "Bob Example", confidence: 0.9, reason: "Bob sits at Alice's microphone" },
+    ]);
+    const range = (from: number, to: number, label: string, speaker: string, confidence: number, reason: string) => ({
+        kind: "speaker-range" as const,
+        from,
+        to,
+        label,
+        speaker,
+        confidence,
+        reason,
+    });
+
+    test("20 decisions over three labels give one finding per run of a label's lines, and the plan names the same lines", () => {
+        expect(decisions).toHaveLength(20);
+        const findings = findingsFromDecisions({ record, transcript }, decisions);
+        expect(findings).toEqual([
+            // Line 3 belongs to another label, so lines 1, 2 and 4 are one run of Speaker 2.
+            range(4, 15, "Speaker 2", "Bob Example", 0.7, bob),
+            range(20, 23, "Speaker 3", "Carol Example", 0.6, carol),
+            range(27, 27, "Speaker 2", "Carol Example", 0.8, carol),
+            // Line 8 has no decision, so it ends the run of lines 5 and 6.
+            range(33, 36, "Speaker 3", "Carol Example", 0.9, carol),
+            { ...range(40, 40, "Speaker 2", "Carol Example", 0.85, carol), line: 11 },
+            { ...range(40, 40, "Speaker 2", "Bob Example", 0.9, bob), line: 12 },
+            range(44, 47, "Speaker 2", "Bob Example", 0.6, bob),
+            {
+                kind: "label" as const,
+                from: 50,
+                to: 50,
+                label: "Speaker 1",
+                meaningless: true,
+                confidence: 0.5,
+                reason: "Two people talk over each other",
+            },
+            range(56, 56, "Speaker 3", "Bob Example", 0.7, "Bob names his own task"),
+            range(59, 59, "Speaker 3", "Bob Example", 0.7, "Bob answers Carol"),
+            range(62, 65, "Speaker 1", "Bob Example", 0.8, "Bob sits at Alice's microphone"),
+        ]);
+        // The findings are what `items add --from-file` takes, and its plan names exactly the decided lines.
+        const plan = planFindings({
+            findings: findingsFileSchema.parse(findings),
+            record,
+            transcript,
+            config: meetingsConfigSchema.parse({}),
+        });
+        expect(plan.warnings).toEqual([]);
+        expect(plan.findings.map((finding) => finding.lines.map((line) => line.index))).toEqual([
+            [1, 2, 4],
+            [5, 6],
+            [7],
+            [9, 10],
+            [11],
+            [12],
+            [13, 14],
+            [15],
+            [17],
+            [18],
+            [19, 20],
+        ]);
+    });
+
+    test("a decision the transcript cannot place stops the whole batch", () => {
+        const placed = decisionsFileSchema.parse([
+            { idx: 1, speaker: "Bob Example", confidence: 0.9, reason: bob },
+            { idx: 1, speaker: "Carol Example", confidence: 0.9, reason: carol },
+            { idx: 22, speaker: "Bob Example", confidence: 0.9, reason: bob },
+            { idx: 2, speaker: "Zed Example", confidence: 0.9, reason: bob },
+        ]);
+        expect(() => findingsFromDecisions({ record, transcript }, placed)).toThrow(
+            '#2 (line 1) is decided twice; #3 (line 22) is past the last transcript line, 21; #4 (line 2) names "Zed Example", whom the meeting does not know; known people: Alice Example (A), Bob Example (B), Carol Example (C); "?" names nobody in particular'
+        );
+        expect(
+            decisionsFileSchema.safeParse([{ idx: 1, speaker: "Bob Example", confidence: 0.9, reason: "rule RA" }])
+                .success
+        ).toBe(false);
+    });
+
+    test("an initial is the first letter, or every word's first letter when two people share it", () => {
+        expect([...personInitials(["Alice Example", "Adam Smith", "Bob Example"])]).toEqual([
+            ["Bob Example", "B"],
+            ["Alice Example", "AE"],
+            ["Adam Smith", "AS"],
+        ]);
     });
 });
