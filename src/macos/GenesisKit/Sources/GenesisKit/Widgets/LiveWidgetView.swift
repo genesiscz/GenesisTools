@@ -274,13 +274,11 @@ public struct LiveWidgetView: View {
                 }
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
-                    VStack(spacing: 10) {
-                        GenesisWidgetMark()
-                        Text(model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.").font(.headline)
-                        Text("Questions, screenshots, and finished work land here.").font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Choose sessions") { model.showSettings?() }.buttonStyle(.genHover())
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    WidgetEmptyState(size: .regular,
+                                     text: model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.",
+                                     detail: "Questions, screenshots, and finished work land here.",
+                                     actionTitle: "Choose sessions", action: { model.showSettings?() })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     waitingSessions
                 }
@@ -618,8 +616,9 @@ public struct LiveWidgetView: View {
                 .controlSize(.small).font(.system(size: 11)).padding(.vertical, 12)
                 .accessibilityIdentifier("widget.inbox.loading")
         } else {
-            Text("No inbox items for this session.").foregroundStyle(.secondary).font(.callout)
-            Button("See conversation") { section = "Conversation" }.buttonStyle(.genHover())
+            WidgetEmptyState(size: .regular, text: "No inbox items for this session.", actionTitle: "See conversation",
+                             action: { section = "Conversation" })
+                .frame(maxWidth: .infinity).padding(.vertical, 18)
         }
     }
 

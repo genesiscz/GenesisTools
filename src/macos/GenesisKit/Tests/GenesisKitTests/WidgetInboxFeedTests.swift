@@ -507,9 +507,7 @@ final class WidgetInboxFeedTests: XCTestCase {
         let lines = try WidgetInboxRender.draw(AgentWidgetPreview(model: model, surface: .init(edge: .right)),
                                                size: CGSize(width: 480, height: 480)).joined(separator: " ")
         XCTAssertTrue(lines.contains("Inbox status unavailable"), lines)
-        XCTExpectFailure("P10: the hover list says the inbox is unavailable and offers no way to read it again") {
-            XCTAssertTrue(lines.contains("Try again"), lines)
-        }
+        XCTAssertTrue(lines.contains("Try again"), lines)
     }
 
     /// A window that takes window-local clicks, so a test presses a drawn button without the pointer.

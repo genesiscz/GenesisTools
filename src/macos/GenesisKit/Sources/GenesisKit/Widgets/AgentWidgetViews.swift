@@ -52,6 +52,67 @@ struct WidgetInboxCount: View {
     }
 }
 
+/// The widget's empty list or pane, one look in every list: its mark, one sentence, a detail and the next step.
+/// `.compact` is the hover list's row (the mark left, the words leading); `.regular` the expanded view's centred column.
+/// The caller frames it. Its words stay each list's own: tests read them.
+struct WidgetEmptyState: View {
+    enum Size { case compact, regular }
+
+    let size: Size
+    let text: String
+    var detail: String?
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    init(size: Size, text: String, detail: String? = nil, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        self.size = size
+        self.text = text
+        self.detail = detail
+        self.actionTitle = actionTitle
+        self.action = action
+    }
+
+    var body: some View {
+        switch size {
+        case .compact:
+            HStack(spacing: 12) {
+                GenesisWidgetMark()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(text).font(.system(size: 13, weight: .medium))
+                    if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
+                    actionButton
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+        case .regular:
+            VStack(spacing: 10) {
+                GenesisWidgetMark()
+                Text(text).font(.headline)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                actionButton
+            }
+        }
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        if let actionTitle, let action {
+            Button(actionTitle, action: action).buttonStyle(.genHover())
+        }
+    }
+}
+
+/// An inbox the hub could not read completely is a failed load: the shared failure row with Try again, which starts
+/// the widget's link to the hub again, as the expanded view's Reconnect does.
+struct WidgetInboxStatusFailure: View {
+    let error: String?
+    let retry: () -> Void
+
+    var body: some View {
+        FailureInline(FailureReport(title: "Inbox", headline: "Inbox status unavailable.", action: "Read the inbox",
+                                    log: error ?? "", area: "widget"),
+                      form: .compact, identifier: "widget.inbox.statusFailure") { retry() }
+    }
+}
+
 public struct GenesisWidgetMark: View {
     public init() {}
     public var body: some View {

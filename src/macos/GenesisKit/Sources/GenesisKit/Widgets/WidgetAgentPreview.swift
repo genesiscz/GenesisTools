@@ -132,15 +132,9 @@ struct AgentWidgetPreview: View {
             } else if showsItems {
                 itemsView
             } else if model.previewList.isEmpty {
-                HStack(spacing: 12) {
-                    GenesisWidgetMark()
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(model.previewFilter == "active" ? "Nothing is running." : "Nothing needs you.")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("New questions and finished work appear here.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+                WidgetEmptyState(size: .compact,
+                                 text: model.previewFilter == "active" ? "Nothing is running." : "Nothing needs you.",
+                                 detail: "New questions and finished work appear here.")
             } else {
                 FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
                              measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
@@ -197,25 +191,24 @@ struct AgentWidgetPreview: View {
 
     @ViewBuilder private var itemsView: some View {
         if model.inboxFeeds.all.isEmpty && model.inboxFeeds.read.isEmpty {
-            HStack(spacing: 12) {
-                GenesisWidgetMark()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.inbox.complete ? "Nothing new in the inbox." : "Inbox status unavailable.")
-                        .font(.system(size: 13, weight: .medium))
-                    if model.inbox.complete {
-                        Text("Questions, answers and finished work from every session land here.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+            if model.inbox.complete {
+                WidgetEmptyState(size: .compact, text: "Nothing new in the inbox.",
+                                 detail: "Questions, answers and finished work from every session land here.")
+            } else {
+                WidgetInboxStatusFailure(error: model.error) { model.start() }.padding(.horizontal, 5)
+            }
         } else {
             FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
                          measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if model.inboxFeeds.all.isEmpty {
-                        Text(model.inbox.complete ? "Nothing new in the inbox." : "Inbox status unavailable.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                            .padding(.horizontal, 5).padding(.vertical, 4)
+                        if model.inbox.complete {
+                            Text("Nothing new in the inbox.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 4)
+                        } else {
+                            WidgetInboxStatusFailure(error: model.error) { model.start() }.padding(.horizontal, 5)
+                        }
                     }
                     WidgetFeedRows(runs: model.inboxFeeds.all, model: model, surface: surface) { item, context in
                         itemEntry(item, context)
