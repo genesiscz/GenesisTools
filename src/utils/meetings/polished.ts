@@ -252,8 +252,11 @@ export const meetingsPolishedSchema = z
         phrases: phrasesSchema.optional(),
         overrides: z
             .object({
-                /** Replaces a generated section's whole body (the heading stays). */
-                sections: z.partialRecord(z.enum(POLISHED_SECTIONS), z.string()).optional(),
+                /**
+                 * Replaces a generated section's whole body (the heading stays); null leaves the section out, as a
+                 * hand-written file adopted by `polish init` that never had it.
+                 */
+                sections: z.partialRecord(z.enum(POLISHED_SECTIONS), z.string().nullable()).optional(),
                 /** Replaces one open question's text, keyed `<record>#Q<n>`. */
                 questions: z.record(z.string(), z.string()).optional(),
             })

@@ -391,10 +391,10 @@ export class MeetingsToolset extends ReplToolset {
                         const { buildPolished } = await import("@app/meetings/lib/polish/build");
                         return buildPolished({ file: input.file, mode: "check", store });
                     },
-                    init: async (from: string, out?: string) => {
-                        const input = polishInit.params.parse({ from, out });
+                    init: async (from: string, out?: string, records?: string[]) => {
+                        const input = polishInit.params.parse({ from, out, records });
                         const { initPolished } = await import("@app/meetings/lib/polish/adopt");
-                        return initPolished(input);
+                        return initPolished({ ...input, store });
                     },
                 },
                 config: {

@@ -371,6 +371,7 @@ describe("toolset method names", () => {
         expect(describeMethod([api], "meetings.polish.check")).toContain("meetings polish build");
         expect(describeMethod([api], "meetings.polish.check")).toContain("--check");
         expect(describeMethod([api], "meetings.polish.init")).toContain("meetings polish init");
+        expect(describeMethod([api], "meetings.polish.init")).toContain("--record");
         expect(api.methods.find((method) => method.name === "polish.check")?.effect).toBe("read");
         expect(api.methods.find((method) => method.name === "polish.build")?.effect).toBe("reversible");
     });

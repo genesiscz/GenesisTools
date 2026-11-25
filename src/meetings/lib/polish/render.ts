@@ -49,6 +49,18 @@ export interface RenderedPolished {
     warnings: string[];
 }
 
+/** The heading of each generated section, as the file shows it. */
+export const POLISHED_SECTION_TITLES: Readonly<Record<PolishedSection, string>> = {
+    participants: "Participants",
+    glossary: "Glossary",
+    references: "References",
+    summary: "Summary",
+    transcript: "Transcript",
+    diffs: "Diffs",
+    unresolved: "Unresolved",
+    questions: "Open questions for the user",
+};
+
 const SETTLED_OCR_CHARS = 120;
 const HINT_OCR_CHARS = 100;
 const DIFF_TEXT_CHARS = 90;
@@ -96,6 +108,11 @@ export function renderPolished(input: RenderInput): RenderedPolished {
     const sections = new Map<PolishedSection, string>();
     const override = (id: PolishedSection, body: () => string | undefined) => {
         const replaced = config.overrides?.sections?.[id];
+
+        if (replaced === null) {
+            return;
+        }
+
         const value = replaced === undefined ? body() : text(replaced);
 
         if (value !== undefined) {
@@ -154,16 +171,6 @@ export function renderPolished(input: RenderInput): RenderedPolished {
     );
     override("questions", () => questionsSection({ config, parts, times, text }));
 
-    const titles: Record<PolishedSection, string> = {
-        participants: "Participants",
-        glossary: "Glossary",
-        references: "References",
-        summary: "Summary",
-        transcript: "Transcript",
-        diffs: "Diffs",
-        unresolved: "Unresolved",
-        questions: "Open questions for the user",
-    };
     const body: string[] = [`# ${config.heading ?? `${config.title} (polished)`}`];
 
     if (config.intro?.trim()) {
@@ -182,7 +189,7 @@ export function renderPolished(input: RenderInput): RenderedPolished {
         const section = sections.get(id);
 
         if (section !== undefined) {
-            body.push(`## ${titles[id]}`, section);
+            body.push(`## ${POLISHED_SECTION_TITLES[id]}`, section);
         }
 
         for (const extra of config.sections ?? []) {
