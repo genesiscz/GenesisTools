@@ -836,8 +836,54 @@ final class RecordingTargetOutlineTests: XCTestCase {
     }
 }
 
+/// A picker stand-in whose height a test sets. It reports where its top edge sits in the window.
+@MainActor
+private final class PickerContentHeight: ObservableObject {
+    @Published var value: CGFloat = 100
+    var top: CGFloat = .nan
+}
+
+private struct PickerContentOfHeight: View {
+    @ObservedObject var height: PickerContentHeight
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.red.frame(width: 300, height: 20)
+                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { height.top = $0 }
+            Color.blue.frame(width: 300, height: height.value - 20)
+        }
+    }
+}
+
 @MainActor
 final class RecordingPickerPanelTests: XCTestCase {
+    func testAListThatGrowsKeepsTheHeaderAtTheTopAndTheWindowTakesOnlyItsLatestHeight() async throws {
+        _ = NSApplication.shared
+        let panel = RecordingPickerPanel()
+        panel.window.alphaValue = 0
+        defer { panel.dismiss() }
+        let screen = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let height = PickerContentHeight()
+        panel.present(PickerContentOfHeight(height: height), near: CGPoint(x: screen.midX, y: screen.maxY - 40), focus: false) {}
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(panel.window.frame.height, 100)
+        var heights: [CGFloat] = []
+        let resizes = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: panel.window)
+            .sink { _ in heights.append(panel.window.frame.height) }
+        defer { resizes.cancel() }
+        // Two layout passes before the window can follow, as when a list lays out its rows: a first height, then the
+        // full one. The window was 100 pt tall throughout.
+        height.value = 250
+        panel.window.contentView?.layoutSubtreeIfNeeded()
+        height.value = 400
+        panel.window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(height.top, 0, accuracy: 0.5, "the header stays at the window's top while the window is still short")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(panel.window.frame.height, 400)
+        XCTAssertEqual(heights, [400], "only the latest height lands, never the one measured a pass before it")
+        XCTAssertEqual(height.top, 0, accuracy: 0.5)
+    }
+
     func testThePickerHasItsContentSizeEachTimeItOpens() async throws {
         _ = NSApplication.shared
         let panel = RecordingPickerPanel()
