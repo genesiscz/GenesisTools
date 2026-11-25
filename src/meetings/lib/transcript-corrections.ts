@@ -2,6 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
+    namedByVoice,
     namesAtAnyConfidence,
     showsAsGuess,
     strongestFirst,
@@ -493,7 +494,7 @@ export function correctTranscript(options: {
                 proposal?.status === "suggested" &&
                 !needsSpeakerReview(proposal) &&
                 proposal.speaker &&
-                proposal.rules.includes(MeetingRule.VoiceEmbedding);
+                namedByVoice(proposal);
             const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;
             let band: TranscriptEntry["band"];
 

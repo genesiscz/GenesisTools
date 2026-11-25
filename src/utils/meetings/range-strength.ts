@@ -40,6 +40,15 @@ export function namesAtAnyConfidence(item: Pick<MeetingItem, "status" | "rules">
 }
 
 /**
+ * Whether the name a range gives its line came from the voice: a voice rule made the range and nobody stated or
+ * answered it since. A range built on the user's answer or stated by an agent may carry the voice rule too (a voice
+ * suggestion the user then answered), but the name is theirs, so the line says nothing about a voice.
+ */
+export function namedByVoice(item: Pick<MeetingItem, "status" | "rules">): boolean {
+    return item.rules.includes(MeetingRule.VoiceEmbedding) && rangeStrength(item) === RangeStrength.Automatic;
+}
+
+/**
  * Whether the range that names a line shows its name as a guess (`[Name: 60 %]`): an agent's stated range or a rule's
  * range under the apply threshold. A confirmed range and one built on the user's answer show the name plainly at any
  * confidence, because the user decided it; an agent's confidence is its own doubt, and a plain name would hide it.
