@@ -467,6 +467,22 @@ export const scratchDir = (label: string, ctx: ScratchContext = {}): string => {
     return fs.mkdtempSync(path.join(root, `${label}-${process.pid}-`));
 };
 
+/**
+ * Remove `dir` when it is empty: a scratch folder a run made for its backup and never backed a file up into. rmdir
+ * refuses a folder that holds anything, so no backup is lost here.
+ */
+export const removeEmptyDir = (dir: string | undefined): void => {
+    if (dir === undefined) {
+        return;
+    }
+
+    try {
+        fs.rmdirSync(dir);
+    } catch {
+        // Not empty (a backup is in it), or gone already: keep what is there.
+    }
+};
+
 /** Longer than any session's need for its undo trail, shorter than a typical uptime, so it fires. */
 export const PRUNE_TTL_MS = 12 * 60 * 60 * 1000;
 const PRUNE_MAX_REMOVALS = 50;

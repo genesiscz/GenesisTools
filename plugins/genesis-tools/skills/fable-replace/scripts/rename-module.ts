@@ -119,8 +119,13 @@ export const renameModuleSymbol = ({
         );
     }
 
+    // Each file's count is pinned from what it holds now, so every rename op reports expected beside found.
+    const identifier = new RegExp(identifierPattern(symbol), "g");
+    const counts = Object.fromEntries(
+        files.map((abs) => [abs, (fs.readFileSync(abs, "utf8").match(identifier) ?? []).length])
+    );
     const renames = renameSymbolAcross({
-        files,
+        files: counts,
         oldName: symbol,
         newName: to,
         includeShadowed,

@@ -117,6 +117,11 @@ describe("renameModuleSymbol", () => {
             [IMPORTERS[0], "edited"],
             [IMPORTERS[1], "edited"],
         ]);
+        expect(report.files[0].renamedTo).toBe(path.join("app", "Bar.ts"));
+        // Each file's rename op pins the count it found, so the report proves the contract on a green run too.
+        const ops = report.files.flatMap((result) => result.ops);
+        expect(ops).toHaveLength(3);
+        expect(ops.every((op) => typeof op.found === "number" && op.found > 0 && op.expected === op.found)).toBe(true);
         // run() prints each file's header line, its op lines and then its diff, so a file's block runs up to the
         // next header.
         const headerAt = edits.map((edit) => lines.findIndex((line) => line.startsWith(`${edit.file} (`)));

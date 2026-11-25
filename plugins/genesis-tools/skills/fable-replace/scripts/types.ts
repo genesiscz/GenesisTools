@@ -116,8 +116,11 @@ export interface RewriteOp {
     kind: "rewrite";
     /** The whole new content. */
     content: string;
-    /** sha256 hex of the current content (utf8). Another hash is a MISS naming the current one. */
-    expectSha256: string;
+    /**
+     * sha256 hex of the current content (utf8). Another hash is a MISS naming the current one. Required on a real run;
+     * a dry run without it previews the rewrite, and its report hands back the file's hash as sha256Before.
+     */
+    expectSha256?: string;
     label?: string;
 }
 
@@ -254,15 +257,39 @@ export interface OpResult {
     reason?: string;
     /** How many occurrences were found (literal/regex ops). */
     found?: number;
-    /** The count the op DECLARED (count / expect), echoed back so a green run still proves the contract. */
-    expected?: number | "all";
-    /** 1-based line numbers the op acted on, when it works line-wise (dropComments, deleteLines). */
-    lines?: number[];
+    /**
+     * The count the op DECLARED, on OK and MISS alike: count or expect, "all" for an op that takes every match (a
+     * regex, dropComments or deleteLines without expect, a count: "all"), and 1 for an op that acts once (an insert,
+     * a block, append, rewrite).
+     */
+    expected: number | "all";
+    /**
+     * The 1-based line of each occurrence the op found, on OK and MISS alike: every match of a literal, fuzzy or
+     * regex needle and every comment or line dropComments or deleteLines matched; for an anchor op (an insert, a
+     * block) the line of the anchor it used, or on a MISS every line the anchor occurs on. Empty when nothing
+     * matched, and for append and rewrite, which have no needle.
+     */
+    lines: number[];
+    /** A rewrite MISS: the sha256 of the content on disk, to send back as expectSha256. */
+    currentSha256?: string;
+}
+
+/** What one op's apply function returns: its result before applyOps adds the declared count. */
+export interface AppliedOp {
+    content: string;
+    result: Omit<OpResult, "expected">;
 }
 
 export interface FileResult {
     file: string;
-    action: "edited" | "unchanged" | "deleted" | "renamed" | "created" | "failed-read";
+    /** "refused": a pre-flight check refused the file, so the run planned nothing (exit 2); `reason` says why. */
+    action: "edited" | "unchanged" | "deleted" | "renamed" | "created" | "failed-read" | "refused";
+    /** Why pre-flight refused the file (action "refused" only); several reasons are joined with "; ". */
+    reason?: string;
+    /** The new path of a renamed file, relative like `file` (its renameTo). */
+    renamedTo?: string;
+    /** The sha256 of the content the run read from disk (none for a created file). */
+    sha256Before?: string;
     ops: OpResult[];
     postConditionFailures: string[];
     /** Content before/after (in memory) — present for edited files. */
@@ -276,11 +303,17 @@ export interface FileResult {
 export interface RunReport {
     ok: boolean;
     files: FileResult[];
+    /** What the run wrote, for a person: "Foo.ts → Bar.ts" after a rename, "a.ts (deleted)" after a delete. */
     written: string[];
+    /** The same files as plain paths: the new path after a rename, the path of a deleted file. */
+    writtenPaths: string[];
     missCount: number;
+    /** The folder holding this run's backup; set only when the run backed a file up. */
     backupDir?: string;
     /** The captured verify verdict, when a verifyCommand ran. */
     verify?: VerifyResult;
+    /** Every WARNING the run printed, so a caller that prints nothing (--json) still reads them. */
+    warnings?: string[];
 }
 
 /** One file of a recon: how often the pattern occurs there, and whether the file declares it. */
@@ -309,20 +342,27 @@ export interface RunReportJson {
     exitCode: 0 | 1 | 2 | 3;
     dryRun: boolean;
     missCount: number;
+    /** Plain paths: the new path after a rename (files[].renamedTo carries the pair), the path of a deleted file. */
     written: string[];
+    /** Set only when the run backed a file up; a run that writes nothing has none. */
     backupDir?: string;
     files: Array<{
         file: string;
+        renamedTo?: string;
         action: FileResult["action"];
+        /** Why pre-flight refused the file (action "refused" only). */
+        reason?: string;
+        sha256Before?: string;
         diffStat?: { added: number; removed: number };
         diff?: string;
         ops: Array<{
             status: "OK" | "MISS" | "SKIP";
             desc: string;
             found?: number;
-            expected?: number | "all";
+            expected: number | "all";
             reason?: string;
-            lines?: number[];
+            lines: number[];
+            currentSha256?: string;
         }>;
         postConditionFailures: string[];
     }>;
@@ -335,6 +375,8 @@ export interface RunReportJson {
         shown: string[];
         outputFile?: string;
     };
+    /** The WARNING lines of the run (a spec's, a verify command's, a git move that fell back). */
+    warnings?: string[];
     /**
      * The thrown message: a refusal before any report exists (code 2), or the reason beside a report
      * run() threw (a stale prose mention after a green sweep, exit 3, has no other trace here).

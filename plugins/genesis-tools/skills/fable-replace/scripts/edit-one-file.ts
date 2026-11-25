@@ -17,8 +17,10 @@ import {
     dominantEol,
     escapeRegex,
     lineStartOffsets,
+    linesAt,
     matchLines,
     nthIndexOf,
+    occurrenceOffsets,
     opDesc,
     preview,
     replaceAllLiteral,
@@ -26,6 +28,7 @@ import {
 } from "./internal";
 import type {
     AppendOp,
+    AppliedOp,
     DeleteBlockOp,
     DropJsdocParams,
     DropParams,
@@ -67,20 +70,22 @@ const replaceAtOffsets = ({
     return out;
 };
 
-const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): { content: string; result: OpResult } => {
+const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): AppliedOp => {
     const desc = opDesc(op);
     // `wholeLines` (what `<<< delete` compiles to) counts only occurrences that start a
     // line: "foo" inside "notfoo" used to match, report OK, and leave "not" behind.
-    const atLineStarts = op.wholeLines === true ? lineStartOffsets(content, op.find) : null;
-    const found = atLineStarts === null ? countOccurrences(content, op.find) : atLineStarts.length;
+    const atLineStarts = op.wholeLines === true;
+    const offsets = atLineStarts ? lineStartOffsets(content, op.find) : occurrenceOffsets(content, op.find);
+    const found = offsets.length;
+    const lines = linesAt(content, offsets);
     const want = op.count ?? 1;
 
     if (op.find === op.replace) {
-        return { content, result: { status: "MISS", desc, reason: "find === replace (no-op edit)", found } };
+        return { content, result: { status: "MISS", desc, reason: "find === replace (no-op edit)", found, lines } };
     }
 
     if (found === 0) {
-        const midLine = atLineStarts === null ? 0 : countOccurrences(content, op.find);
+        const midLine = atLineStarts ? countOccurrences(content, op.find) : 0;
         const where =
             midLine > 0
                 ? `needle occurs ${midLine}× but never at the start of a line (a delete body must be whole lines).`
@@ -92,63 +97,60 @@ const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): { c
                       original: batch?.original,
                       producedBy: batch?.producedBy,
                   })}`;
-        return { content, result: { status: op.optional ? "SKIP" : "MISS", desc, reason: where, found } };
+        return { content, result: { status: op.optional ? "SKIP" : "MISS", desc, reason: where, found, lines } };
     }
 
     if (want === "all") {
         return {
-            content:
-                atLineStarts === null
-                    ? replaceAllLiteral(content, op.find, op.replace)
-                    : replaceAtOffsets({
-                          content,
-                          offsets: atLineStarts,
-                          length: op.find.length,
-                          replacement: op.replace,
-                      }),
-            result: { status: "OK", desc, found, expected: want },
+            content: atLineStarts
+                ? replaceAtOffsets({ content, offsets, length: op.find.length, replacement: op.replace })
+                : replaceAllLiteral(content, op.find, op.replace),
+            result: { status: "OK", desc, found, lines },
         };
     }
 
     if (found !== want) {
-        const lines =
-            atLineStarts === null
-                ? matchLines({ content, needle: op.find })
-                : atLineStarts.map((at) => content.slice(0, at).split("\n").length).join(", ");
+        const where = atLineStarts ? lines.join(", ") : matchLines({ content, needle: op.find });
         return {
             content,
             result: {
                 status: op.optional ? "SKIP" : "MISS",
                 desc,
-                reason: `expected exactly ${want} occurrence(s), found ${found} at line(s) ${lines} — add surrounding context to disambiguate, or set count to ${found}`,
+                reason: `expected exactly ${want} occurrence(s), found ${found} at line(s) ${where} — add surrounding context to disambiguate, or set count to ${found}`,
                 found,
+                lines,
             },
         };
     }
 
     return {
-        content:
-            atLineStarts === null
-                ? replaceNLiteral(content, op.find, op.replace, want)
-                : replaceAtOffsets({
-                      content,
-                      offsets: atLineStarts.slice(0, want),
-                      length: op.find.length,
-                      replacement: op.replace,
-                  }),
-        result: { status: "OK", desc, found, expected: want },
+        content: atLineStarts
+            ? replaceAtOffsets({
+                  content,
+                  offsets: offsets.slice(0, want),
+                  length: op.find.length,
+                  replacement: op.replace,
+              })
+            : replaceNLiteral(content, op.find, op.replace, want),
+        result: { status: "OK", desc, found, lines },
     };
 };
 
-const applyRegex = (content: string, op: RegexOp): { content: string; result: OpResult } => {
+const applyRegex = (content: string, op: RegexOp): AppliedOp => {
     const desc = opDesc(op);
     const global = op.find.global ? op.find : new RegExp(op.find.source, `${op.find.flags}g`);
-    const found = (content.match(global) ?? []).length;
+    // A fresh copy for the scan: matchAll starts at the regex's own lastIndex.
+    const matches = [...content.matchAll(new RegExp(global.source, global.flags))];
+    const found = matches.length;
+    const lines = linesAt(
+        content,
+        matches.map((match) => match.index ?? 0)
+    );
 
     if (found === 0) {
         return {
             content,
-            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "regex matched nothing", found },
+            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "regex matched nothing", found, lines },
         };
     }
 
@@ -160,6 +162,7 @@ const applyRegex = (content: string, op: RegexOp): { content: string; result: Op
                 desc,
                 reason: `expected ${op.expect} match(es), found ${found} at line(s) ${matchLines({ content, needle: op.find })}`,
                 found,
+                lines,
             },
         };
     }
@@ -169,7 +172,7 @@ const applyRegex = (content: string, op: RegexOp): { content: string; result: Op
             ? content.replace(global, op.replace)
             : content.replace(global, op.replace as (substring: string, ...args: unknown[]) => string);
 
-    return { content: next, result: { status: "OK", desc, found, expected: op.expect } };
+    return { content: next, result: { status: "OK", desc, found, lines } };
 };
 
 /**
@@ -186,12 +189,14 @@ const eolAnchor = (content: string, anchor: string): string => {
     return anchor.replace(/\n/g, "\r\n");
 };
 
+/** The block's span and the line of the "from" anchor it starts at, or why it missed and every line "from" occurs on. */
 const locateBlock = (
     content: string,
     op: DeleteBlockOp | ReplaceBlockOp
-): { start: number; end: number } | { error: string } => {
+): { start: number; end: number; lines: number[] } | { error: string; lines: number[] } => {
     const from = eolAnchor(content, op.from);
     const to = eolAnchor(content, op.to);
+    const fromLines = (): number[] => linesAt(content, occurrenceOffsets(content, from));
     if (op.occurrence === undefined) {
         // Acting on the FIRST of several matching anchors silently leaves the others
         // alone and still reports OK. Ambiguity is a MISS, like every other op.
@@ -199,6 +204,7 @@ const locateBlock = (
         if (fromCount > 1) {
             return {
                 error: `"from" anchor occurs ${fromCount}× (lines ${matchLines({ content, needle: from })}); add context to make it unique, or set occurrence`,
+                lines: fromLines(),
             };
         }
     }
@@ -206,32 +212,37 @@ const locateBlock = (
     if (fromIdx === -1) {
         return {
             error: `"from" anchor not found (occurrence ${op.occurrence ?? 1}). ${nearestHint({ content, needle: from })}`,
+            lines: fromLines(),
         };
     }
+    const lines = linesAt(content, [fromIdx]);
     const searchFrom = fromIdx + from.length;
     const toIdx = content.indexOf(to, searchFrom);
     if (toIdx === -1) {
-        return { error: `"to" anchor not found after "from"` };
+        return { error: `"to" anchor not found after "from"`, lines };
     }
     const start = op.keepFrom ? fromIdx + from.length : fromIdx;
     const end = op.keepTo ? toIdx : toIdx + to.length;
-    return { start, end };
+    return { start, end, lines };
 };
 
-const applyBlock = (content: string, op: DeleteBlockOp | ReplaceBlockOp): { content: string; result: OpResult } => {
+const applyBlock = (content: string, op: DeleteBlockOp | ReplaceBlockOp): AppliedOp => {
     const desc = opDesc(op);
     const loc = locateBlock(content, op);
     if ("error" in loc) {
-        return { content, result: { status: op.optional ? "SKIP" : "MISS", desc, reason: loc.error } };
+        return {
+            content,
+            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: loc.error, lines: loc.lines },
+        };
     }
     const substitute = op.kind === "replaceBlock" ? op.replace : "";
     return {
         content: content.slice(0, loc.start) + substitute + content.slice(loc.end),
-        result: { status: "OK", desc },
+        result: { status: "OK", desc, lines: loc.lines },
     };
 };
 
-const applyInsert = (content: string, op: InsertOp): { content: string; result: OpResult } => {
+const applyInsert = (content: string, op: InsertOp): AppliedOp => {
     const desc = opDesc(op);
     const idx = nthIndexOf({ haystack: content, needle: op.anchor, n: op.occurrence ?? 1 });
     if (idx === -1) {
@@ -241,11 +252,15 @@ const applyInsert = (content: string, op: InsertOp): { content: string; result: 
                 status: op.optional ? "SKIP" : "MISS",
                 desc,
                 reason: `anchor not found (occurrence ${op.occurrence ?? 1})`,
+                lines: linesAt(content, occurrenceOffsets(content, op.anchor)),
             },
         };
     }
     const at = op.kind === "insertBefore" ? idx : idx + op.anchor.length;
-    return { content: content.slice(0, at) + op.text + content.slice(at), result: { status: "OK", desc } };
+    return {
+        content: content.slice(0, at) + op.text + content.slice(at),
+        result: { status: "OK", desc, lines: linesAt(content, [idx]) },
+    };
 };
 
 /**
@@ -393,9 +408,10 @@ const anchorOffsets = ({ content, anchor }: { content: string; anchor: string })
     return offsets;
 };
 
-const applyInsertLines = (content: string, op: InsertLinesOp): { content: string; result: OpResult } => {
+const applyInsertLines = (content: string, op: InsertLinesOp): AppliedOp => {
     const offsets = anchorOffsets({ content, anchor: op.anchor });
     const found = offsets.length;
+    const lines = linesAt(content, offsets);
     const raw = countOccurrences(content, op.anchor);
     const anchorLine = op.anchor.split("\n");
     const textLines = op.text.replace(/\n$/, "").split("\n");
@@ -411,7 +427,7 @@ const applyInsertLines = (content: string, op: InsertLinesOp): { content: string
                 : found === 0
                   ? `anchor not found. ${nearestHint({ content, needle: op.anchor })}`
                   : `anchor occurs ${found}× (lines ${matchLines({ content, needle: op.anchor })}), must be unique: add surrounding context`;
-        return { content, result: { status: op.optional ? "SKIP" : "MISS", desc, reason, found } };
+        return { content, result: { status: op.optional ? "SKIP" : "MISS", desc, reason, found, lines } };
     }
     // `text` is inserted line for line. A trailing "\n" is a real blank line, because
     // that is what an agent means when it leaves an empty last line in a spec body
@@ -435,10 +451,10 @@ const applyInsertLines = (content: string, op: InsertLinesOp): { content: string
         op.kind === "insertLinesBefore"
             ? `${content.slice(0, start)}${text}${eol}${content.slice(start)}`
             : `${content.slice(0, end)}${eol}${text}${content.slice(end)}`;
-    return { content: next, result: { status: "OK", desc, found, expected: 1 } };
+    return { content: next, result: { status: "OK", desc, found, lines } };
 };
 
-const applyAppend = (content: string, op: AppendOp): { content: string; result: OpResult } => {
+const applyAppend = (content: string, op: AppendOp): AppliedOp => {
     const desc = opDesc(op);
     // Same rule as insertLines: the text is literal, it takes the file's line ending, and
     // the file ends with a newline.
@@ -446,46 +462,75 @@ const applyAppend = (content: string, op: AppendOp): { content: string; result: 
     const body = op.text.replace(/\r?\n/g, eol);
     const text = body.endsWith(eol) ? body : `${body}${eol}`;
     const glue = content.length === 0 || content.endsWith("\n") ? "" : eol;
-    return { content: `${content}${glue}${text}`, result: { status: "OK", desc } };
+    return { content: `${content}${glue}${text}`, result: { status: "OK", desc, lines: [] } };
 };
 
-const applyFuzzy = (content: string, op: FuzzyOp): { content: string; result: OpResult } => {
+const applyFuzzy = (content: string, op: FuzzyOp): AppliedOp => {
     const desc = op.label ?? `fuzzy "${op.find.replace(/\s+/g, " ").slice(0, 48)}"`;
     const rx = fuzzyWhitespaceRegex(op.find);
-    const found = (content.match(rx) ?? []).length;
+    const matches = [...content.matchAll(rx)];
+    const found = matches.length;
+    const lines = linesAt(
+        content,
+        matches.map((match) => match.index ?? 0)
+    );
     const want = op.count ?? 1;
     if (found === 0) {
         return {
             content,
-            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "no whitespace-tolerant match", found },
+            result: {
+                status: op.optional ? "SKIP" : "MISS",
+                desc,
+                reason: "no whitespace-tolerant match",
+                found,
+                lines,
+            },
         };
     }
     if (want !== "all" && found !== want) {
         return {
             content,
-            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: `expected ${want}, found ${found}`, found },
+            result: {
+                status: op.optional ? "SKIP" : "MISS",
+                desc,
+                reason: `expected ${want}, found ${found}`,
+                found,
+                lines,
+            },
         };
     }
-    return { content: content.replace(rx, () => op.replace), result: { status: "OK", desc, found } };
+    return { content: content.replace(rx, () => op.replace), result: { status: "OK", desc, found, lines } };
 };
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
  * Replace the whole content, guarded by its sha256 (utf8 bytes). The content is the file before any op, because a
- * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>", so the caller re-reads
- * and retries with that hash instead of sending the old text back as a needle.
+ * rewrite is the only op of its file. Every MISS reason starts with "current sha256 <hex>" and carries the hash as
+ * currentSha256, so the caller re-reads and retries with that hash instead of sending the old text back as a needle.
+ * Without expectSha256 the op is a preview: the runner refuses it on a real run, so only a dry run gets here, and its
+ * report hands the caller the file's hash as sha256Before.
  */
-const applyRewrite = (content: string, op: RewriteOp, otherOps: number): { content: string; result: OpResult } => {
+const applyRewrite = (content: string, op: RewriteOp, otherOps: number): AppliedOp => {
     const desc = opDesc(op);
     const current = createHash("sha256").update(content, "utf8").digest("hex");
-    const miss = (why: string): { content: string; result: OpResult } => ({
+    const miss = (why: string): AppliedOp => ({
         content,
-        result: { status: "MISS", desc, reason: `current sha256 ${current}: ${why}` },
+        result: {
+            status: "MISS",
+            desc,
+            reason: `current sha256 ${current}: ${why}`,
+            currentSha256: current,
+            lines: [],
+        },
     });
     // The runner refuses this before planning; a direct applyOps caller would otherwise lose the other ops' work.
     if (otherOps > 0) {
         return miss(`a rewrite is the only op of its file, and this file has ${otherOps} other op(s)`);
+    }
+
+    if (op.expectSha256 === undefined) {
+        return { content: op.content, result: { status: "OK", desc, lines: [] } };
     }
 
     const expected = op.expectSha256.toLowerCase();
@@ -501,7 +546,7 @@ const applyRewrite = (content: string, op: RewriteOp, otherOps: number): { conte
         );
     }
 
-    return { content: op.content, result: { status: "OK", desc } };
+    return { content: op.content, result: { status: "OK", desc, lines: [] } };
 };
 
 /**
@@ -548,17 +593,42 @@ const emptyNeedle = (op: Op): string | null => {
     }
 };
 
+/**
+ * The count an op declares, its result's `expected`: count or expect, "all" for an op that takes every match unless
+ * it says how many, and 1 for an op that acts once.
+ */
+const declaredCount = (op: Op): number | "all" => {
+    switch (op.kind) {
+        case "regex":
+        case "dropComments":
+        case "deleteLines":
+            return op.expect ?? "all";
+        case undefined:
+        case "replace":
+        case "fuzzy":
+            return op.count ?? 1;
+        default:
+            return 1;
+    }
+};
+
 /** Apply a list of ops to a string. Pure — no filesystem access. */
 export const applyOps = (content: string, ops: Op[]): { content: string; results: OpResult[] } => {
     let current = content;
     const results: OpResult[] = [];
     let producedBy: BatchContext["producedBy"];
     for (const op of ops) {
-        let outcome: { content: string; result: OpResult };
+        let outcome: AppliedOp;
         const empty = emptyNeedle(op);
         if (empty !== null) {
             const optional = "optional" in op && op.optional === true;
-            results.push({ status: optional ? "SKIP" : "MISS", desc: opDesc(op), reason: empty });
+            results.push({
+                status: optional ? "SKIP" : "MISS",
+                desc: opDesc(op),
+                reason: empty,
+                expected: declaredCount(op),
+                lines: [],
+            });
             continue;
         }
 
@@ -599,7 +669,7 @@ export const applyOps = (content: string, ops: Op[]): { content: string; results
                 if (kind !== undefined && kind !== "replace") {
                     outcome = {
                         content: current,
-                        result: { status: "MISS", desc: opDesc(op), reason: `unknown op kind "${kind}"` },
+                        result: { status: "MISS", desc: opDesc(op), reason: `unknown op kind "${kind}"`, lines: [] },
                     };
                     break;
                 }
@@ -613,7 +683,7 @@ export const applyOps = (content: string, ops: Op[]): { content: string; results
         }
 
         current = outcome.content;
-        results.push(outcome.result);
+        results.push({ ...outcome.result, expected: declaredCount(op) });
     }
     return { content: current, results };
 };

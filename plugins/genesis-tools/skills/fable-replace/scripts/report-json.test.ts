@@ -100,13 +100,14 @@ describe("reportToJson", () => {
             {
                 file: "/repo/src/alpha.ts",
                 action: "edited",
-                ops: [{ status: "OK", desc: "rename", found: 3, expected: "all" }],
+                ops: [{ status: "OK", desc: "rename", found: 3, expected: "all", lines: [1, 4, 9] }],
                 postConditionFailures: [],
                 changed: true,
                 diffStat: { added: 3, removed: 3 },
             },
         ],
         written: ["/repo/src/alpha.ts"],
+        writtenPaths: ["/repo/src/alpha.ts"],
         missCount: 0,
         backupDir: "/tmp/backup",
         verify: {
@@ -148,7 +149,7 @@ describe("reportToJson", () => {
                 file: "/repo/src/alpha.ts",
                 action: "edited",
                 diffStat: { added: 3, removed: 3 },
-                ops: [{ status: "OK", desc: "rename", found: 3, expected: "all" }],
+                ops: [{ status: "OK", desc: "rename", found: 3, expected: "all", lines: [1, 4, 9] }],
                 postConditionFailures: [],
             },
         ]);

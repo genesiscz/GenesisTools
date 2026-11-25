@@ -307,7 +307,7 @@ const opFromJson = (value: unknown, path: string): Op => {
             return compact({
                 kind,
                 content: f.str("content"),
-                expectSha256: f.str("expectSha256"),
+                expectSha256: f.optStr("expectSha256"),
                 label: f.optStr("label"),
             });
         }
@@ -359,13 +359,17 @@ const opResultToJson = (op: OpResult): RunReportJson["files"][number]["ops"][num
         expected: op.expected,
         reason: op.reason,
         lines: op.lines,
+        currentSha256: op.currentSha256,
     });
 };
 
 const fileResultToJson = (file: FileResult): RunReportJson["files"][number] => {
     return compact({
         file: file.file,
+        renamedTo: file.renamedTo,
         action: file.action,
+        reason: file.reason,
+        sha256Before: file.sha256Before,
         diffStat: file.diffStat,
         diff: file.diff,
         ops: file.ops.map(opResultToJson),
@@ -410,14 +414,18 @@ export const reportToJson = ({
     report,
     error,
     dryRun,
+    warnings = [],
 }: {
     report?: RunReport;
     error?: unknown;
     dryRun: boolean;
+    /** Warnings met before run() (a spec's), listed ahead of the run's own. */
+    warnings?: string[];
 }): RunReportJson => {
     const thrown = error instanceof FableReplaceError ? error : undefined;
     const source = report ?? thrown?.report;
     const message = error === undefined ? undefined : error instanceof Error ? error.message : String(error);
+    const allWarnings = [...warnings, ...(source?.warnings ?? [])];
     if (source === undefined) {
         return {
             v: 1,
@@ -427,6 +435,7 @@ export const reportToJson = ({
             missCount: 0,
             written: [],
             files: [],
+            ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
             error: message ?? "no report and no error to describe",
         };
     }
@@ -438,10 +447,11 @@ export const reportToJson = ({
         exitCode,
         dryRun,
         missCount: source.missCount,
-        written: [...source.written],
+        written: [...source.writtenPaths],
         backupDir: source.backupDir,
         files: source.files.map(fileResultToJson),
         verify: source.verify === undefined ? undefined : verifyToJson(source.verify),
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
         error: message,
     });
 };

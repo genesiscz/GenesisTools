@@ -569,9 +569,13 @@ const fromJson = (text: string): FileEdit[] => {
                 );
             }
 
-            if (op.kind === "rewrite" && (typeof op.content !== "string" || typeof op.expectSha256 !== "string")) {
+            if (
+                op.kind === "rewrite" &&
+                (typeof op.content !== "string" ||
+                    (op.expectSha256 !== undefined && typeof op.expectSha256 !== "string"))
+            ) {
                 throw new Error(
-                    `${String(e.file)}: op ${index + 1} (rewrite) needs content and expectSha256 as strings`
+                    `${String(e.file)}: op ${index + 1} (rewrite) needs content as a string, and expectSha256 (when given) as a string`
                 );
             }
 
