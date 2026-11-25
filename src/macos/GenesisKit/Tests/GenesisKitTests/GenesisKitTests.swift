@@ -1287,7 +1287,8 @@ final class WidgetInboxNotificationTests: XCTestCase {
                 unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0, latest: item,
                 unreadItem: item.needsAnswer ? nil : item, pendingItem: item.needsAnswer ? item : nil)])
     }
-    private func snapshot(_ notification: WidgetInboxItem, cardID: String?, selected: String) throws -> String {
+    private func snapshot(_ notification: WidgetInboxItem, cardID: String?, selected: String,
+                          markReadOn: String? = nil) throws -> String {
         let old = "local:codex:fixture-old:"
         let sessions: [[String: Any]] = [old, key].map { value in
             ["key": value, "target": ["hostId": "local", "provider": "codex", "sessionId": value == key ? "fixture-new" : "fixture-old",
@@ -1302,7 +1303,8 @@ final class WidgetInboxNotificationTests: XCTestCase {
         let notifications = try JSONSerialization.jsonObject(with: encoded)
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": selected, "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"]),
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"]
+                .merging(markReadOn.map { ["markReadOn": $0] } ?? [:]) { _, new in new }),
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": sessions, "cards": cards,
             "manifests": [:], "errors": [], "selectedKey": selected, "notifications": notifications])
         return String(decoding: data, as: UTF8.self)
@@ -1428,6 +1430,53 @@ final class WidgetInboxNotificationTests: XCTestCase {
         model.openInboxNotification(on: .init(edge: .right), key: old)
         XCTAssertEqual(model.selectedKey, old)
         XCTAssertNil(model.selectedCardID)
+    }
+
+    /// Decision 30 b: opening the panel marks the answer on show read only with "When the panel opens"; by default
+    /// only a click on its card does, so a message posted seconds before the panel opened stays unread.
+    func testOpeningThePanelMarksTheShownAnswerReadOnlyWithThePanelOpenSetting() async throws {
+        for (setting, expected) in [(nil as String?, 0), ("click", 0), ("panel-open", 1)] {
+            let model = model()
+            defer { model.stop() }
+            var reads: [WidgetJSON] = []
+            model.actionRunner = { value in
+                if case .object(let fields) = value,
+                   fields["action"] == .string("read") || fields["action"] == .string("inbox-read") {
+                    reads.append(value)
+                }
+                return ["ok": true]
+            }
+            model.selectedKey = key
+            model.receive([try snapshot(item("shown", at: 1), cardID: "answer:shown", selected: key, markReadOn: setting)])
+            XCTAssertEqual(model.card?.id, "answer:shown")
+            XCTAssertEqual(model.preferences.markReadOn, setting ?? "click")
+            model.open(.right)
+            await barrier(model)
+            XCTAssertEqual(reads, expected == 0 ? [] : [["action": "read", "id": "shown"]], setting ?? "default")
+        }
+    }
+
+    /// A click on the answer's card marks it read: the click that opens it, and the click that folds the card the panel
+    /// opened on (shown open, and by default not marked by the opening).
+    func testAClickOnTheAnswerCardMarksItRead() async throws {
+        for fold in [false, true] {
+            let model = model()
+            defer { model.stop() }
+            var reads: [WidgetJSON] = []
+            model.actionRunner = { value in
+                if case .object(let fields) = value, fields["action"] == .string("inbox-read") { reads.append(value) }
+                return ["ok": true]
+            }
+            model.selectedKey = key
+            model.receive([try snapshot(item("shown", at: 1), cardID: "answer:shown", selected: key)])
+            model.open(.right)
+            let card = try XCTUnwrap(model.card)
+            if fold { model.foldCard(card) } else { model.openCard(card) }
+            await barrier(model)
+            XCTAssertEqual(reads, [["action": "inbox-read", "key": .string(key), "id": "answer:shown", "kind": "answer",
+                                    "at": 1]], fold ? "fold" : "open")
+            XCTAssertEqual(model.foldedCardIDs.contains(card.id), fold)
+        }
     }
 
     func testReadingPendingQuestionKeepsNeedsAnswerAndCollapseCancelsLateAck() async throws {

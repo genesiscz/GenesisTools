@@ -283,6 +283,14 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().frame(width: 150, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsRow("Mark messages read", detail: "A click on its card always marks a message or answer read. \"When the panel opens\" also marks the one on show at once.") {
+                    Picker("Mark messages read", selection: field(\.markReadOn)) {
+                        Text("On click").tag("click")
+                        Text("When the panel opens").tag("panel-open")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.markReadOn")
+                }
+                Divider()
                 NativeSettingsToggle(
                     "Changed files", detail: "Show a session's working changes alongside its conversation.",
                     isOn: field(\.showChanges))
@@ -779,6 +787,18 @@ private struct WidgetSessionSettings: View {
                 selection: Binding(get: { prefs.previewView }, set: { view in
                     model.writePreferences { $0.previewView = view }
                 }))
+            if prefs.previewView == "items" {
+                NativeSettingsRow("Read items", detail: "Messages and answers you already read stay in the list, grey and below the unread ones, for this long. They never count as unread.") {
+                    Picker("Read items", selection: Binding(get: { prefs.previewReadHours }, set: { hours in
+                        model.writePreferences { $0.previewReadHours = hours }
+                    })) {
+                        ForEach(WidgetReadItemsHeader.choices(current: prefs.previewReadHours), id: \.self) { hours in
+                            Text(hours == 0 ? "None" : WidgetReadItemsHeader.window(hours)).tag(hours)
+                        }
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
+                        .accessibilityIdentifier("widget.settings.previewReadHours")
+                }
+            }
             if prefs.previewView == "sessions" {
                 NativeSettingsSegmented(
                     "Show", identifier: "widget.preview.filter",

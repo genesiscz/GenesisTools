@@ -647,7 +647,7 @@ public struct LiveWidgetView: View {
             if opening {
                 model.openCard(card)
             } else {
-                model.foldedCardIDs.insert(card.id)
+                model.foldCard(card)
             }
         }
     }

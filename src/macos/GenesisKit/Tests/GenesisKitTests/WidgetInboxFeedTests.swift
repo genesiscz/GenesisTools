@@ -355,6 +355,63 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertTrue(lines.joined(separator: " ").contains("Open in its session"), lines.description)
     }
 
+    /// Decision 30 a: the Items list also lists the messages and answers already read, grey and below the unread ones
+    /// (a newer read message too), for the setting's hours. No count has them, and one still opens with its text.
+    func testItemsListsReadMessagesBelowTheUnreadOnesAndCountsNone() throws {
+        let readNote = WidgetInboxItem(message: .init(text: "The apples are in."), id: "answer:r1", sourceId: "r1",
+                                       kind: "answer", key: beta.key, at: 4500, needsAnswer: false,
+                                       title: "Apples delivered", tag: "message", read: true)
+        let readAnswer = WidgetInboxItem(reply: .init(question: "Which crate?", text: "The red one."), id: "answer:r2",
+                                         sourceId: "r2", kind: "answer", key: alpha.key, at: 900, needsAnswer: false,
+                                         title: "Which crate?", read: true)
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.previewView = "items"
+        XCTAssertEqual(prefs.previewReadHours, 24, "the default keeps a day of read items")
+        let model = try WidgetInboxRender.model(sessions: [alpha, beta, gamma], items: [items[1]],
+                                                read: [readNote, readAnswer], preferences: prefs)
+        defer { model.stop() }
+        XCTAssertEqual(model.inboxFeeds.all.flatMap(\.items).map(\.id), ["answer:m"])
+        XCTAssertEqual(model.inboxFeeds.read.flatMap(\.items).map(\.id), ["answer:r1", "answer:r2"])
+        XCTAssertEqual(model.inboxFeeds["unread"].flatMap(\.items).map(\.id), ["answer:m"])
+        XCTAssertEqual(model.inbox.unread, 1, "the read items add nothing to the unread count")
+        XCTAssertEqual(model.inboxCount, 1, "nor to what Mark all read acts on")
+        XCTAssertFalse(readNote.isUnreadEntry)
+        XCTAssertEqual(WidgetInboxOverview.kindLabel(readNote), "Message")
+        XCTAssertEqual(WidgetInboxOverview.kindLabel(readAnswer), "Answer")
+        XCTAssertEqual(WidgetInboxOverview.kindLabel(items[1]), "New message")
+
+        let view = AgentWidgetPreview(model: model, surface: .init(edge: .right))
+        let size = CGSize(width: 480, height: 560)
+        var placed: [String] = []
+        _ = try WidgetInboxRender.draw(view, size: size, name: "hover-read-items") { _, host in
+            placed = TreeDrawnText.placed(in: host).sorted { $0.middle < $1.middle }.map(\.text)
+        }
+        assertOrder(["Delivery note", "last 24 hours", "2 items", "Apples delivered", "Which crate?"], in: placed)
+
+        model.actionRunner = { _ in ["ok": true] }
+        model.togglePreviewEntry(readNote)
+        try WidgetInboxRender.receive(model, sessions: [alpha, beta, gamma], items: [items[1]],
+                                      read: [readNote, readAnswer], preferences: prefs)
+        XCTAssertEqual(model.previewItem(id: readNote.id), readNote, "a new snapshot keeps the open read item")
+        let opened = try WidgetInboxRender.draw(view, size: size).joined(separator: " ")
+        XCTAssertTrue(opened.contains("The apples are in."), opened)
+
+        prefs.previewReadHours = 0
+        let none = try WidgetInboxRender.model(sessions: [alpha, beta, gamma], items: [items[1]], read: [readNote],
+                                               preferences: prefs)
+        defer { none.stop() }
+        XCTAssertTrue(none.inboxFeeds.read.isEmpty, "None lists no read items")
+    }
+
+    func testTheReadWindowNamesItsHoursAndOffersAStoredValue() {
+        XCTAssertEqual(WidgetReadItemsHeader.window(24), "24 hours")
+        XCTAssertEqual(WidgetReadItemsHeader.window(1), "1 hour")
+        XCTAssertEqual(WidgetReadItemsHeader.window(72), "3 days")
+        XCTAssertEqual(WidgetReadItemsHeader.choices(current: 24), [0, 6, 24, 72, 168])
+        XCTAssertEqual(WidgetReadItemsHeader.choices(current: 12), [0, 6, 12, 24, 72, 168])
+        XCTAssertEqual(WidgetReadItemsHeader.choices(current: 0), [0, 6, 24, 72, 168])
+    }
+
     /// A session named after its only item (an agent result) names it once, in the row; another title stays in the header.
     func testARunHeaderDoesNotRepeatItsOnlyItemsTitle() throws {
         let named = WidgetInboxRender.session("crates", project: "Meadow")

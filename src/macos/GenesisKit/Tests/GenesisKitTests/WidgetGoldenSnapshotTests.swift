@@ -87,6 +87,19 @@ final class WidgetGoldenSnapshotTests: XCTestCase {
         XCTAssertEqual(elsewhere?.answeredBy, relay)
     }
 
+    /// A message already read comes in `recentlyRead`, marked read and in no session's list: the Items list draws it
+    /// dimmed below the unread entries, and no count has it.
+    func testAReadMessageComesApartFromTheListedItemsAndMarkedRead() throws {
+        let snapshot = try JSONDecoder().decode(
+            WidgetSnapshot.self, from: KitFixture.data("snapshot-overview.json", in: "Widget"))
+        let read = try XCTUnwrap(snapshot.notifications?.recentlyRead?.first)
+        XCTAssertEqual(read.read, true)
+        XCTAssertEqual(read.message?.text, "All 12 steps passed.")
+        XCTAssertFalse(read.isUnreadEntry)
+        let listed = snapshot.notifications?.sessions.flatMap { $0.items ?? [] } ?? []
+        XCTAssertFalse(listed.contains { $0.id == read.id })
+    }
+
     /// A kind a newer hub adds decodes to `unknown` with its text, so the rest of the snapshot still reaches the widget.
     func testAKindThisBuildDoesNotKnowDecodesAsUnknownWithItsText() throws {
         let text = try XCTUnwrap(

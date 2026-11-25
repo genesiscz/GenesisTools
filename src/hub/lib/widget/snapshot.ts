@@ -1,10 +1,14 @@
 import { type WidgetTask, widgetTask } from "@app/question/lib/decisions/todo-view";
 import {
     cleanVisibleContext,
+    EXTERNAL_SESSION_ID,
+    externalMessageOrigin,
     inboxReply,
     MESSAGE_PREVIEW_CHARS,
+    type RecentlyReadEntry,
     readInboxData,
     readInboxGroupEntries,
+    readRecentlyReadEntries,
     type WidgetInboxData,
     type WidgetInboxWindow,
 } from "@app/question/lib/inbox/unread";
@@ -32,6 +36,7 @@ import { listFormsSnapshot, listPendingFormHeadsSnapshot, type PendingFormHead }
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { type QaRow, queryEntriesOfSessionsSnapshot, queryEntriesSnapshot } from "@app/question/lib/read-model";
 import { askedAtOf, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "@app/question/lib/waiting/set";
+import { type CallerBrief, type CallerRecord, callerBrief } from "@genesiscz/utils/agent/identity/caller-record";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { changeLogPath, readChangeLogFile } from "@genesiscz/utils/agents/change-log";
 import { openQuestions, sessionsWithDialogRecords } from "@genesiscz/utils/agents/dialogs/store";
@@ -176,8 +181,17 @@ export interface WidgetCard {
     comments?: string[];
     /** Decision cards: who stored the answer, the user in an inbox (`inbox`) or an agent copying a chat answer. */
     answeredVia?: AnsweredVia;
+    /** Decision cards: the agent that stored the answer (`answeredBy` of the row), so the card names it. */
+    answeredBy?: WidgetAnsweredBy;
     /** A superseded decision: the decision that replaced it, with the widget key of its session when known. */
     supersededBy?: WidgetSupersededBy;
+}
+/**
+ * The agent that stored a decision's answer (`callerBrief` of the row's `answeredBy`), with the widget key of its
+ * session when the roster lists that session, so the agent's name opens it.
+ */
+export interface WidgetAnsweredBy extends CallerBrief {
+    sessionKey?: string;
 }
 export interface WidgetSupersededBy {
     id: string;
@@ -282,6 +296,8 @@ export interface WidgetSources {
     events?(ids: string[]): WidgetActivityEvent[];
     inboxKinds?(): Promise<InboxKinds>;
     inboxData?(window: WidgetInboxWindow): WidgetInboxData;
+    /** The answers and messages read and recorded at or after `since` (epoch ms), newest first, bounded in SQL. */
+    recentlyRead?(since: number): RecentlyReadEntry[];
     rosterStatus?(): { loading: boolean; error?: string };
     /** The lines a decision card's refs cite, for a card the snapshot publishes; else `widgetExcerpts` reads them. */
     excerpts?(refs: readonly InboxRef[], cwd: string | undefined): InboxRef[];
@@ -345,6 +361,10 @@ export interface WidgetInboxItem {
     option?: string;
     answer?: string;
     answeredVia?: AnsweredVia;
+    /** The agent that stored that answer (`answeredBy` of the row): its harness, session and model. */
+    answeredBy?: WidgetAnsweredBy;
+    /** An answer or message already read (`WidgetInboxSummary.recentlyRead`): drawn dimmed, never counted. */
+    read?: true;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -355,6 +375,11 @@ export interface WidgetInboxSession {
     pendingItem?: WidgetInboxItem;
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
+    /**
+     * The entries `items` leaves out for the per-session limit, counted as the overview counts listed ones (a row
+     * that stands for several entries counts each); absent when it lists them all.
+     */
+    hiddenItems?: number;
 }
 
 /** How far back, and how many, decisions answered outside the widget the snapshot carries. */
@@ -372,6 +397,11 @@ export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
  * unread entries keep their places, so a session with many waiting decisions still shows its newest answer in the
  * newest-first feed.
  */
+/** How many entries some rows stand for: a row with `count` stands for that many, the overview's `representedCount`. */
+function representedEntries(items: readonly WidgetInboxItem[]): number {
+    return items.reduce((total, item) => total + Math.max(1, item.count ?? 1), 0);
+}
+
 export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
     const newest = (a: WidgetInboxItem, b: WidgetInboxItem) => b.at - a.at;
     const waiting = items.filter((item) => item.needsAnswer).sort(newest);
@@ -400,6 +430,12 @@ export interface WidgetInboxSummary {
      * The widget shows each new one, and its settings list them (Automatic decisions).
      */
     answeredElsewhere: WidgetInboxItem[];
+    /**
+     * The answers and messages already read in the last `previewReadHours` hours, newest first, at most
+     * `RECENTLY_READ_MAX`; empty while that setting is 0. The Items list shows them dimmed below the unread entries,
+     * and no count, badge or alert includes them.
+     */
+    recentlyRead: WidgetInboxItem[];
     /** Uncapped open or drafted decision IDs; optional for older producers. Authoritative only when complete. */
     pendingDecisionIDs?: string[];
     profile?: { hostId: "local" };
@@ -644,6 +680,7 @@ export const realWidgetSources: WidgetSources = {
     agents: (refresh) => widgetAgents({ refresh }),
     inboxKinds: readInboxKinds,
     inboxData: readInboxData,
+    recentlyRead: (since) => readRecentlyReadEntries({ since }),
     events: (ids) => readWidgetDecisionEvents({ ids }),
     excerpts: widgetExcerpts,
     excerptRound: () => widgetExcerptReads.nextRound(),
@@ -715,9 +752,35 @@ export function widgetMessageBody(body: string, title: string): string {
     return withoutLeadingLine(cleanVisibleContext(body), title);
 }
 
-function messageOrigin(project: string, sender?: string | null): string {
-    return [project, sender].filter(Boolean).join(" · ") || "External sender";
+/** An answer or message of the Q→A log as an inbox item: its title, and its message text or its reply preview. */
+function answerInboxItem(row: RecentlyReadEntry, key: string): WidgetInboxItem {
+    const title = widgetTitle(row.itemTitle);
+    const message =
+        row.itemTag === "message"
+            ? {
+                  text: widgetMessageBody(
+                      sliceWhole(row.messageText ?? "", MESSAGE_PREVIEW_CHARS),
+                      row.itemTitle ?? ""
+                  ),
+                  ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
+                  ...(row.sessionId === EXTERNAL_SESSION_ID
+                      ? { origin: externalMessageOrigin(row.project, row.sender) }
+                      : {}),
+              }
+            : undefined;
+    return {
+        id: `answer:${row.id}`,
+        sourceId: row.id,
+        kind: "answer",
+        key,
+        at: row.at,
+        needsAnswer: false,
+        ...(title ? { title } : {}),
+        ...(message ? { tag: "message" as const, message } : {}),
+        ...(!message && row.reply ? { reply: row.reply } : {}),
+    };
 }
+
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
 }
@@ -848,6 +911,7 @@ export function decisionSummary(row: DecisionRecord): { summary?: string } {
 }
 
 const SUMMARY_LIMIT = 600;
+const HOUR_MS = 3_600_000;
 
 export async function widgetSnapshot({
     root,
@@ -960,6 +1024,12 @@ export async function widgetSnapshot({
               complete: false,
               truncated: true,
           };
+    const readHours = state.preferences.previewReadHours;
+    const recentlyReadSource = sources.recentlyRead;
+    const readRows =
+        readHours > 0 && recentlyReadSource
+            ? await read("read inbox items", () => recentlyReadSource(now - readHours * HOUR_MS), [])
+            : [];
     const sessions = new Map<string, WidgetSession>();
     // The sessions by the fields the lookups below match on. Each lookup copied and scanned every session, for every
     // agent node and inbox row: about 85 ms of a 168 ms warm snapshot with 1,450 sessions (2026-11-05). A session's
@@ -1058,6 +1128,16 @@ export async function widgetSnapshot({
             (entry) => provider === undefined || entry.target.provider === provider
         );
         return matches.length === 1 ? matches[0] : undefined;
+    };
+    /** The agent that stored an answer, with the widget key of its session when the roster knows it. */
+    const answeredByOf = (record: CallerRecord | undefined): { answeredBy?: WidgetAnsweredBy } => {
+        if (!record) {
+            return {};
+        }
+
+        const brief = callerBrief(record);
+        const sessionKey = brief.session ? findSession(brief.session, brief.harness)?.key : undefined;
+        return { answeredBy: { ...brief, ...(sessionKey ? { sessionKey } : {}) } };
     };
     const findInboxSession = (row: { sessionId: string; provider: string; cwd: string }) =>
         findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
@@ -1430,33 +1510,20 @@ export async function widgetSnapshot({
         if (items === 0) {
             continue;
         }
-        const title = widgetTitle(row.itemTitle);
-        const message =
-            row.itemTag === "message"
-                ? {
-                      text: widgetMessageBody(
-                          sliceWhole(row.messageText ?? "", MESSAGE_PREVIEW_CHARS),
-                          row.itemTitle ?? ""
-                      ),
-                      ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
-                      ...(row.sessionId === "unknown" ? { origin: messageOrigin(row.project, row.sender) } : {}),
-                  }
-                : undefined;
-        putInbox(
-            session,
-            {
-                id: `answer:${row.id}`,
-                sourceId: row.id,
-                kind: "answer",
-                key: session.key,
-                at: row.at,
-                needsAnswer: false,
-                ...(title ? { title } : {}),
-                ...(message ? { tag: "message" as const, message } : {}),
-                ...(!message && row.reply ? { reply: row.reply } : {}),
-            },
-            items
-        );
+        putInbox(session, answerInboxItem(row, session.key), items);
+    }
+    // The answers and messages already read in the Items list's window. They take no session of their own: a row whose
+    // session the roster does not hold keeps its key and shows without one, as an external sender's message does.
+    const recentlyRead: WidgetInboxItem[] = [];
+    for (const row of readRows) {
+        if (!kinds[row.itemTag === "message" ? "message" : "answer"].show) {
+            continue;
+        }
+
+        const key =
+            findInboxSession(row)?.key ??
+            widgetSessionKey(targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id));
+        recentlyRead.push({ ...answerInboxItem(row, key), read: true });
     }
     /** What the listed answer groups counted, plus the recent answers of the groups past the row limit. */
     let unreadAnswers = countedAnswers;
@@ -1568,6 +1635,7 @@ export async function widgetSnapshot({
             ...(row.option ? { option: row.option } : {}),
             ...(answer ? { answer: sliceWhole(answer, 300) } : {}),
             answeredVia: via,
+            ...answeredByOf(row.answeredBy),
         });
     }
     answeredElsewhere.sort((a, b) => b.at - a.at);
@@ -1631,8 +1699,14 @@ export async function widgetSnapshot({
         sessions: [...inboxSessions.values()]
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
             .slice(0, 512)
-            .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
+            .map((entry) => {
+                const all = entry.items ?? [];
+                const items = listedInboxItems(all);
+                const hiddenItems = representedEntries(all) - representedEntries(items);
+                return { ...entry, items, ...(hiddenItems > 0 ? { hiddenItems } : {}) };
+            }),
         staged,
+        recentlyRead,
         ...(decisionsComplete
             ? {
                   pendingDecisionIDs: decisions
@@ -1745,8 +1819,8 @@ export async function widgetSnapshot({
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
-            ...(row.tag === "message" && row.sessionId === "unknown"
-                ? { messageOrigin: messageOrigin(row.project, row.agentLabel?.trim() || row.source) }
+            ...(row.tag === "message" && row.sessionId === EXTERNAL_SESSION_ID
+                ? { messageOrigin: externalMessageOrigin(row.project, row.agentLabel?.trim() || row.source) }
                 : {}),
             ...(!inboxKind(kinds, row.tag === "message" ? "message" : "answer").show
                 ? { hiddenFromInbox: true as const }
@@ -1883,6 +1957,7 @@ export async function widgetSnapshot({
             ...stagedOf(row),
             ...(row.comments?.length ? { comments: row.comments } : {}),
             ...(row.answeredVia ? { answeredVia: row.answeredVia } : {}),
+            ...answeredByOf(row.answeredBy),
             ...supersededBy(row),
         });
     }
