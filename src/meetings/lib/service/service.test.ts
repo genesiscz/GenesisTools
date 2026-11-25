@@ -15,6 +15,8 @@ import { toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
+import type { AreaClients } from "@genesiscz/utils/genesis-tools";
+import { createRequestJournal, type RequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
@@ -44,6 +46,7 @@ import { z } from "zod";
 import { renderLook } from "../../commands/look";
 import { registerServeCommand } from "../../commands/serve";
 
+import * as acoustic from "../acoustic";
 import { CallTimeline } from "../call-timeline";
 import { MeetingComments } from "../comments";
 import { DecisionJournal } from "../decision-journal";
@@ -52,6 +55,7 @@ import { ocrPath } from "../frame-index";
 import { lookMeeting } from "../look";
 import { screenTextChanges } from "../look-screen";
 import { OpenedMeeting } from "../opened-meeting";
+import { confirmVoiceSample } from "../person-door";
 import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
@@ -3059,6 +3063,59 @@ describe("the Meetings service's connections", () => {
             SocketMeetingsClient.connect(service.entry, { ...hello, code: "ffffffffffff" })
         );
         expect(otherCode.message).toBe(`the meetings service runs the code of another checkout (${CODE})`);
+    });
+
+    test("an agent's voice.enroll saves only a sample the user confirmed in the window, also from a script on the socket (D443)", async () => {
+        const requests = createRequestJournal({ dir: mkdtempSync(join(tmpdir(), "voice-sample-requests-")) });
+        const { service } = await startService({ deps: { requests: () => requests } });
+        const saved = spyOn(acoustic, "voiceMeeting").mockRejectedValue(
+            new Error("the sample reached the voice store")
+        );
+        closing.push(() => saved.mockRestore());
+        const agent = await SocketMeetingsClient.connect(service.entry, agentHello);
+        const person = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(
+            () => agent.close(),
+            () => person.close()
+        );
+        const declined = { meeting: REVIEW.id, fromSec: 12, toSec: 18, channel: 0 as const, person: "Alex Example" };
+        const confirmed = { ...declined, fromSec: 20, toSec: 26 };
+        // The person area over a scratch journal: the window the client's run opens, answered at once.
+        type Confirm = AreaClients["person"]["confirm"];
+        const answered = (requests: RequestJournal, status: "done" | "declined") => ({
+            person: {
+                confirm: async (input: Parameters<Confirm>[0]): ReturnType<Confirm> => {
+                    const { view } = await requests.postOnce({ input });
+                    const value = await requests.settle(view.id, status, null, { via: "native" });
+                    return { status: "ran", via: "native", skipped: [], value };
+                },
+            },
+        });
+        const call = (client: SocketMeetingsClient, sample: typeof declined) =>
+            failure(client.call("voice.enroll", { ...sample, confirmed: true }));
+
+        // Unasked: the agent's own confirmed: true is not the user's word, and nothing reaches the voice store.
+        const unasked = await call(agent, confirmed);
+        expect(unasked).toMatchObject({ code: "wrong-actor" });
+        expect(unasked.message).toContain(
+            "tools meetings voices enroll 2026-11-03-1000-design-review --from 20 --to 26"
+        );
+        // The user answered Not now for one interval and Confirm sample for the other, in the window a client opened.
+        for (const [sample, status] of [
+            [declined, "declined"],
+            [confirmed, "done"],
+        ] as const) {
+            const ask = () => ({ record: REVIEW, ...sample, rerun: "the same voice.enroll call" });
+            const agentActor = { kind: "agent" as const, harness: "claude-code", session: agentHello.session ?? null };
+            await confirmVoiceSample({ actor: agentActor, confirmed: true, ask, gt: answered(requests, status) });
+        }
+        expect(await call(agent, declined)).toMatchObject({ code: "wrong-actor" });
+        expect(saved).not.toHaveBeenCalled();
+        expect((await call(agent, confirmed)).message).toContain("the sample reached the voice store");
+        expect(saved).toHaveBeenCalledTimes(1);
+        // A person's --confirmed stays their own word and asks no journal.
+        expect((await call(person, declined)).message).toContain("the sample reached the voice store");
+        expect(saved).toHaveBeenCalledTimes(2);
     });
 
     test("a subscription before hello is refused without registering it", async () => {

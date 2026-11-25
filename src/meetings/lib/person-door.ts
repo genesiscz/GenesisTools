@@ -2,6 +2,7 @@ import type { AgentInstructionSeverity, AgentInstructions } from "@genesiscz/uti
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
+import type { RequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import type { NoticeInput } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
@@ -94,6 +95,19 @@ export type VoiceSampleConfirmation =
 /** One person request per meeting, interval, person and channel: an agent's run again reads the user's answer. */
 export function voiceSampleRequestId(ask: Omit<VoiceSampleAsk, "rerun">): string {
     return `voice-sample:${sha256Json([ask.record.id, ask.fromSec, ask.toSec, ask.person.trim(), ask.channel ?? null])}`;
+}
+
+/**
+ * Whether the user confirmed this sample in the window an agent's run opened (D443), read from the person area's
+ * request journal and never from the caller's word. The service checks it before it saves an agent's enrolment, so a
+ * script that talks to the service socket itself cannot save a sample the user did not confirm.
+ */
+export function userConfirmedVoiceSample(
+    ask: Omit<VoiceSampleAsk, "rerun">,
+    requests: Pick<RequestJournal, "get">
+): { confirmed: boolean; request: string } {
+    const request = voiceSampleRequestId(ask);
+    return { confirmed: requests.get(request)?.outcome.status === "done", request };
 }
 
 /** The command that plays the interval, so the user hears it before confirming. */
