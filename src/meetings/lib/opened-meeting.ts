@@ -98,7 +98,7 @@ interface JoinedPartView {
 
 /** One recording of a joined record as it was before the join (`OpenedMeeting.recordingReading`). */
 export interface PartReading {
-    /** That recording on its own clock, with the joined record's items of it moved back onto that clock. */
+    /** That recording on its own clock and lines, with the joined record's items of it moved back onto them. */
     opened: OpenedMeeting;
     offsetMs: number;
     toJoinedSec: (sec: number) => number;
@@ -674,7 +674,8 @@ export class OpenedMeeting {
 
     private readingOf(view: JoinedPartView): PartReading {
         const offsetMs = view.part.offsetMs;
-        const back = clockMove(-offsetMs);
+        // The items' line addresses count on the joined transcript; this part's own transcript starts at its first line.
+        const back = clockMove(-offsetMs, -(view.part.firstLine ?? 0));
         const inside = (sec: number | undefined) => sec !== undefined && sec >= view.fromSec && sec < view.untilSec;
         const where = (item: MeetingRecord["items"][number]) => ("fromSec" in item ? item.fromSec : item.atSec);
         const assignments = (this.current.speakers.assignments ?? []).filter((one) => inside(one.fromSec));

@@ -371,22 +371,28 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         ui.ok(
             `${result.dryRun ? "Would write" : "Wrote"} the source sound of ${result.meeting} again: ${result.slot}.`
         );
-        result.joinedFile && ui.dim(`  the whole meeting as one file: ${result.joinedFile}`);
-        result.backup && ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
-        return;
     }
 
     const sound = result.sound;
-    ui.ok(
-        `${result.dryRun ? "Would move" : "Moved"} the later recordings' sound into ${result.meeting}: ${sound?.pieces ?? 0} recorder files, ${sound?.rows ?? 0} index lines, ${sound?.levels ?? 0} level rows.`
-    );
 
-    for (const recording of sound?.recordings ?? []) {
-        ui.dim(`  source recording of ${recording.record} at ${formatClock(recording.offsetMs / 1000)}`);
+    if (sound) {
+        ui.ok(
+            `${result.dryRun ? "Would move" : "Moved"} the later recordings' sound into ${result.meeting}: ${sound.pieces} recorder files, ${sound.rows} index lines, ${sound.levels} level rows.`
+        );
+
+        for (const recording of sound.recordings) {
+            ui.dim(`  source recording of ${recording.record} at ${formatClock(recording.offsetMs / 1000)}`);
+        }
     }
 
     if (result.joinedFile) {
         ui.dim(`  the whole meeting as one file: ${result.joinedFile}`);
+    }
+
+    if (result.lines) {
+        ui.ok(
+            `${result.dryRun ? "Would move" : "Moved"} ${result.lines.moved} line addresses of the later recordings onto the joined transcript's lines${result.lines.unplaced ? `; ${result.lines.unplaced} name no line of their item and stay` : ""}.`
+        );
     }
 
     if (result.backup) {

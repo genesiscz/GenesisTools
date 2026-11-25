@@ -85,10 +85,21 @@ import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { appliedLine, itemWhat } from "./lib/item-text";
-import { clockMove, joinGapAt, joinPartAt, movedValue, type PartMove, toJoinedSec, toPartSec } from "./lib/join-clock";
+import {
+    clockMove,
+    hasLaterLineAddresses,
+    joinedLineAddresses,
+    joinGapAt,
+    joinPartAt,
+    movedValue,
+    type PartMove,
+    toJoinedSec,
+    toPartSec,
+} from "./lib/join-clock";
 import { joinedTranscript } from "./lib/joined-source";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { askProjectAtEnd } from "./lib/meeting-end";
+import { OpenedMeeting } from "./lib/opened-meeting";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { answerQuestion, propagateAnswer, skipQuestion, splitQuestion } from "./lib/question-answers";
@@ -8827,5 +8838,112 @@ describe("meetings join: one clock for two recordings", () => {
             [655.273, undefined, "m-a"],
             [657.273, 662.273, "m-a"],
         ]);
+    });
+
+    test("a later recording's line addresses move by the lines before it, and a move back subtracts them", () => {
+        const move: PartMove = { ...clockMove(654273), lineBase: 45 };
+        const saved: unknown = {
+            evidence: { transcriptLine: 3 },
+            reach: { lines: [{ atSec: 2, line: 4 }] },
+            action: { findings: [{ from: 1, to: 2, line: 5 }] },
+        };
+        const moved = movedValue(saved, move);
+        expect(moved).toEqual({
+            evidence: { transcriptLine: 48 },
+            reach: { lines: [{ atSec: 656.273, line: 49 }] },
+            action: { findings: [{ from: 655.273, to: 656.273, line: 50 }] },
+        });
+        expect(movedValue(moved, clockMove(-654273, -45))).toEqual(saved);
+        // A sound file's clock moves the seconds only: its lines are the record's.
+        expect(movedValue({ evidence: { transcriptLine: 3 } }, clockMove(1000))).toEqual({
+            evidence: { transcriptLine: 3 },
+        });
+    });
+
+    describe("line addresses of a joined record", () => {
+        const part = (record: string, offsetMs: number, endSec: number) => ({
+            record,
+            title: "Fixture",
+            sourceId: "wisprflow",
+            sourceMeetingId: `m-${record}`,
+            zeroAt: new Date(Date.UTC(2026, 10, 1, 10) + offsetMs).toISOString(),
+            offsetMs,
+            endSec,
+        });
+        const parts = [part("2026-11-01_10-00-a", 0, 30), part("2026-11-01_10-10-b", 600_000, 640)];
+        const join = { version: 2 as const, at: "2026-11-01T12:00:00Z", backup: "/backup", parts };
+        const lines = (labels: string[]) =>
+            labels.map((speaker, index) => ({ speaker, startSec: index * 10, text: `line ${index}` }));
+        const transcript = [
+            ...joinedTranscript(parts[0]!, lines(["Alice Example", "Bob Example", "Alice Example"])),
+            ...joinedTranscript(parts[1]!, lines(["Alice Example", "Bob Example", "Alice Example"])),
+        ];
+        const range = (id: string, label: string, sec: number, transcriptLine: number) =>
+            meetingItemSchema.parse({
+                id,
+                kind: "speaker-range",
+                status: "suggested",
+                label,
+                fromSec: sec,
+                toSec: sec,
+                speaker: "Carol Example",
+                rules: [MeetingRule.Attendance],
+                evidence: { transcriptLine },
+                suggestedAt: "2026-11-01T12:00:00.000Z",
+            });
+
+        test("a repair moves only the addresses a join left on their own recording's lines", () => {
+            const items = [
+                // The first recording's lines are the joined transcript's first lines.
+                range("i1", "Bob Example", 10, 1),
+                // Left on the later recording's own line 1 by a join before line addresses moved.
+                range("i2", "Bob Example", 610, 1),
+                // Written by a pass on the joined record: on the joined lines already.
+                range("i3", "Alice Example", 620, 5),
+                // Names no line of its item either way.
+                range("i4", "Bob Example", 630, 7),
+                meetingItemSchema.parse({
+                    id: "i5",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "line",
+                    proposed: "Line",
+                    reach: { lines: [{ atSec: 600, line: 0 }] },
+                    suggestedAt: "2026-11-01T12:00:00.000Z",
+                }),
+            ];
+            expect(hasLaterLineAddresses({ join, items })).toBe(true);
+            expect(hasLaterLineAddresses({ join, items: items.slice(0, 1) })).toBe(false);
+
+            const repaired = joinedLineAddresses({ join, items }, transcript);
+            expect(repaired.parts.map((one) => one.firstLine)).toEqual([0, 3]);
+            expect(repaired.items.map((item) => item.evidence?.transcriptLine)).toEqual([1, 4, 5, 7, undefined]);
+            expect(repaired.items[4]).toMatchObject({ reach: { lines: [{ atSec: 600, line: 3 }] } });
+            expect({ moved: repaired.moved, unplaced: repaired.unplaced }).toEqual({ moved: 2, unplaced: 1 });
+        });
+
+        test("a reading of one recording counts its items' addresses from that recording's first line", () => {
+            const record = (withFirstLine: boolean) =>
+                meetingRecordSchema.parse({
+                    id: parts[0]!.record,
+                    title: "Planning",
+                    start: "2026-11-01T10:00:00.000Z",
+                    createdAt: "2026-11-01T10:00:00.000Z",
+                    createdBy: "new",
+                    version: 2,
+                    join: {
+                        ...join,
+                        parts: parts.map((one, index) => (withFirstLine ? { ...one, firstLine: index * 3 } : one)),
+                    },
+                    items: [range("i2", "Bob Example", 610, 4)],
+                });
+            const read = (withFirstLine: boolean) =>
+                OpenedMeeting.of(new MeetingStore(), record(withFirstLine)).recordingReading(parts[1]!.record)?.opened
+                    .record.items[0];
+
+            expect(read(true)).toMatchObject({ fromSec: 10, evidence: { transcriptLine: 1 } });
+            // A record joined before firstLine keeps the addresses as they are until `join --repair` moves them.
+            expect(read(false)).toMatchObject({ fromSec: 10, evidence: { transcriptLine: 4 } });
+        });
     });
 });

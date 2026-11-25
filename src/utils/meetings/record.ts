@@ -545,6 +545,13 @@ export const joinPartSchema = z.object({
     offsetMs: z.number().int().nonnegative(),
     /** The end of the part's last line on the joined clock: the gap to the next part starts here. */
     endSec: z.number().nonnegative(),
+    /**
+     * The index of the part's first line in the joined transcript (the count of the lines of the parts before it). A
+     * line address (an item's `transcriptLine`) counts from the joined transcript's first line, so a reading of this
+     * part alone subtracts it. Absent on a record joined before line addresses moved with the join: its later
+     * recording's addresses may still count from that recording's own first line until `meetings join --repair`.
+     */
+    firstLine: z.number().int().nonnegative().optional(),
     /** The part's preserved source audio as the part kept it; since `JOIN_SOUND_MERGED`, a piece of `audio.sources`. */
     audio: sourceAudioFileSchema.optional(),
     /** The part's own channel calibration, as the record it was stored it. */
