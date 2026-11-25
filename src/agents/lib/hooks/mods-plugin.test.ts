@@ -24,8 +24,9 @@ import {
 } from "../../../../plugins/genesis-tools-mods/hooks/sections";
 import { MODS_DEFAULTS, modsSettings } from "../../../../plugins/genesis-tools-mods/hooks/settings";
 import { overflowPart } from "./diff/full";
-import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
+import { MOD_MAX_PATCH_CHARS, MODS_SCRIPT_ROWS_VAR, MODS_SESSION_VAR } from "./diff/run";
 import { MOD_SWITCHES, modSwitchKeys } from "./mods";
+import { HARNESS_HOOK_FACTS } from "./payload";
 
 const NOTE = [
     "# Diff of toolu_x",
@@ -65,6 +66,15 @@ describe("the mod's session mark", () => {
             "utf8"
         );
         expect(source).toContain(`$.env.set("${MODS_SESSION_VAR}", id)`);
+    });
+
+    it("marks script-call rows under the hook's variable and the Claude script-call prefix", () => {
+        const source = readFileSync(
+            join(import.meta.dir, "../../../../plugins/genesis-tools-mods/hooks/register.tsx"),
+            "utf8"
+        );
+        expect(source).toContain(`$.env.set("${MODS_SCRIPT_ROWS_VAR}", id)`);
+        expect(source).toContain(`const SCRIPT_CALL_PREFIX = "${HARNESS_HOOK_FACTS.claude.scriptCalls?.prefix}";`);
     });
 
     it("shares the hook's patch budget, so a call the mod cannot draw keeps its full-diff link", () => {

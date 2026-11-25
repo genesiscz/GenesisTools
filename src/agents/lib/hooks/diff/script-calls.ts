@@ -7,7 +7,11 @@ import { scriptCallStampPath } from "../paths";
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
-/** Whether the harness draws this terminal call as a tool row of its own; a code-mode script's shell call has none. */
+/**
+ * Whether the call's id is a tool call the model made itself, not a code-mode script's call. A script's call draws as a
+ * row of its own too (Claude Code adds it to the transcript as a virtual tool call), but the hook leaves its diff to the
+ * mod only once the mod marked that such rows draw in this session (`MODS_SCRIPT_ROWS_VAR` in run.ts).
+ */
 export function callHasOwnRow(facts: HookFacts, toolUseId: string | undefined): boolean {
     const ids = facts.scriptCalls;
 
