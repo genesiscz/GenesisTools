@@ -129,11 +129,14 @@ function chunksOf(body: string): { title: string; chunks: Chunk[] } {
  * Turns a polished markdown with no `.polished.ts` (written by hand, or a built one whose module is gone) into a
  * polished config. `records` names the meeting record of each part when the front matter does not; `resolve` maps a
  * meeting reference (a record id, an older id a join absorbed) to its record id, or undefined when there is none.
+ * `allLinks` also turns a play link of an older id or another time form (`6:07`) into a token, so the first build
+ * rewrites it to the part's record id.
  */
 export function adoptPolishedMarkdown(options: {
     markdown: string;
     records?: string[];
     resolve?: (ref: string) => string | undefined;
+    allLinks?: boolean;
 }): { config: MeetingsPolishedInput; report: AdoptReport } {
     const report: AdoptReport = { mapped: [], kept: [], notes: [] };
     const { body: unstamped, stamp } = stripStamp(options.markdown);
@@ -192,9 +195,24 @@ export function adoptPolishedMarkdown(options: {
     const tokens = records.length === 1 ? ["t"] : records.map((_record, index) => String.fromCharCode(97 + index));
     const parts: Json[] = records.map((record, index) => ({ record, token: tokens[index] }));
     const tokenOfRecord = new Map(records.map((record, index) => [record, tokens[index]!]));
-    // Only a link the build writes back as it is becomes a token: its meeting is the part's record id and its time is
-    // written the build's way (`06:07`). An older id or `6:07` stays as written, so the first build changes no link.
-    const links = { tokens: 0, kept: 0 };
+    // By default only a link the build writes back as it is becomes a token: its meeting is the part's record id and its
+    // time is written the build's way (`06:07`). An older id or `6:07` stays as written, so the first build changes no
+    // link. With allLinks, a link whose meeting resolves to a part's record at the label's second is a token too.
+    const links = { tokens: 0, rewritten: 0, kept: 0 };
+    const resolved = new Map<string, string | undefined>();
+    const recordOf = (meeting: string) => {
+        if (!resolved.has(meeting)) {
+            try {
+                resolved.set(meeting, resolve(meeting));
+            } catch (error) {
+                // A link's id that fits several records names no part: it stays as written, and the report says why.
+                resolved.set(meeting, undefined);
+                report.notes.push(`The play links of "${meeting}" stay as written: ${String(error)}`);
+            }
+        }
+
+        return resolved.get(meeting);
+    };
     const tokenize = (text: string) =>
         text
             .split(FENCE_RE)
@@ -203,15 +221,27 @@ export function adoptPolishedMarkdown(options: {
                     ? piece
                     : piece.replace(PLAY_LINK, (whole, label: string, href: string) => {
                           const link = playLinkOf(href);
-                          const token = link ? tokenOfRecord.get(link.meeting) : undefined;
                           const atSec = parseClock(label);
 
-                          if (!link || !token || atSec === undefined || link.at !== formatClock(atSec)) {
+                          if (!link || atSec === undefined) {
+                              links.kept += 1;
+                              return whole;
+                          }
+
+                          const exact = link.at === formatClock(atSec) ? tokenOfRecord.get(link.meeting) : undefined;
+                          const loose =
+                              !exact && options.allLinks && parseClock(link.at) === atSec
+                                  ? recordOf(link.meeting)
+                                  : undefined;
+                          const token = exact ?? (loose ? tokenOfRecord.get(loose) : undefined);
+
+                          if (!token) {
                               links.kept += 1;
                               return whole;
                           }
 
                           links.tokens += 1;
+                          links.rewritten += exact ? 0 : 1;
                           return `[[${token}:${label}]]`;
                       })
             )
@@ -303,9 +333,17 @@ export function adoptPolishedMarkdown(options: {
         );
     }
 
-    report.notes.push(
-        `Play links: ${links.tokens} became [[<token>:MM:SS]] tokens${links.kept > 0 ? `, ${links.kept} stay as written (their meeting is not a part's record id, or their time is not written as the build writes it, such as 6:07 for 06:07)` : ""}.`
-    );
+    const rewritten =
+        links.rewritten > 0
+            ? ` (${links.rewritten} of an older id or another time form: the first build rewrites them to the record id)`
+            : "";
+    const kept =
+        links.kept === 0
+            ? ""
+            : options.allLinks
+              ? `, ${links.kept} stay as written (their meeting is no part's record, or the link plays another second than its label)`
+              : `, ${links.kept} stay as written (their meeting is not a part's record id, or their time is not written as the build writes it, such as 6:07 for 06:07; --all-links makes the ones of a part's meeting tokens too)`;
+    report.notes.push(`Play links: ${links.tokens} became [[<token>:MM:SS]] tokens${rewritten}${kept}.`);
 
     const result = meetingsPolishedSchema.safeParse(config);
 

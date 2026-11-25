@@ -265,7 +265,8 @@ export interface PolishInitResult {
 
 /**
  * `tools meetings polish init --from <draft.json | polished.md>`: writes a NEW `.polished.ts`, once, from a draft JSON
- * or from a polished markdown that has none (`records` names its parts when the markdown does not). The markdown stays
+ * or from a polished markdown that has none (`records` names its parts when the markdown does not; `allLinks` makes its
+ * play links of an older id or another time form tokens too). The markdown stays
  * where it is, and the module builds it again. Refuses to overwrite an existing file; writes nothing when the adopted
  * config does not validate.
  */
@@ -273,6 +274,7 @@ export async function initPolished(options: {
     from: string;
     out?: string;
     records?: string[];
+    allLinks?: boolean;
     store?: MeetingStore;
 }): Promise<PolishInitResult> {
     const from = isAbsolute(options.from) ? options.from : resolve(process.cwd(), options.from);
@@ -291,6 +293,10 @@ export async function initPolished(options: {
         throw new Error("--record names the parts of a polished markdown; a draft JSON lists its own parts.");
     }
 
+    if (!markdown && options.allLinks) {
+        throw new Error("--all-links reads the play links of a polished markdown; a draft JSON has its own tokens.");
+    }
+
     const text = await Bun.file(from).text();
     const store = markdown ? (options.store ?? new MeetingStore()) : undefined;
     const { config, report } = store
@@ -298,6 +304,7 @@ export async function initPolished(options: {
               markdown: text,
               records: options.records,
               resolve: (ref) => meetingAddress(store, ref)?.record.id,
+              allLinks: options.allLinks,
           })
         : adoptPolishedDraft(SafeJSON.parse(text));
 

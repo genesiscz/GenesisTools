@@ -233,6 +233,33 @@ describe("adoptPolishedMarkdown", () => {
         ).toBe(true);
         expect(report.notes.some((note) => note.startsWith("waiting_for"))).toBe(true);
         expect(report.notes.some((note) => note.startsWith("sessions"))).toBe(true);
+
+        // --all-links: a link of an older id or another time form at its label's second is a token too.
+        const all = adoptPolishedMarkdown({ markdown, resolve: (ref) => aliases[ref], allLinks: true });
+
+        expect(all.config.summary?.md).toBe("- Decided [[t:1:00:05]] at [[t:6:07]].");
+        expect(all.config.glossary?.md).toBe(
+            `- **API**: heard as apí [[t:00:10]], elsewhere ${play("other", "00:11")}`
+        );
+        expect(all.report.notes).toContain(
+            "Play links: 5 became [[<token>:MM:SS]] tokens (2 of an older id or another time form: the first build rewrites them to the record id), 1 stay as written (their meeting is no part's record, or the link plays another second than its label)."
+        );
+        expect(
+            adoptPolishedMarkdown({ markdown: markdown.replace("at=6%3A07", "at=06%3A00"), allLinks: true }).config
+                .summary?.md
+        ).toContain(play("rec-1", "6:07").replace("at=6%3A07", "at=06%3A00"));
+        const ambiguous = adoptPolishedMarkdown({
+            markdown,
+            allLinks: true,
+            resolve: (ref) => {
+                if (ref === "other") {
+                    throw new Error("fits 2 meetings");
+                }
+
+                return aliases[ref];
+            },
+        });
+        expect(ambiguous.report.notes).toContain('The play links of "other" stay as written: Error: fits 2 meetings');
         expect(() =>
             adoptPolishedMarkdown({
                 markdown: markdown.replace("meeting_record: rec-1\n", ""),
