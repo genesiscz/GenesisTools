@@ -284,6 +284,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
 
     const startMs = Date.now();
     let exitCode = 1;
+    let durationMs = 0;
     let spawnFailed = false;
 
     try {
@@ -302,7 +303,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
         // on disk and downstream readers can't tell it's dead. On a throw the
         // exit code stays at 1 (the initial value) which matches the rethrown
         // error path the caller will see.
-        const durationMs = Date.now() - startMs;
+        durationMs = Date.now() - startMs;
         try {
             jsonl.append({
                 type: "exit",
@@ -327,7 +328,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
 
     return {
         exitCode,
-        durationMs: Date.now() - startMs,
+        durationMs,
         session,
         requestedSession: resolved.requested,
         renamed: resolved.renamed,

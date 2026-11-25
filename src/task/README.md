@@ -312,7 +312,6 @@ the command in a detached worker:
   worker mirrors every chunk to its own stdout and stderr.
 - That file grows on every detached run of the same name, and neither `clean` nor the GC removes it, so it outlives
   its session. Delete `~/.genesis-tools/task/sessions/<name>.worker.log` yourself.
-- The `ended (code N, 0s)` summary always shows `0s` in this mode. `get` shows the real duration.
 
 ### One rolling log per check (append mode)
 

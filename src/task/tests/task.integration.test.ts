@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTaskJsonl, runTaskCapture } from "@app/task/lib/test-harness";
+import { readTaskJsonl, runTaskCapture, runTaskCli } from "@app/task/lib/test-harness";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -55,5 +55,27 @@ describe("task integration", () => {
         // Exactly one ERR1, attributed to stderr.
         const stderrTexts = lines.filter((l) => l.out === "stderr").map((l) => l.text);
         expect(stderrTexts).toEqual(["ERR1"]);
+    }, 30_000);
+
+    it("the end line of a run shows the same duration `get` shows, not 0s", async () => {
+        // The test's pipes are neither a terminal, so `run` takes the detached-worker path, whose end
+        // line used to be printed with a fixed 0 ms. `sleep 0.6` rounds to at least 1s, never 0s.
+        const homeDir = mkdtempSync(join(tmpdir(), "task-int-"));
+        dirs.push(homeDir);
+        const session = `test-duration-${Date.now()}`;
+
+        const run = await runTaskCli(["run", "--session", session, "--no-tty", "--", "bash", "-c", "sleep 0.6"], {
+            homeDir,
+        });
+        const get = await runTaskCli(["get", "--session", session], { homeDir });
+
+        expect(run.exitCode).toBe(0);
+
+        const endedDuration = run.stderr.match(/Session \S+ ended \(code 0, ([^)]+)\)/)?.[1];
+        const getDuration = get.stderr.match(/exited \(code 0, ([^)]+)\)/)?.[1];
+
+        expect(endedDuration).toBeDefined();
+        expect(endedDuration).not.toBe("0s");
+        expect(endedDuration).toBe(getDuration);
     }, 30_000);
 });
