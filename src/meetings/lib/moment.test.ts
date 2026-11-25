@@ -55,8 +55,8 @@ import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 import * as screenBoxes from "./screen-boxes";
 import { preservedSourceAudio, preserveSourceAudio, recordSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
-import { readSourceCopy } from "./source-copy";
-import { localMeetingTranscript } from "./sources";
+import { copyBackedSource, readSourceCopy, recordingCopyFolder } from "./source-copy";
+import { localMeetingTranscript, recordingCopyHolder } from "./sources";
 import { resolveToneSound } from "./tone-sound";
 import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
 import { meetingWordTimingCache } from "./word-timings";
@@ -1870,6 +1870,24 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         expect(await localMeetingTranscript(record, fx.store)).toEqual(copy!.value.transcript);
         expect(fx.opened).toHaveLength(opens);
         expect(record.history.at(-1)?.change).toContain("the joined transcript (10 lines)");
+
+        // Each recording keeps its own copy beside the joined one: its own lines, labels and clock, as it answered alone.
+        for (const [index, id] of ["abc", "def"].entries()) {
+            const part = record.join!.parts[index]!;
+            const holder = recordingCopyHolder(fx.store, part, record.id);
+            const own = await recordingFake(id).load(id);
+            const lost: TranscriptSource = {
+                ...recordingFake(id),
+                load: () => Promise.reject(new Error(`the provider lost ${id}`)),
+                recordingClock: () => Promise.reject(new Error(`the provider lost ${id}`)),
+            };
+
+            expect(holder).toBe(recordingCopyFolder(fx.keptFolder, id));
+            expect(await copyBackedSource(lost, holder, { save: false }).load(id)).toEqual(own);
+            expect(await copyBackedSource(lost, holder, { save: false }).recordingClock(id)).toEqual({
+                startedAt: at(index * 600),
+            });
+        }
 
         const listing = fx.listing();
         const again = await repairJoin({ store: fx.store, ref: fx.record.id, open: fx.open, backupRoot, encode });

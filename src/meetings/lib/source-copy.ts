@@ -372,6 +372,21 @@ export function copyBackedSource(
     };
 }
 
+/** A source meeting id as a folder name: itself when it is a plain name, else its digest. */
+function folderName(id: string): string {
+    return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) ? id : createHash("sha256").update(id).digest("hex");
+}
+
+/**
+ * Where a joined record keeps one recording's own copy (what that recording's source answered alone), beside the
+ * joined copy that took the place of the first recording's copy in its folder. It is a folder that holds a
+ * `source-copy/` folder, as a record folder does, so every function here reads it; it sits inside the joined record's
+ * own `source-copy/`, so the watchers and the window's revisions skip it as they skip the copy.
+ */
+export function recordingCopyFolder(recordFolder: string, sourceMeetingId: string): string {
+    return join(recordFolder, SOURCE_COPY_FOLDER, "recordings", folderName(sourceMeetingId));
+}
+
 /** Whether the folder keeps a copy of the meeting `ref` names: a header read, not the transcript. */
 export function hasSourceCopy(folder: string, ref: SourceCopyRef): boolean {
     return copyHeader(folder, "meeting", ref) !== undefined;

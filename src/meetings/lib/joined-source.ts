@@ -1,10 +1,18 @@
+import { logger } from "@genesiscz/utils/logger";
 import type { JoinPart, MeetingParticipant, MeetingRecord } from "@genesiscz/utils/meetings/record";
-import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type {
+    MeetingEvidence,
+    RecordingClock,
+    SourceMeeting,
+    TranscriptSource,
+} from "@genesiscz/utils/meetings/sources";
 import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { toJoinedSec } from "./join-clock";
-import { type SourceCopyRef, saveSourceCopy } from "./source-copy";
+import { recordingCopyFolder, type SourceCopyRef, saveSourceCopy } from "./source-copy";
+
+const { log } = logger.scoped("meetings-join");
 
 /** The label a part's own speaker label carries on the joined record (`JoinPart.speakerLabels`), else the same label. */
 export function partSpeakerLabel(part: Pick<JoinPart, "speakerLabels">, label: string): string {
@@ -173,11 +181,13 @@ export function joinedCopyRef(parts: readonly JoinPart[]): SourceCopyRef {
     return { sourceId: parts[0]!.sourceId, sourceMeetingId: parts.map((part) => part.sourceMeetingId).join("+") };
 }
 
-/** Each recording's meeting and evidence, read once from its own source by the join or its repair. */
+/** Each recording's meeting, evidence and clock, read once from its own source by the join or its repair. */
 export interface JoinedReads {
     meetings: SourceMeeting[];
     /** Null for a recording whose source keeps no evidence now but whose sound the record kept. */
     evidence: Array<MeetingEvidence | null>;
+    /** Null when the source keeps no clock or could not answer it now. */
+    clocks: Array<RecordingClock | null>;
 }
 
 /**
@@ -186,7 +196,7 @@ export interface JoinedReads {
  */
 export async function readJoinedParts(parts: readonly JoinPart[], open: RecordingOpener): Promise<JoinedReads> {
     const sources = await Promise.all(parts.map((part) => open(part)));
-    const [meetings, evidence] = await Promise.all([
+    const [meetings, evidence, clocks] = await Promise.all([
         Promise.all(parts.map((part, index) => sources[index]!.load(part.sourceMeetingId))),
         Promise.all(
             parts.map((part, index) =>
@@ -199,15 +209,25 @@ export async function readJoinedParts(parts: readonly JoinPart[], open: Recordin
                 })
             )
         ),
+        Promise.all(
+            parts.map((part, index) =>
+                sources[index]!.recordingClock(part.sourceMeetingId).catch((error: unknown) => {
+                    log.debug({ error, sourceMeetingId: part.sourceMeetingId }, "join: no recording clock to keep");
+                    return null;
+                })
+            )
+        ),
     ]);
-    return { meetings, evidence };
+    return { meetings, evidence, clocks };
 }
 
 /**
  * Saves the joined meeting as the joined record's own copy (`joinedCopyRef`): the meeting on the joined clock, the
- * evidence and the first recording's clock. The meeting is written last: its header is what says the record owns a
- * copy (`hasSourceCopy`), so a write cut short leaves the record reading as before. Writes nothing when the copy is
- * the same. `record` must carry its `join`.
+ * evidence and the first recording's clock. First each recording's own answer is kept as that recording's copy
+ * (`recordingCopyFolder`), because the joined copy takes the place of the first recording's copy in this folder and a
+ * reading of one recording (a polished file's part) falls back on it. The joined meeting is written last: its header
+ * is what says the record owns a copy (`hasSourceCopy`), so a write cut short leaves the record as it was. Writes
+ * nothing when the copies are the same. `record` must carry its `join`.
  */
 export function saveJoinedCopy(options: { folder: string; record: MeetingRecord; reads: JoinedReads }): {
     lines: number;
@@ -222,8 +242,23 @@ export function saveJoinedCopy(options: { folder: string; record: MeetingRecord;
 
     const ref = joinedCopyRef(parts);
     const meeting = joinedMeeting(record, parts, reads.meetings);
+    const recordings = parts.map((part, index) => saveRecordingCopy(folder, part, reads, index)).some(Boolean);
     const evidence = saveSourceCopy(folder, "evidence", ref, joinedEvidence(parts, reads.evidence));
     const clock = saveSourceCopy(folder, "clock", ref, { startedAt: parts[0]!.zeroAt });
     const saved = saveSourceCopy(folder, "meeting", ref, meeting);
-    return { lines: meeting.transcript.length, written: evidence || clock || saved };
+    return { lines: meeting.transcript.length, written: recordings || evidence || clock || saved };
+}
+
+/** One recording's own copy, as its source answered it alone; a part it could not answer is not saved. */
+function saveRecordingCopy(folder: string, part: JoinPart, reads: JoinedReads, index: number): boolean {
+    const holder = recordingCopyFolder(folder, part.sourceMeetingId);
+    const ref = { sourceId: part.sourceId, sourceMeetingId: part.sourceMeetingId };
+    const evidence = reads.evidence[index];
+    const clock = reads.clocks[index];
+    const written = [
+        evidence ? saveSourceCopy(holder, "evidence", ref, evidence) : false,
+        clock ? saveSourceCopy(holder, "clock", ref, clock) : false,
+        saveSourceCopy(holder, "meeting", ref, reads.meetings[index]!),
+    ];
+    return written.some(Boolean);
 }

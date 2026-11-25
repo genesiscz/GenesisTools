@@ -689,7 +689,7 @@ export class OpenedMeeting {
         opened.configOnce = this.config();
         // The recording's own source meeting: reading it never writes a copy into the joined record's folder.
         opened.openLinked = async () => ({
-            source: await recordingSource(this.store, part),
+            source: await recordingSource(this.store, part, this.current.id),
             sourceMeetingId: part.sourceMeetingId,
         });
         const next = parts[index + 1];
