@@ -40,6 +40,14 @@ import {
     toJoinedSec,
 } from "./join-clock";
 import {
+    LINE_ADDRESS_REPAIR,
+    plannedPassJudge,
+    RETIREMENTS_JUDGED_AGAIN,
+    type RetirementJudge,
+    staleRetirements,
+    withRetirementsUndone,
+} from "./join-retirements";
+import {
     applyJoinSound,
     buildJoinedSourceFile,
     type JoinedSoundEncoder,
@@ -872,6 +880,8 @@ export interface JoinRepairRequest {
     now?: Date;
     /** Puts the recordings into one file (tests pass a fake); ffmpeg by default. */
     encode?: JoinedSoundEncoder;
+    /** Judges the ranges a naming pass set aside on a stale line address (tests pass a fake); a planned pass by default. */
+    judge?: RetirementJudge;
 }
 
 export interface JoinRepairResult {
@@ -898,6 +908,13 @@ export interface JoinRepairResult {
      * back, of the findings an `add` saved and of the lines an `assign` named.
      */
     journal?: { moved: number; unplaced: number };
+    /**
+     * The ranges a naming pass set aside for `speaker-eligibility` between the join and the address repair, when their
+     * stale address named another line (`staleRetirements`), judged again by a pass planned on their own line:
+     * `restored` are suggestions again, `stayed` that pass sets aside too. Ranges a person or an agent decided are
+     * never among them.
+     */
+    retirements?: { restored: string[]; stayed: string[] };
     backup?: string;
 }
 
@@ -933,8 +950,19 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
     const soundDone = (record: MeetingRecord) => merged(record) && !joinedSlotProblem(record);
     const linesDone = (record: MeetingRecord) =>
         joinParts(record).every((part) => part.firstLine !== undefined) || !hasLaterLineAddresses(record);
+    const judge = request.judge ?? plannedPassJudge;
+    // A planned naming pass on each range's own line says which of them come back; none is written here.
+    const judgedAgain = async (record: MeetingRecord, stale: readonly MeetingItem[]) => {
+        if (stale.length === 0) {
+            return undefined;
+        }
+
+        const ids = stale.map((item) => item.id);
+        const kept = await judge({ store, record, ids });
+        return { restored: ids.filter((id) => kept.has(id)), stayed: ids.filter((id) => !kept.has(id)) };
+    };
     const done = (record: MeetingRecord, journal: JoinedJournal): JoinRepairResult | undefined =>
-        soundDone(record) && linesDone(record) && journal.moved === 0
+        soundDone(record) && linesDone(record) && journal.moved === 0 && staleRetirements(record).length === 0
             ? {
                   meeting: record.id,
                   dryRun,
@@ -976,13 +1004,30 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
 
     if (dryRun) {
         const slot = merged(found) ? joinedSlotProblem(found) : undefined;
+        const placed = linesDone(found) ? undefined : joinedLineAddresses(found, await foundTranscript());
+        // The ranges are judged on the lines their addresses name once moved, as the repair would judge them.
+        const judged = placed
+            ? {
+                  ...found,
+                  items: placed.items,
+                  join: {
+                      ...found.join,
+                      parts: found.join.parts.map((part, index) => ({
+                          ...part,
+                          firstLine: placed.parts[index]?.firstLine ?? 0,
+                      })),
+                  },
+              }
+            : found;
+        const retirements = await judgedAgain(judged, staleRetirements(judged, { linesPending: placed !== undefined }));
         return {
             meeting: found.id,
             dryRun,
             repaired: false,
             ...(soundDone(found) ? {} : slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
-            ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await foundTranscript())) }),
+            ...(placed ? { lines: linesOf(placed) } : {}),
             ...(journal.moved > 0 ? { journal: linesOf(journal) } : {}),
+            ...(retirements ? { retirements } : {}),
         };
     }
 
@@ -1091,7 +1136,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                     record.id,
                     {
                         command: "join",
-                        change: `repair: ${lines.moved} line addresses of the later recordings moved onto the joined transcript's lines (${lines.unplaced} name no line and stay); backup ${backup}`,
+                        change: `repair: ${lines.moved} ${LINE_ADDRESS_REPAIR} (${lines.unplaced} name no line and stay); backup ${backup}`,
                     },
                     (next) => {
                         const moved = joinedLineAddresses(next, joined);
@@ -1127,6 +1172,24 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                     }
                 );
                 result.journal = linesOf(journal);
+            }
+
+            // After the addresses moved: each range is judged on its own line now.
+            const retirements = await judgedAgain(record, staleRetirements(record));
+
+            if (retirements) {
+                const restored = new Set(retirements.restored);
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: ${RETIREMENTS_JUDGED_AGAIN}: ${restored.size} of ${restored.size + retirements.stayed.length} are suggestions again${restored.size ? ` (${retirements.restored.join(" ")})` : ""}; backup ${backup}`,
+                    },
+                    (next) => {
+                        next.items = withRetirementsUndone(next.items, restored);
+                    }
+                );
+                result.retirements = retirements;
             }
 
             return result;

@@ -401,6 +401,13 @@ async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: b
         );
     }
 
+    if (result.retirements) {
+        const { restored, stayed } = result.retirements;
+        ui.ok(
+            `${result.dryRun ? "Would judge" : "Judged"} again on their own line ${restored.length + stayed.length} ranges a naming pass set aside by a stale line address: ${restored.length} ${result.dryRun ? "would be" : "are"} suggestions again${stayed.length ? `, ${stayed.length} stay set aside (${stayed.join(" ")})` : ""}.`
+        );
+    }
+
     if (result.backup) {
         ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
     }
@@ -694,7 +701,7 @@ export function registerMeetingCommands(program: Command): void {
         )
         .option(
             "--repair",
-            "on a meeting joined before 2026-11-25: move the later recording's sound into the joined record's folder, once"
+            "on a meeting joined before 2026-11-25: move the later recording's sound and line addresses onto the joined record, and judge again the ranges a naming pass set aside by a stale address, once"
         )
         .option("--dry-run", "say what would join or move, change nothing")
         .option("--json", "print the result as JSON")

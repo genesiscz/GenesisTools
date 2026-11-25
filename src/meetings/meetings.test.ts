@@ -98,6 +98,12 @@ import {
     toJoinedSec,
     toPartSec,
 } from "./lib/join-clock";
+import {
+    LINE_ADDRESS_REPAIR,
+    RETIREMENTS_JUDGED_AGAIN,
+    staleRetirements,
+    withRetirementsUndone,
+} from "./lib/join-retirements";
 import { joinedTranscript } from "./lib/joined-source";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { askProjectAtEnd } from "./lib/meeting-end";
@@ -9029,6 +9035,59 @@ describe("meetings join: one clock for two recordings", () => {
             const again = joinedJournalAddresses({ join }, transcript, repaired.entries);
             expect(again.moved).toBe(0);
             expect(again.entries.every((entry, index) => entry === repaired.entries[index])).toBe(true);
+        });
+
+        test("only a pass between the join and the address repair judged a stale line: its eligibility retirements, once", () => {
+            const placed = {
+                ...join,
+                parts: [
+                    { ...parts[0]!, firstLine: 0 },
+                    { ...parts[1]!, firstLine: 3 },
+                ],
+            };
+            const retired = (id: string, sec: number, line: number, fields: Record<string, unknown> = {}) =>
+                meetingItemSchema.parse({
+                    ...range(id, "Bob Example", sec, line),
+                    status: "rejected",
+                    evidence: { transcriptLine: line, retired: "speaker-eligibility" },
+                    ...fields,
+                });
+            const items = [
+                retired("i1", 610, 4),
+                // The first recording's lines never had a stale address.
+                retired("i2", 10, 1),
+                // The calibration judged the line by its label and second, never by a stale address.
+                retired("i3", 630, 5, { evidence: { transcriptLine: 5, retired: "calibrated-seat" } }),
+                // A person decided it; an agent stated it.
+                retired("i4", 620, 5, { decidedAt: "2026-11-01T12:30:00.000Z" }),
+                retired("i5", 620, 5, { rules: [MeetingRule.Agent] }),
+                range("i6", "Bob Example", 610, 4),
+            ];
+            const event = (minute: number, command: string, change: string) => ({
+                at: new Date(Date.UTC(2026, 10, 1, 12, minute)).toISOString(),
+                command,
+                change,
+            });
+            const pass = event(10, "suggest", "suggest findings and questions with voice naming");
+            const repair = event(20, "join", `repair: 2 ${LINE_ADDRESS_REPAIR} (0 name no line and stay); backup /b`);
+            const judged = event(30, "join", `repair: ${RETIREMENTS_JUDGED_AGAIN}: 1 of 1 are suggestions again`);
+            const ids = (history: Array<ReturnType<typeof event>>, linesPending?: boolean) =>
+                staleRetirements({ join: placed, items, history }, { linesPending }).map((item) => item.id);
+
+            expect(ids([pass, repair])).toEqual(["i1"]);
+            // No pass while the addresses were stale, and no address repair (the join counted them): nothing to judge.
+            expect(ids([repair, event(25, "suggest", "suggest findings and questions")])).toEqual([]);
+            expect(ids([pass])).toEqual([]);
+            // A dry run before the address repair: the window is still open.
+            expect(ids([pass], true)).toEqual(["i1"]);
+            // Judged again once, never again; and never on parts whose first lines are unknown.
+            expect(ids([pass, repair, judged])).toEqual([]);
+            expect(staleRetirements({ join, items, history: [pass, repair] })).toEqual([]);
+
+            const undone = withRetirementsUndone(items, new Set(["i1"]));
+            expect(undone[0]).toMatchObject({ status: "suggested", evidence: { transcriptLine: 4 } });
+            expect(undone[0]!.evidence?.retired).toBeUndefined();
+            expect(undone.slice(1)).toEqual(items.slice(1));
         });
 
         test("a reading of one recording counts its items' addresses from that recording's first line", () => {
