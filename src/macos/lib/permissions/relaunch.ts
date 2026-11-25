@@ -222,6 +222,13 @@ const FEATURES_ONE_SHOTS: OneShotFlags = {
     optional: new Set(),
 };
 
+/** Parts/Meetings/Window/MeetingsFace.swift: a routed Moment plays at the launch that carried it, never at a reopen. */
+const MEETINGS_ONE_SHOTS: OneShotFlags = {
+    value: new Set(["--play-request"]),
+    bare: new Set(),
+    optional: new Set(),
+};
+
 function withoutOneShots(argv: string[], flags: OneShotFlags): string[] {
     const kept: string[] = [];
 
@@ -293,6 +300,8 @@ export function relaunchPlan(
             argv = [...withoutOneShots(kept, WIDGET_ONE_SHOTS), "--ensure-running"];
         } else if (face.kind === "features") {
             argv = ["--features", ...withoutOneShots(kept.slice(1), FEATURES_ONE_SHOTS)];
+        } else if (face.kind === "meetings") {
+            argv = withoutOneShots(kept, MEETINGS_ONE_SHOTS);
         } else if (face.kind === "recorder") {
             // Its menu bar item only: an editor window it had reopens from the menu's recent list.
             argv = ["--recorder"];
