@@ -3,6 +3,7 @@ import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genes
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
     namesAtAnyConfidence,
+    showsAsGuess,
     strongestFirst,
     strongestRange,
     weakestFirst,
@@ -205,8 +206,9 @@ export function rangeLineWarnings(items: readonly MeetingItem[]): string[] {
 /**
  * What a transcript applies: renames, then the confirmed items, then the dictionary. With `withSuggested` a suggested
  * item is applied too when its confidence reaches `global.suggest.applyAbove` (one with no confidence, a person's
- * own, always); a lower one is marked unclear, as an open question is. A speaker range a person or an agent stated
- * names its line at any confidence: its confidence stays on the line as a note (`namesAtAnyConfidence`).
+ * own, always); a lower one is marked unclear, as an open question is. A speaker range built on the user's answer or
+ * stated by an agent takes part at any confidence, so the order of ranges (`compareRanges`) decides its line; when an
+ * agent's range under the threshold wins, the line shows it as a guess (`[Name: 60 %]`, `showsAsGuess`).
  */
 export function correctionsOf(
     record: MeetingRecord,
@@ -266,6 +268,14 @@ export function correctionsOf(
     // an agent's, and that over a rule's, whatever their age; within one kind the higher confidence wins, the latest on
     // a tie.
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
+    // A range listed by `include` is applied as asked, so only a suggestion the threshold would hold back is a guess.
+    const guessOf = (item: MeetingItem) =>
+        item.status === "suggested" &&
+        item.confidence !== undefined &&
+        opts.include?.includes(item.id) !== true &&
+        showsAsGuess(item, applyAbove)
+            ? { guess: item.confidence }
+            : {};
     const itemRanges = weakestFirst(used).flatMap((item) =>
         item.kind === "speaker-range" && item.speaker
             ? [
@@ -276,6 +286,7 @@ export function correctionsOf(
                       speaker: item.speaker,
                       item: item.id,
                       ...rangeAddress(item),
+                      ...guessOf(item),
                   },
               ]
             : []

@@ -29,7 +29,14 @@ import {
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { DEFAULT_POLISHED_PHRASES, POLISHED_PHRASES_BY_LANGUAGE } from "./polished";
-import { RangeStrength, rangeStrength, strongestFirst, strongestRange, weakestFirst } from "./range-strength";
+import {
+    RangeStrength,
+    rangeStrength,
+    showsAsGuess,
+    strongestFirst,
+    strongestRange,
+    weakestFirst,
+} from "./range-strength";
 import {
     JOIN_PART_FILE,
     JOINED_RECORD_VERSION,
@@ -1921,5 +1928,19 @@ describe("speaker range strength", () => {
         const decided = range("decided", "confirmed", ["agent"], 0.95);
         const decidedAgain = range("decided again", "confirmed", ["voice-embedding", "user"], 0.5);
         expect(strongestRange([decided, decidedAgain, answered])?.id).toBe("decided again");
+    });
+
+    test("a winning range shows as a guess under the threshold unless a person confirmed it or the user answered it", () => {
+        const range = (status: "suggested" | "confirmed", rules: string[], confidence?: number) => ({
+            status,
+            rules,
+            ...(confidence === undefined ? {} : { confidence }),
+        });
+        expect(showsAsGuess(range("suggested", ["agent"], 0.45), 0.7)).toBe(true);
+        expect(showsAsGuess(range("suggested", ["RA"], 0.6), 0.7)).toBe(true);
+        expect(showsAsGuess(range("suggested", ["agent"], 0.7), 0.7)).toBe(false);
+        expect(showsAsGuess(range("suggested", ["agent"]), 0.7)).toBe(false);
+        expect(showsAsGuess(range("suggested", ["agent", "user"], 0.3), 0.7)).toBe(false);
+        expect(showsAsGuess(range("confirmed", ["agent"], 0.3), 0.7)).toBe(false);
     });
 });
