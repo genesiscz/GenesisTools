@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GenesisKitFixtures
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -153,7 +154,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
@@ -249,7 +250,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         ocr.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        try recognizeText(in: XCTUnwrap(bitmap.cgImage), with: ocr)
         func click(_ label: String) throws {
             let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
             let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
@@ -746,6 +747,10 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.toggle(original)
         await settled(store)
         XCTAssertEqual(store.failures.first?.id, .change(original.id))
+        // The hub's Inbox shows the same report: the widget's headline, the tool's words behind Details.
+        XCTAssertEqual(store.latestFailureReport, store.failures.first?.report)
+        XCTAssertTrue(store.latestFailureReport?.headline.contains("Could not mark") ?? false)
+        XCTAssertNil(store.createFailureReport)
         let text = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 324), name: "widget-task-refused")
         XCTAssertTrue(text.contains("Water the plants"), text)
         XCTAssertTrue(text.contains("Could not mark"), text)
@@ -1034,6 +1039,20 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
     }
 
+    /// The agent named on an answered decision is the link to its session: only with a session to open, and only the
+    /// agent's own words are underlined.
+    @MainActor
+    func testTheAnsweringAgentsNameIsTheLinkToItsSession() {
+        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol", sessionKey: "k")
+        XCTAssertTrue(WidgetAnsweredByLine(via: "agent", agent: relay, open: {}).isLink)
+        XCTAssertFalse(WidgetAnsweredByLine(via: "agent", agent: relay).isLink, "no session to open: the plain words")
+        XCTAssertFalse(WidgetAnsweredByLine(via: "agent", agent: nil, open: {}).isLink, "no agent named: nothing to link")
+        let line = WidgetAnsweredByLine.linked(WidgetAlerts.answeredViaText("agent", by: relay), agent: WidgetAlerts.agentText(relay))
+        let underlined = line.runs[AttributeScopes.SwiftUIAttributes.UnderlineStyleAttribute.self]
+            .compactMap { style, range in style.map { _ in String(line[range].characters) } }
+        XCTAssertEqual(underlined, ["Codex, session 0a1b2c3d · gpt-6.1-sol"])
+    }
+
     /// The popup says "Decision 4", not "New decision · DECISION 4"; VoiceOver hears what arrived and from where; the
     /// popup's time and a note's time are settings (ux catalogue R4, R6, R10, R3).
     func testAlertWordsAndTheTimesTheySettle() throws {
@@ -1058,6 +1077,14 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.kicker(answered), "Decision 4 answered")
         XCTAssertEqual(WidgetAlerts.answeredOptions(answered).map(\.text), ["keep", "drop"], "the agent's own letter is not kept")
         XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic"), "Answer read from your chat")
+        // The row names the agent that stored the answer: its harness, the session's first 8 characters, the model.
+        let relay = WidgetAnsweredBy(harness: "codex", session: "0a1b2c3d4e5f", model: "gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("agent"), "Answer recorded by the agent", "a row with no agent keeps the old words")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("agent", by: relay), "Answer recorded by Codex, session 0a1b2c3d · gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic", by: WidgetAnsweredBy(harness: "claude", model: "claude-opus-5-5")),
+                       "Answer read from your chat by Claude Code · opus")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("inbox", by: relay), "Your answer, relayed by Codex, session 0a1b2c3d · gpt-6.1-sol")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("inbox"), "Your answer")
         XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(.hubDefaults), 5)
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(.hubDefaults), "Tink")
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(try prefs(#"{"autoDecisionSound":"same","alertSound":"Ping"}"#)), "Ping")
@@ -2428,7 +2455,9 @@ final class WidgetStagingTests: XCTestCase {
         let card = try XCTUnwrap(model.cards.first)
         stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
         model.sendingDecisionIDs.insert(card.sourceId)
-        model.sendingStageVersions[card.sourceId] = model.decisions.version(card.sourceId)
+        model.sendingStages[card.sourceId] = WidgetSendingStage(version: model.decisions.version(card.sourceId),
+                                                                option: "a", note: "first", sessionId: "fixture-staged",
+                                                                startedAt: 0)
         model.keptStaged.insert(card.sourceId)
         XCTAssertTrue(model.stagedForLeave.isEmpty)
         stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
@@ -2615,6 +2644,205 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a refused decision stays staged")
         stageHere(model, "d1", "b")
         XCTAssertNil(model.unsentReasons["d1"], "a new stage drops the old reason")
+    }
+
+    /// A note-only stage (its pick is "") counts its age from the edit, not from an older stage the snapshot holds; a
+    /// clear made here falls back to the snapshot's time.
+    func testANoteOnlyStageCountsItsAgeFromTheEdit() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "a")])
+        model.stage(id: "d1", sessionId: "fixture-staged", revision: 1, option: nil, note: "only if it is cheap")
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: 5_000), .staged(since: seconds, unsent: nil))
+        model.discardStaged(["d1"])
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: 5_000), .staged(since: 5, unsent: nil))
+    }
+
+    /// The hub's `numbers` say which decisions of a session it sent: one another surface cleared meanwhile is not
+    /// marked sent. An error after the hub stored the answers reads as waiting, never as a refusal.
+    func testTheSendOutcomeMatchesDecisionNumbersAndKnowsAStoredAnswer() {
+        let outcome = WidgetDecisionSendOutcome(["sent": 1, "queued": 1, "failed": 0, "sessions": [
+            ["session": "s1", "numbers": [7], "result": ["delivered": true]],
+            ["session": "s2", "numbers": [3], "error": "receipt write failed", "stored": true, "deliversLater": false],
+        ]], titles: ["s2": "Fixture two"])
+        XCTAssertEqual(outcome.result(forSession: "s1", number: 7), .delivered)
+        XCTAssertEqual(outcome.result(forSession: "s1", number: 8), .skipped, "DECISION 8 was cleared before the send")
+        XCTAssertEqual(outcome.result(forSession: "s2", number: 3),
+                       .waiting(reason: WidgetDecisionSendOutcome.storedSentence))
+        XCTAssertTrue(outcome.failedSessions.isEmpty)
+        XCTAssertEqual(outcome.details, "Fixture two: receipt write failed")
+        XCTAssertFalse(outcome.delivered)
+    }
+
+    /// The agent got the answers and only the hub's record of it failed: the session reads delivered, so the widget
+    /// offers no Send again that would type the answers twice.
+    func testAStoredAnswerTheTransportConfirmedReadsDelivered() {
+        let outcome = WidgetDecisionSendOutcome(["sent": 1, "queued": 0, "failed": 0, "sessions": [
+            ["session": "s3", "numbers": [4], "error": "the record failed", "stored": true, "delivered": true],
+        ]], titles: ["s3": "Fixture three"])
+        XCTAssertEqual(outcome.result(forSession: "s3", number: 4), .delivered)
+        XCTAssertTrue(outcome.waiting.isEmpty)
+        XCTAssertTrue(outcome.delivered)
+    }
+
+    /// A refused send's reason belongs to the stage it refused: the same stage keeps it, a stage made in another
+    /// inbox drops it, and a snapshot whose decision read failed retires no send receipt.
+    func testASendReasonStaysWithItsStageAndAnIncompleteSnapshotKeepsReceipts() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        var reply: WidgetJSON = ["sent": 0, "queued": 0, "failed": 1,
+                                 "sessions": [["session": "fixture-staged", "numbers": [7], "error": "DECISION 7 changed"]]]
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "send-staged" else { return ["ok": true] }
+            return reply
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        XCTAssertEqual(model.unsentReasons["d1"]?.text, "DECISION 7 changed")
+        model.receive([try snapshot(draftOption: "a")])
+        XCTAssertEqual(model.unsentReasons["d1"]?.text, "DECISION 7 changed", "the same stage keeps its reason")
+        model.receive([try snapshot(draftOption: "b")])
+        XCTAssertNil(model.unsentReasons["d1"], "b was staged elsewhere and never sent")
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: nil), .staged(since: nil, unsent: nil))
+
+        reply = ["sent": 1, "queued": 0, "failed": 0,
+                 "sessions": [["session": "fixture-staged", "numbers": [7], "result": ["delivered": true]]]]
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: nil), .sent(at: seconds))
+        model.reconcileStaged([], listed: [], complete: false)
+        XCTAssertNotNil(model.sentDecisions["d1"], "a failed decision read proves nothing left the log")
+        XCTAssertFalse(model.waitsForAnswer(try XCTUnwrap(model.inboxOverviewItems.first)),
+                       "a delivered decision no longer waits for an answer")
+        seconds += 1
+        model.reconcileStaged([])
+        XCTAssertTrue(model.sentDecisions.isEmpty)
+    }
+
+    /// A stage made in another inbox after the send began is shown; a stale echo of the sent stage is not.
+    func testANewerStageFromAnotherInboxSupersedesASendReceipt() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "send-staged" else { return ["ok": true] }
+            return ["sent": 1, "queued": 0, "failed": 0,
+                    "sessions": [["session": "fixture-staged", "numbers": [7], "result": ["delivered": true]]]]
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        var row = try XCTUnwrap(model.stagedItems.first)
+        let started = seconds
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        seconds += 5
+        row.draftedAt = (started - 30) * 1000
+        model.reconcileStaged([row])
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: row.draftedAt), .sent(at: started),
+                       "an echo staged before the send stays hidden")
+        row.draftOption = "b"
+        row.draftedAt = (started + 2) * 1000
+        model.reconcileStaged([row])
+        XCTAssertNil(model.sentDecisions["d1"])
+        XCTAssertEqual(model.shownStagedOption("d1", stored: row.draftOption), "b")
+        XCTAssertEqual(model.stagedToSend.map(\.sourceId), ["d1"], "Send and the leave question take the new stage")
+    }
+
+    /// A pick staged while the send runs: the receipt keeps what the request took, and a failure of that request puts
+    /// no reason on the newer stage. Only an explicit refusal says "refused"; a timeout says the hub did not confirm.
+    func testAPickStagedDuringASendKeepsItsOwnStage() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var failure: Error?
+        var restage = true
+        model.actionRunner = { [weak model] request in
+            guard case .object(let fields) = request, fields["action"] == "send-staged" else { return ["ok": true] }
+            if restage, let model {
+                model.stage(id: "d1", sessionId: "fixture-staged", revision: 1, option: "b", note: "newer")
+            }
+            if let failure { throw failure }
+            return ["sent": 1, "queued": 0, "failed": 0,
+                    "sessions": [["session": "fixture-staged", "numbers": [7], "result": ["delivered": true]]]]
+        }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let item = WidgetModel.inboxItem(try XCTUnwrap(model.cards.first))
+        stageHere(model, "d1", "a", item: item, note: "first")
+        await model.decisionWritesEnded()
+        model.sendStaged(["d1"], known: [item])
+        await sendEnded(model)
+        XCTAssertEqual(model.sentDecisions["d1"]?.option, "a")
+        XCTAssertEqual(model.sentDecisions["d1"]?.note, "first", "not the note staged during the send")
+        XCTAssertEqual(model.shownStagedOption("d1", stored: nil), "b")
+        XCTAssertFalse(model.isOnItsWay("d1"), "the newer stage waits for its own Send")
+
+        await model.decisionWritesEnded()
+        failure = ToolsBridgeError.timeout(seconds: 120)
+        model.sendStaged(["d1"], known: [item])
+        await sendEnded(model)
+        XCTAssertNil(model.unsentReasons["d1"], "the newer stage was never sent")
+
+        await model.decisionWritesEnded()
+        restage = false
+        model.sendStaged(["d1"], known: [item])
+        await sendEnded(model)
+        XCTAssertEqual(model.unsentReasons["d1"]?.text, "the hub did not confirm the send.")
+        failure = ToolsBridgeError.refused("bad request")
+        model.sendStaged(["d1"], known: [item])
+        await sendEnded(model)
+        XCTAssertEqual(model.unsentReasons["d1"]?.text, "the hub refused it.")
+    }
+
+    /// Send again that delivers an answer left waiting for its session turns its row to Sent at once.
+    func testSendAgainThatDeliversUpdatesTheWaitingReceipt() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, case .string(let action) = fields["action"] else { return ["ok": true] }
+            let delivered = action == "resend-answers"
+            guard action == "send-staged" || delivered else { return ["ok": true] }
+            return ["sent": delivered ? 1 : 0, "queued": delivered ? 0 : 1, "failed": 0, "sessions": [[
+                "session": "fixture-staged", "numbers": [7],
+                "result": delivered ? ["delivered": true] : ["delivered": false, "detail": "No cmux pane runs this session."],
+            ]]]
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        let item = try XCTUnwrap(model.stagedItems.first)
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: nil),
+                       .waiting(at: seconds, reason: "No cmux pane runs this session."))
+        seconds += 3
+        model.resendAnswers([item])
+        await sendEnded(model)
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: nil), .sent(at: seconds))
+    }
+
+    /// The chip counts each decision once by its phase, and a queued one is not called delivered. A row's staged line
+    /// names the note the send took, with the pick it took.
+    func testOnTheirWayWordsAndTheSentNote() {
+        XCTAssertEqual(WidgetStagedChip.onTheirWay(sending: 1, sent: 2), "Sending 1 decision… · 2 decisions sent")
+        XCTAssertEqual(WidgetStagedChip.onTheirWay(sending: 0, sent: 0, waiting: 1),
+                       "1 decision waiting for its session")
+        XCTAssertEqual(WidgetOptionText.accessibilityValue(picked: true, multiple: false, pickedWord: "Sent"), "Sent")
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let item = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: key, at: 0, needsAnswer: true,
+                                   title: "x", number: 7, options: ["a) keep it", "b) drop it"], draftOption: "a",
+                                   draft: "old")
+        model.sentDecisions["d1"] = WidgetSentDecision(at: 0, delivered: true, option: "b", note: "new")
+        XCTAssertEqual(model.shownStagedLine(item), "b) drop it · new")
     }
 
     /// 2026-11-17: the leave question stayed open reading "You have 0 decisions staged". Once its list empties it
