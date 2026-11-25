@@ -5,7 +5,8 @@ import SwiftUI
 //   The Meetings window: meetings by day with what each needs, one meeting with its transcript, screen, items,
 //   speakers and context, the meetings that need you, and each project. One per login session: a later launch hands
 //   its request to the running one and exits. `--muted` starts a window whose Moments play without sound (a check
-//   of the running window on a Mac that must stay quiet).
+//   of the running window on a Mac that must stay quiet). `--play-request <json>` (`tools meetings play --window`, a play
+//   link) plays that Moment; with `--no-focus` the window comes to the front for it and leaves the keyboard where it is.
 // GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>] [--place contacts]
 //                         [--side-panel] [--select <row id>] [--edit <row id>] [--notice <text>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
@@ -61,7 +62,8 @@ struct MeetingsRequest {
     var snapshot: String?
     /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
     var play: MomentTarget?
-    /// A routed Moment with all per-call playback options preserved.
+    /// A routed Moment with all per-call playback options preserved. With `--no-focus` the window comes to the front
+    /// for it without taking the keyboard (`MeetingsWindow.presentation`).
     var playRequest: MeetingsAPI.MomentParams?
     /// `--show <from>,<to>`: a snapshot of what a "Show" chip does: the whole meeting plays from `from`, silently, and
     /// the timeline shows the range.
@@ -235,12 +237,27 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
             model.load()
         }
         apply(request, to: model)
-        if request.focus {
+        switch Self.presentation(for: request) {
+        case .activate:
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
-        } else {
+        case .front:
+            window.orderFrontRegardless()
+        case .back:
             window.orderBack(nil)
         }
+    }
+
+    /// How a request shows the window: `activate` makes this app active and the window key, `front` puts the window in
+    /// front of every app's windows and leaves the keyboard where it is, `back` opens it behind them.
+    enum Presentation: Equatable { case activate, front, back }
+
+    /// A routed Moment without focus (`play --window` under `playback.window.focus` keep) comes to the front and never
+    /// takes the keyboard: on 2026-11-25 a handoff that activated the window let a ⌘Q typed for the app in front reach
+    /// "Quit Meetings" 0.4 s later, and the window ended. Any other request without focus (a rebuild's reopen) opens behind.
+    nonisolated static func presentation(for request: MeetingsRequest) -> Presentation {
+        if request.focus { return .activate }
+        return request.playRequest == nil ? .back : .front
     }
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {

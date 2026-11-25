@@ -81,6 +81,18 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(play.screen, false)
     }
 
+    /// 2026-11-25: a handed-off play request activated the window, and a ⌘Q typed for the app in front quit it 0.4 s
+    /// later. A routed Moment without focus comes to the front and leaves the keyboard where it is.
+    func testARoutedMomentComesForwardWithoutTakingTheKeyboard() {
+        let json = #"{"meeting":"m1","target":{"kind":"range","fromSec":12,"toSec":20}}"#
+        XCTAssertEqual(MeetingsWindow.presentation(for: .parse(["--meeting", "m1", "--play-request", json, "--no-focus"])), .front)
+        XCTAssertEqual(MeetingsWindow.presentation(for: .parse(["--meeting", "m1", "--play-request", json])), .activate,
+                       "playback.window.focus take still activates")
+        XCTAssertEqual(MeetingsWindow.presentation(for: .parse(["--meeting", "m1", "--no-activate"])), .back,
+                       "a rebuild's reopen stays behind")
+        XCTAssertEqual(MeetingsWindow.presentation(for: .parse(["--meeting", "m1"])), .activate)
+    }
+
     func testSnapshotReadinessReportsExpiry() async {
         let expired = await waitUntil(0) { false }
         let ready = await waitUntil(0) { true }
