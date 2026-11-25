@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { projectOf, sessionScratchPath } from "../../../hooks/session-scratch";
-import { HARNESS_IDS, type Harness } from "../../../lib/Generated/harness-facts";
+import { HARNESS_FACTS, HARNESS_IDS, type Harness } from "../../../lib/Generated/harness-facts";
 import { FableReplaceError } from "./internal";
 import { parseJson, stringifyJson } from "./json";
 import type { PruneParams, PruneReport, RollbackParams, RollbackReport, WriteBackupParams } from "./types";
@@ -318,16 +318,9 @@ export interface ScratchContext {
     harness?: Harness;
 }
 
-/** The variable each harness sets to its session id, or null when it sets none. */
-const HARNESS_SESSION_VARIABLE = {
-    claude: "CLAUDE_CODE_SESSION_ID",
-    codex: "CODEX_THREAD_ID",
-    grok: null,
-} as const satisfies Record<Harness, string | null>;
-
 /** A variable's trimmed value, or undefined when it is unset or blank. */
-const envValue = (name: string | null): string | undefined => {
-    const value = name === null ? undefined : process.env[name]?.trim();
+const envValue = (name: string): string | undefined => {
+    const value = process.env[name]?.trim();
     return value ? value : undefined;
 };
 
@@ -353,13 +346,15 @@ const namedHarness = (): Harness | undefined => {
  */
 export const scratchHarnessSession = (ctx: ScratchContext = {}): { harness: Harness; sessionId: string } | null => {
     const harness =
-        ctx.harness ?? namedHarness() ?? HARNESS_IDS.find((id) => envValue(HARNESS_SESSION_VARIABLE[id]) !== undefined);
+        ctx.harness ??
+        namedHarness() ??
+        HARNESS_IDS.find((id) => envValue(HARNESS_FACTS[id].sessionEnvKey) !== undefined);
     if (harness === undefined) {
         return null;
     }
 
     const sessionId =
-        ctx.sessionId?.trim() || envValue("FABLE_REPLACE_SESSION") || envValue(HARNESS_SESSION_VARIABLE[harness]);
+        ctx.sessionId?.trim() || envValue("FABLE_REPLACE_SESSION") || envValue(HARNESS_FACTS[harness].sessionEnvKey);
     return sessionId ? { harness, sessionId } : null;
 };
 
