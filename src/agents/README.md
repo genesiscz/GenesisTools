@@ -972,10 +972,14 @@ Installing the plugin is not what makes the diff hook stand down. On every turn 
 draws it, so it is not drawn twice. The mod may be loaded from any settings scope or with `--plugin-dir`. A session
 that has not loaded it (started before the install and not reloaded, or a nested session that inherited another
 session's id) keeps the hook's own message, and so does a marked session whose settings now disable the plugin, until
-it reloads. Codex and Grok always keep the hook's message. So does a shell call of a code-mode script (the REPL
-tool, a call id `repl_<uuid>`): it has no Bash row of its own for the mod to draw under, and on 2026-11-24 918 such
-diffs were left to the mod and drawn by no one. That id prefix is the only fact the hook has: no hook field and no
-transcript row names the script a call belongs to (Claude Code 2.1.328). So the post phase checks it, at most once a
+it reloads. Codex and Grok always keep the hook's message. A shell call of a code-mode script (the REPL tool, a call
+id `repl_<uuid>`) is a row of its own too: Claude Code adds each call of a script to the transcript as a tool call
+(a virtual `tool_use` with that id), and the mod draws its diff under that row, folded past
+`mods.diff.foldAfterLines` like a Bash call's. The hook leaves such a diff to the mod only after the mod marked the
+session: the first time a row with a `repl_` id draws, the mod sets `GENESIS_TOOLS_MODS_SCRIPT_ROWS` to the session's
+id. Until then (the first script of a session, or a view that does not draw script calls) the hook prints the diff
+itself, because on 2026-11-24 diffs left to the mod with no proof were drawn by no one. The id prefix is the one fact
+the hook has (Claude Code 2.1.328). So the post phase checks it, at most once a
 day: a call whose id has neither the `toolu_` nor the `repl_` prefix, or a day with code mode on
 (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) and no `repl_` call, adds a one-line self-check note to the hook's message.
 

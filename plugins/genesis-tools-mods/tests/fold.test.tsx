@@ -578,3 +578,58 @@ test("a shell block's file of 20 lines draws whole, with no line button", async 
     expect(await ui.find({ key: "group-22|toolu_a|/repo/src/long.ts:lines" })).toBeUndefined();
     await ui.unmount();
 });
+
+test("a code-mode script's shell call folds and draws like a Bash call, and its row marks the session for the diff hook", async ($, on) => {
+    // Claude Code adds a REPL script's calls to the transcript as tool calls of their own (`repl_<uuid>`), so the
+    // diff hook may leave their diffs to this mod once a row proved it (col-fe session, 2026-11-25: a fable-replace run
+    // inside a REPL script printed the hook's own text diff, because the hook believed such a call had no row).
+    const SCRIPT = "/home/test/.genesis-tools/agents/hook-diffs/repl_1b2c3d4e-0000-4000-8000-000000000001.md";
+    engine(on, { [SCRIPT]: longNote(25) });
+    const marks: { name: string; value?: string }[] = [];
+    on("session.id", async () => ({ value: "sess-script" }));
+    on("env.set", async (_$, e) => {
+        marks.push({ name: e.name, value: e.value });
+
+        return { value: {} };
+    });
+    const scriptCall = { ...CALL, tool_use_id: "repl_1b2c3d4e-0000-4000-8000-000000000001" };
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: { ...GROUP, calls: [scriptCall] },
+        requestId: "group-30",
+        viewport: { columns: 160, rows: 40 },
+    });
+    const LINES = "group-30|repl_1b2c3d4e-0000-4000-8000-000000000001|/repo/src/long.ts:lines";
+
+    expect((await codeSources(ui)).map(diffLines)).toEqual([20]);
+    expect((await ui.find({ key: LINES }))?.text).toBe("show all 25 lines");
+    // The value is the session's id, which the hook compares with its payload's `session_id`.
+    expect(marks).toEqual([{ name: "GENESIS_TOOLS_MODS_SCRIPT_ROWS", value: "sess-script" }]);
+    await ui.unmount();
+});
+
+test("a Bash tool call's row does not mark the session as one whose script calls draw", async ($, on) => {
+    engine(on, { [NOTE_PATH]: NOTE });
+    const marks: string[] = [];
+    on("session.id", async () => ({ value: "sess-bash" }));
+    on("env.set", async (_$, e) => {
+        marks.push(e.name);
+
+        return { value: {} };
+    });
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: GROUP,
+        requestId: "group-31",
+    });
+
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(2);
+    expect(marks).not.toContain("GENESIS_TOOLS_MODS_SCRIPT_ROWS");
+    await ui.unmount();
+});

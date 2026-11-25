@@ -451,6 +451,36 @@ async function drawDiffs(
  */
 let announcedSession: string | undefined;
 
+/**
+ * The id prefix of a code-mode script's call (`scriptCalls.prefix` in the Claude hook facts,
+ * src/utils/ai/providers/plugins/anthropic-sub/harness-hooks.ts; mods-plugin.test.ts keeps the two equal).
+ */
+const SCRIPT_CALL_PREFIX = "repl_";
+let announcedScriptRows: string | undefined;
+
+/**
+ * Marks this session as one where a code-mode script's calls draw as rows of their own, the first time such a row
+ * draws (`GENESIS_TOOLS_MODS_SCRIPT_ROWS`, `MODS_SCRIPT_ROWS_VAR` in src/agents/lib/hooks/diff/run.ts). Claude Code
+ * adds a script's calls to the transcript as tool calls of their own, so the mod draws a script's shell diff under its
+ * row as it does a Bash call's; the hook leaves that diff to the mod only once a row proved it draws here.
+ */
+async function announceScriptRows($: EngineInterface, ids: readonly (string | undefined)[]): Promise<void> {
+    if (!ids.some((id) => id?.startsWith(SCRIPT_CALL_PREFIX))) {
+        return;
+    }
+
+    try {
+        const id = String(await $.session.id());
+
+        if (id !== announcedScriptRows) {
+            await $.env.set("GENESIS_TOOLS_MODS_SCRIPT_ROWS", id);
+            announcedScriptRows = id;
+        }
+    } catch {
+        // No mark means the hook draws a script's diff itself, as before; the next such row tries again.
+    }
+}
+
 /** Marks this session as one the mod draws in; again when the id changes (a resumed or forked session). */
 async function announceSession($: EngineInterface): Promise<void> {
     try {
@@ -1169,6 +1199,10 @@ export const register: Register = (on) => {
 
     on("ui.render", { component: "ToolGroup" }, async ($, e, next) => {
         const ui = $.ui.resolve(e);
+        await announceScriptRows(
+            $,
+            e.props.calls.map((call) => call.tool_use_id)
+        );
         const drawn = await withGroupDiffs($, e.props, e.requestId, ui, await next(e));
         const calls = e.props.calls.map((call) => ({ tool: call.tool, input: call.input }));
 
@@ -1192,6 +1226,7 @@ export const register: Register = (on) => {
     on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
         const ui = $.ui.resolve(e);
         const { tool, input, output, tool_use_id, isRunning } = e.props;
+        await announceScriptRows($, [tool_use_id]);
         const drawn = await withCallDiffs($, e.props, ui, await next(e));
 
         const time = await callTimeOf($, hostOf($), [tool_use_id]);
