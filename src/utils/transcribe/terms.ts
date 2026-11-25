@@ -320,6 +320,41 @@ export class SoundMatcher {
 
     /** Undefined when `written` cannot be the run: another first sound, fewer parts than the run has words, under 3 letters. */
     score(heard: string, written: string): number | undefined {
+        const scored = scorePair(this.runOf(heard), this.writtenOf(written));
+        return scored ? Math.round(scored.value * 100) : undefined;
+    }
+
+    /**
+     * The second matcher, for a word misheard at its first sound (`pejlout` heard, `Payload` written is the first one's
+     * job; `bejlout` heard is this one's): the score as if the heard first sound were the written one, times
+     * {@link FIRST_SOUND_PENALTY}. Undefined when the first sounds are the same (`score` answers those), when the
+     * written form is more than one word (a changed first sound then fits any word before it: "to merge" for
+     * "nemergeoval"), or too short for its other sounds to carry it ({@link FIRST_SOUND_MIN_KEY}).
+     */
+    scoreOtherStart(heard: string, written: string): number | undefined {
+        if (/\s/.test(written.trim())) {
+            return undefined;
+        }
+
+        const run = this.runOf(heard);
+        const term = this.writtenOf(written);
+
+        // The same first letter keyed apart is the c rule (`CMS` keys as `sms`, `comes` as `komes`), not a mishearing.
+        if (
+            !run.key ||
+            firstLetter(heard) === firstLetter(written) ||
+            !confusedFirstSounds(run.key[0]!, term.key[0]!) ||
+            term.key.length < FIRST_SOUND_MIN_KEY
+        ) {
+            return undefined;
+        }
+
+        const key = term.key[0] + run.key.slice(1);
+        const scored = scorePair({ ...run, key, skeleton: skeleton(key) }, term);
+        return scored ? Math.round(scored.value * FIRST_SOUND_PENALTY * 100) : undefined;
+    }
+
+    private runOf(heard: string): RunKeys {
         let run = this.runs.get(heard);
 
         if (!run) {
@@ -327,6 +362,10 @@ export class SoundMatcher {
             this.runs.set(heard, run);
         }
 
+        return run;
+    }
+
+    private writtenOf(written: string): IndexedTerm {
         let term = this.written.get(written);
 
         if (!term) {
@@ -334,10 +373,32 @@ export class SoundMatcher {
             this.written.set(written, term);
         }
 
-        const scored = scorePair(run, term);
-        return scored ? Math.round(scored.value * 100) : undefined;
+        return term;
     }
 }
+
+/**
+ * First sounds speech-to-text mistakes for each other, as the keys write them: a voiced and a voiceless pair, and the
+ * k, g, h and s that c, č, ch and k become (`ČNApi` heard keys as `snapi`, `con-api` written as `konapi`).
+ * Measured on three recorded meetings (2026-11-25): any other first sound matched another word far more often than
+ * the misheard one.
+ */
+const FIRST_SOUND_CONFUSIONS: ReadonlySet<string> = new Set(["bp", "dt", "gk", "hk", "gh", "fv", "sz", "ks"]);
+
+/** The first letter as written, `ch` as one: `ČNApi` starts with `č`, `CHNAPI` with `ch`, `con-api` with `c`. */
+function firstLetter(text: string): string {
+    const lower = text.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
+    return lower.startsWith("ch") ? "ch" : lower.slice(0, 1);
+}
+
+function confusedFirstSounds(a: string, b: string): boolean {
+    return a !== b && FIRST_SOUND_CONFUSIONS.has([a, b].sort().join(""));
+}
+
+/** A written word the second matcher may reach needs this many sounds: a short one with another first sound is another word. */
+const FIRST_SOUND_MIN_KEY = 5;
+/** The second matcher's score is the first one's times this: a changed first sound is weaker evidence. */
+const FIRST_SOUND_PENALTY = 0.9;
 
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}.'-]*/gu;
 
