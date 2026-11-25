@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisKit
 
@@ -426,6 +427,113 @@ final class WidgetInboxFeedTests: XCTestCase {
         other.title = "Sort the crates"
         let otherRun = WidgetFeedRun(id: "o", runKey: named.key, items: [other])
         XCTAssertEqual(WidgetFeedRunHeader(run: otherRun, model: model).subtitle, named.title)
+    }
+
+    /// The screenshot bug of 2026-11-25: a one-letter pick staged from the hover list's Items tab had no Send and no
+    /// Unstage there, only "Open in its session". The open entry sends and unstages it in place.
+    func testAStagedPickInTheHoverItemsHasItsOwnSendAndUnstage() throws {
+        var staged = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: alpha.key, at: 5000,
+                                     needsAnswer: true, title: "Pick a basket", number: 1,
+                                     options: ["a) Wicker", "b) Crate", "c) Sack"])
+        staged.draftOption = "b"
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.previewView = "items"
+        let model = try WidgetInboxRender.model(sessions: [alpha], items: [staged], preferences: prefs)
+        defer { model.stop() }
+        var calls: [WidgetJSON] = []
+        model.actionRunner = { value in calls.append(value); return ["ok": true] }
+        model.togglePreviewEntry(staged)
+        let send = DecisionAnswering.sendTitle("b", multiple: false)
+        let (window, host) = Self.clickableHost(AgentWidgetPreview(model: model, surface: .init(edge: .right)),
+                                                size: CGSize(width: 480, height: 560))
+        defer { window.close() }
+        WidgetInboxRender.settle()
+        let drawn = Self.recognized(host)
+        XCTAssertTrue(drawn.contains { $0.text.contains("Crate") }, "the entry is open: \(drawn.map(\.text))")
+        XCTExpectFailure("P1: the open hover entry has no Send and no Unstage for a one-letter pick") {
+            guard let unstage = drawn.first(where: { $0.text == "Unstage" }) else {
+                return XCTFail("no Unstage in \(drawn.map(\.text))")
+            }
+            Self.click(unstage.box, in: window, host: host)
+            WidgetInboxRender.settle()
+            XCTAssertTrue(model.heldDecisionIDs.contains("d1"), "Unstage holds the discard, with its Undo note")
+            model.undoHeldDiscard()
+            WidgetInboxRender.settle()
+            guard let button = Self.recognized(host).first(where: { $0.text.contains(send) }) else {
+                return XCTFail("no \(send) in \(Self.recognized(host).map(\.text))")
+            }
+            Self.click(button.box, in: window, host: host)
+            WidgetInboxRender.settle()
+            XCTAssertTrue(model.sendingDecisionIDs.contains("d1") || !calls.isEmpty, "Send reaches sendStaged")
+        }
+    }
+
+    /// An incomplete inbox is a read that failed: the hover list offers Try again, as the expanded view's Reconnect.
+    func testAnIncompleteInboxOffersTryAgainInTheHoverList() throws {
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.previewView = "items"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.fixture." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/usr/bin/true",
+            stateRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        let summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
+        let state = WidgetState(version: 1, revision: 1, preferences: prefs, assets: [:], drafts: [:], outgoing: [])
+        let snapshot = WidgetSnapshot(notifications: summary, version: 1, state: state, sessions: [alpha], cards: [],
+                                      manifests: [:], errors: [])
+        model.receive([try XCTUnwrap(String(bytes: try JSONEncoder().encode(snapshot), encoding: .utf8))])
+        XCTAssertFalse(model.inbox.complete)
+        let lines = try WidgetInboxRender.draw(AgentWidgetPreview(model: model, surface: .init(edge: .right)),
+                                               size: CGSize(width: 480, height: 480)).joined(separator: " ")
+        XCTAssertTrue(lines.contains("Inbox status unavailable"), lines)
+        XCTExpectFailure("P10: the hover list says the inbox is unavailable and offers no way to read it again") {
+            XCTAssertTrue(lines.contains("Try again"), lines)
+        }
+    }
+
+    /// A window that takes window-local clicks, so a test presses a drawn button without the pointer.
+    static func clickableHost(_ view: some View, size: CGSize) -> (NSWindow, NSView) {
+        let contents = view.padding(8).frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(NativeThemePalette.graphiteBase).environment(\.colorScheme, .dark)
+        let host = NSHostingView(rootView: contents)
+        let window = NSPanel(contentRect: NSRect(x: -10000, y: -10000, width: size.width, height: size.height),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        window.displayIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        return (window, host)
+    }
+
+    /// Each drawn line with its box in the view's own points, bottom-left origin.
+    static func recognized(_ host: NSView) -> [(text: String, box: CGRect)] {
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return [] }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let image = bitmap.cgImage else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try? VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { line in
+            guard let text = line.topCandidates(1).first?.string else { return nil }
+            let box = line.boundingBox
+            return (text, CGRect(x: box.minX * host.bounds.width, y: box.minY * host.bounds.height,
+                                 width: box.width * host.bounds.width, height: box.height * host.bounds.height))
+        }
+    }
+
+    static func click(_ box: CGRect, in window: NSWindow, host: NSView) {
+        let location = host.convert(NSPoint(x: box.midX, y: host.isFlipped ? host.bounds.height - box.midY : box.midY),
+                                    to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1) else { continue }
+            window.sendEvent(event)
+        }
     }
 
     private func assertOrder(_ labels: [String], in lines: [String], file: StaticString = #filePath, line: UInt = #line) {
