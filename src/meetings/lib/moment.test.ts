@@ -1968,6 +1968,9 @@ describe("a joined meeting is one record of sound (join --repair moves the later
                 : recordingFake(recording.sourceMeetingId);
         const backupRoot = mkdtempSync(join(tmpdir(), "joined-unread-"));
 
+        // Before the repair the record keeps no transcript to read: it is never composed from the recordings again.
+        await expect(OpenedMeeting.of(fx.store, fx.record).meeting()).rejects.toThrow(`join ${fx.record.id} --repair`);
+        await expect(localMeetingTranscript(fx.record, fx.store)).rejects.toThrow(`join ${fx.record.id} --repair`);
         await expect(
             repairJoin({ store: fx.store, ref: fx.record.id, open: gone, backupRoot, encode })
         ).rejects.toThrow("the provider lost def");

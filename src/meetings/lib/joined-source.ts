@@ -6,9 +6,6 @@ import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/t
 import { toJoinedSec } from "./join-clock";
 import { type SourceCopyRef, saveSourceCopy } from "./source-copy";
 
-/** Opens a meeting source by its id (`meetingSource`); a test passes a fake one. */
-export type SourceOpener = (sourceId: string) => Promise<TranscriptSource>;
-
 /** The label a part's own speaker label carries on the joined record (`JoinPart.speakerLabels`), else the same label. */
 export function partSpeakerLabel(part: Pick<JoinPart, "speakerLabels">, label: string): string {
     const labels = part.speakerLabels;
@@ -185,7 +182,7 @@ export interface JoinedReads {
 
 /**
  * Reads each recording once. A meeting that cannot be read throws, so nothing is written from half a meeting; the
- * evidence of a recording whose sound the record kept may be missing, as `joinedSource` reads it.
+ * evidence of a recording whose sound the record kept may be missing (it is read as none).
  */
 export async function readJoinedParts(parts: readonly JoinPart[], open: RecordingOpener): Promise<JoinedReads> {
     const sources = await Promise.all(parts.map((part) => open(part)));
@@ -229,55 +226,4 @@ export function saveJoinedCopy(options: { folder: string; record: MeetingRecord;
     const clock = saveSourceCopy(folder, "clock", ref, { startedAt: parts[0]!.zeroAt });
     const saved = saveSourceCopy(folder, "meeting", ref, meeting);
     return { lines: meeting.transcript.length, written: evidence || clock || saved };
-}
-
-/**
- * The source of a joined record composed from its recordings' sources on every read: each method asks the parts' own
- * source meetings and answers on the joined clock. The meeting id it is asked with is ignored; the record's parts
- * name the source meetings.
- *
- * @deprecated Only a record joined before its transcript was copied reads this, until `meetings join <id> --repair`
- * writes its copy (`saveJoinedCopy`); every other joined record reads its own copy (`linkedSource`).
- */
-export async function joinedSource(record: MeetingRecord, open: SourceOpener): Promise<TranscriptSource> {
-    const parts = record.join?.parts ?? [];
-    const base = await open(parts[0]!.sourceId);
-    const sources = await Promise.all(parts.map((part) => (part.sourceId === base.id ? base : open(part.sourceId))));
-    return {
-        ...base,
-        load: async () =>
-            joinedMeeting(
-                record,
-                parts,
-                await Promise.all(parts.map((part, index) => sources[index]!.load(part.sourceMeetingId)))
-            ),
-        revision: async () => {
-            const revisions = await Promise.all(
-                parts.map((part, index) => sources[index]!.revision(part.sourceMeetingId))
-            );
-            return revisions.some((one) => one === null) ? null : revisions.join("+");
-        },
-        recordingClock: async () => ({ startedAt: parts[0]!.zeroAt }),
-        evidence: async () =>
-            joinedEvidence(
-                parts,
-                await Promise.all(
-                    parts.map((part, index) =>
-                        sources[index]!.evidence(part.sourceMeetingId).catch((error: unknown) => {
-                            // A part whose source no longer reads still plays from its preserved sound.
-                            if (!part.audio) {
-                                throw error;
-                            }
-                            return null;
-                        })
-                    )
-                )
-            ),
-        meetingFolders: async () => {
-            const folders = await Promise.all(
-                parts.map((part, index) => sources[index]!.meetingFolders(part.sourceMeetingId))
-            );
-            return folders.some((one) => one === null) ? null : [...new Set(folders.flatMap((one) => one ?? []))];
-        },
-    };
 }
