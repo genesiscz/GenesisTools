@@ -634,9 +634,12 @@ links its full diff.
 
 - Files inside the git roots the command works in: the session cwd and every `cd` target. A command that may write
   also works in each folder it hands a program: the value of a folder flag (`--cwd`, `--dir`, `--directory`,
-  `--root`, `--chdir`, `--workdir`, `--work-tree`, `-C`), and a repository's top folder given to a script runner
-  (`bun renames.ts <checkout>`). A command that only reads (`git -C <dir> log`) gets no such root, because each root
-  costs a `git rev-parse` and a `git status`.
+  `--root`, `--chdir`, `--workdir`, `--work-tree`, `-C`), and the repository of a folder given to a script runner
+  (`bun renames.ts <checkout>`, `bun x.ts <checkout>/packages/a`), as its top folder. A folder inside a repository the
+  command already works in (an output folder) adds nothing, and neither does a folder given to any other program
+  (`cp`, `find`, `./script.sh`): on three days of real commands that would have watched 139 more repositories for no
+  edit. A command that only reads (`git -C <dir> log`) gets no such root, because each root costs a `git rev-parse`
+  and a `git status`.
 - Files the command **names** as a path (`diff.watchNamedPaths`, on), so an edit to a note, a `~/.claude` memory file
   or any path outside the cwd repository shows at all. At most `diff.maxNamedPaths` (8) per call, each a `stat` and a
   clone.

@@ -740,6 +740,20 @@ describe("a command that edits a sibling repository", () => {
         expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-ARGUMENT");
     });
 
+    it("finds the repository a script runner gets a folder inside of", () => {
+        mkdirSync(join(other, "packages", "a"), { recursive: true });
+
+        const current = begin({ command: `bun '/opt/none/codemod.ts' '${other}/packages/a'` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-SUBFOLDER\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-SUBFOLDER");
+    });
+
     it("reads a folder flag or a repository argument as a program folder, and nothing else", () => {
         const parent = dirname(other);
         const leaf = basename(other);
@@ -755,9 +769,17 @@ describe("a command that edits a sibling repository", () => {
         expect(programDirs("grep -C 3 needle kept.ts", repo)).toEqual([]);
         expect(programDirs(`bun x.ts --cwd ${repo}`, repo)).toEqual([]);
         expect(programDirs(`bun x.ts ${other}/sibling.ts`, repo)).toEqual([]);
-        // Only a script runner's argument counts, and only a repository's top folder.
+        // Only a script runner's argument counts, and only a folder inside a repository, as that repository's top.
         expect(programDirs(`cp -R ${other} /opt/none/copy`, repo)).toEqual([]);
         expect(programDirs(`bun x.ts ${parent}`, repo)).toEqual([]);
+        mkdirSync(join(other, "packages", "a"), { recursive: true });
+        mkdirSync(join(repo, "out"), { recursive: true });
+        expect(programDirs(`bun x.ts ${other}/packages/a`, repo)).toEqual([other]);
+        expect(programDirs(`cd ${parent} && bun x.ts ${leaf}/packages`, repo)).toEqual([other]);
+        expect(programDirs(`cp -R ${other}/packages/a /opt/none/copy`, repo)).toEqual([]);
+        // A folder inside the repository the command already works in (an output folder) costs no second root.
+        expect(programDirs(`bun x.ts ${repo}/out`, repo)).toEqual([]);
+        expect(programDirs("bun x.ts out", repo)).toEqual([]);
         // The `cd` folders stay where they were: the shell moves there, no program is handed one.
         expect(commandDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([repo]);
         // The pre phase and the post phase read a named path against the same folders.
