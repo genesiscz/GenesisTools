@@ -92,6 +92,8 @@ interface SessionPin {
     model: string | null;
     cwd: string;
     workspaceId: string | null;
+    /** The `tools claude run` launch that started this session's claude ({@link launchIdFor}); absent for any other start. */
+    launchId?: string;
     source: "hook";
     at: number;
 }
@@ -118,8 +120,27 @@ function modelFromCommand(command: string): string | null {
     return null;
 }
 
+/** One process above this hook: its pid, its parent and its command line. */
+export interface ProcessHop {
+    pid: number;
+    ppid: number;
+    command: string;
+}
+
+const CLAUDE_COMMAND = /(^|\/|\s)claude(\s|$)/;
+/** A shell that names `claude` in its `-c` text (`zsh -ic exec claude …`) is not a claude process. */
+const SHELL_COMMAND = /^-?(?:\S*\/)?(?:zsh|bash|sh|fish|dash)(?:\s|$)/;
+
+function readHop(pid: number): ProcessHop | null {
+    const entry = readProcessBasics(pid);
+
+    return entry?.command ? { pid: entry.pid, ppid: entry.ppid, command: entry.command } : null;
+}
+
+let ancestorHopsCache: ProcessHop[] | null = null;
+
 /**
- * The ancestor command lines, nearest first, stopping at the first `claude`.
+ * The ancestors, nearest first, stopping at the first `claude`.
  * A hook is a grandchild of claude (claude → sh → this), so the launch flags are
  * only reachable by walking up the parent chain. An unreadable ancestor ends the walk.
  *
@@ -127,40 +148,91 @@ function modelFromCommand(command: string): string | null {
  * do their own walk, so a SessionStart could spawn `ps` up to 2 * MAX_PS_HOPS
  * times before returning, which the user waits for (PR #341 review round 4, t5).
  */
-let ancestorCommandsCache: string[] | null = null;
-
-export function ancestorCommands(): string[] {
-    if (ancestorCommandsCache !== null) {
-        return ancestorCommandsCache;
+function ancestorHops(): ProcessHop[] {
+    if (ancestorHopsCache !== null) {
+        return ancestorHopsCache;
     }
 
-    const commands: string[] = [];
+    const hops: ProcessHop[] = [];
     let pid = process.ppid;
 
     for (let hop = 0; hop < MAX_PS_HOPS && pid > 1; hop++) {
-        const entry = readProcessBasics(pid);
+        const entry = readHop(pid);
 
-        if (!entry?.command) {
+        if (!entry) {
             break;
         }
 
-        commands.push(entry.command);
+        hops.push(entry);
 
-        if (/(^|\/|\s)claude(\s|$)/.test(entry.command)) {
+        if (CLAUDE_COMMAND.test(entry.command)) {
             break;
         }
 
         pid = entry.ppid;
     }
 
-    ancestorCommandsCache = commands;
-    return commands;
+    ancestorHopsCache = hops;
+    return hops;
+}
+
+/** The ancestor command lines, nearest first, stopping at the first `claude`. */
+export function ancestorCommands(): string[] {
+    return ancestorHops().map((hop) => hop.command);
+}
+
+/** The nearest `claude` above this hook, or null when the walk found none. */
+function claudeAncestor(): ProcessHop | null {
+    return ancestorHops().find((hop) => CLAUDE_COMMAND.test(hop.command)) ?? null;
+}
+
+/** Hops from the session's claude up to the launcher: claude's parent is the launcher, `zsh -ic`, or `cmux claude-teams`. */
+const LAUNCH_HOPS = 3;
+
+/**
+ * The launch id `tools claude run` put in the env (`TOOLS_CLAUDE_LAUNCH_ID`, with its own pid in
+ * `TOOLS_CLAUDE_LAUNCHER_PID`), when this session's claude is the one that launcher started. After Claude Code quits,
+ * the launcher finds the session it ran by this id, also after a `/clear` made a new one.
+ *
+ * The env alone is not proof: everything the session starts inherits it, and a `claude -p` that a tool runs inside the
+ * session writes a pin too. So the launcher's pid must come within {@link LAUNCH_HOPS} above the session's claude, and
+ * before any other claude: above a nested `claude -p` sits the session's own claude.
+ */
+export function launchIdFor(
+    env: NodeJS.ProcessEnv,
+    claude: ProcessHop | null,
+    read: (pid: number) => ProcessHop | null = readHop
+): string | null {
+    const id = env.TOOLS_CLAUDE_LAUNCH_ID;
+    const launcher = Number(env.TOOLS_CLAUDE_LAUNCHER_PID);
+
+    if (!id || !claude || !Number.isInteger(launcher) || launcher <= 1) {
+        return null;
+    }
+
+    let pid = claude.ppid;
+
+    for (let hop = 0; hop < LAUNCH_HOPS && pid > 1; hop++) {
+        if (pid === launcher) {
+            return id;
+        }
+
+        const entry = read(pid);
+
+        if (!entry || (CLAUDE_COMMAND.test(entry.command) && !SHELL_COMMAND.test(entry.command))) {
+            return null;
+        }
+
+        pid = entry.ppid;
+    }
+
+    return null;
 }
 
 /** The model the nearest `claude` ancestor was launched with. */
 function modelFromAncestors(): string | null {
     for (const command of ancestorCommands()) {
-        if (/(^|\/|\s)claude(\s|$)/.test(command)) {
+        if (CLAUDE_COMMAND.test(command)) {
             return modelFromCommand(command);
         }
     }
@@ -506,6 +578,8 @@ function main(raw: string): void {
     const journalDefault = harness === JOURNAL_DEFAULT_HARNESS;
     const fromPayload = typeof input.model === "string" ? input.model.trim() : "";
     const host = hostFromEnv(process.env);
+    // `launchAuthFromAncestor` again: the launch tag is `tools claude run`'s, and the walk looks for a claude process.
+    const launchId = facts.launchAuthFromAncestor ? launchIdFor(process.env, claudeAncestor()) : null;
     const pin: SessionPin = {
         sessionId,
         ...(host ? { host } : {}),
@@ -526,6 +600,7 @@ function main(raw: string): void {
         model: fromPayload || (facts.launchAuthFromAncestor ? modelFromAncestors() : null),
         cwd: input.cwd || process.cwd(),
         workspaceId: process.env.CMUX_WORKSPACE_ID || null,
+        ...(launchId ? { launchId } : {}),
         source: "hook",
         at: Date.now(),
     };

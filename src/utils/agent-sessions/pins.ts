@@ -172,6 +172,26 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
 }
 
 /**
+ * The session a `tools claude run` launch ran last: the newest pin with its launch id. A `/clear` starts a new session
+ * in the same claude process, and its pin is newer, so the launcher resumes the session that was open when it quit.
+ */
+export async function sessionOfLaunch(
+    launchId: string,
+    opts: Pick<LoadPinsOptions, "path"> = {}
+): Promise<string | null> {
+    const journal = await readJournal(opts.path ?? pinsPath());
+    let newest: SessionPin | null = null;
+
+    for (const pin of journal?.records ?? []) {
+        if (pin.launchId === launchId && (!newest || pin.at >= newest.at)) {
+            newest = pin;
+        }
+    }
+
+    return newest?.sessionId ?? null;
+}
+
+/**
  * Rewrite the journal as one line per session. Racing a hook append can only lose the
  * pin of a session that started in the same instant, and that session re-pins on its
  * next SessionStart, so no lock is worth the startup cost this pays in every launch.
@@ -239,6 +259,11 @@ export interface SessionPin {
     cwd: string;
     /** cmux's stable workspace UUID (CMUX_WORKSPACE_ID), when the session ran inside cmux. */
     workspaceId: string | null;
+    /**
+     * The `tools claude run` launch whose claude wrote this pin (`launchIdFor` in the SessionStart hook). Absent on
+     * every other start and on pins written before 2026-11-25.
+     */
+    launchId?: string;
     source: PinSource;
     /** Epoch ms of the hook event that produced this record. */
     at: number;
