@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { foldText } from "@genesiscz/utils/macos/ocr-boxes";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -20,6 +21,18 @@ export const SCREEN_LEAD_WINDOW_SEC = 60;
 export const DEFAULT_SCREEN_LINES = 3;
 /** A screen form must sound at least this close to the lead (0 to 100) to be listed. */
 const MIN_SCORE = 60;
+/**
+ * A screen form must sound this close to a term fix's words before `items add` warns that the screen spells it
+ * otherwise. Measured on three recorded meetings (2026-11-25): at 75 most warnings named another word that only sounds
+ * alike ("privacy" near a name, "Charts" near "courtesy").
+ */
+const CONFLICT_MIN_SCORE = 85;
+/** A Czech case ending, or a slang ending on a loan word: `správy` and `správě`, `YAMLu` and `yaml`. */
+const ENDING_CHARS = 3;
+/** The letters Czech endings are made of, folded (`-ovi`, `-ách`, `-em`, `-ým`): `ContentRoes` is no ending of `ContentRows`. */
+const ENDING_LETTERS = /^[aeiouymvhc]*$/;
+/** The shortest shared start that makes two forms one word with different endings. */
+const STEM_CHARS = 4;
 /** An OCR line is cut to this many characters: a code line or a paragraph can run long. */
 const MAX_LINE_CHARS = 200;
 
@@ -136,11 +149,10 @@ interface LineWords {
 
 const SCREEN_WORD = /[\p{L}\p{N}][\p{L}\p{N}._/'-]*/gu;
 
-/** Each lead of the term part with the screen lines near it: the read is shared, the words of a line are split once. */
-export function withScreenLines(terms: RawTerms, options: { read: ScreenRecordRead; linesPerLead: number }): RawTerms {
-    const matcher = new SoundMatcher();
+/** The OCR lines of a frame, split into words once per frame file for every lead that reads it. */
+function lineCache(): (file: string, text: string) => LineWords[] {
     const split = new Map<string, LineWords[]>();
-    const linesOf = (file: string, text: string): LineWords[] => {
+    return (file, text) => {
         let lines = split.get(file);
 
         if (!lines) {
@@ -158,6 +170,12 @@ export function withScreenLines(terms: RawTerms, options: { read: ScreenRecordRe
 
         return lines;
     };
+}
+
+/** Each lead of the term part with the screen lines near it: the read is shared, the words of a line are split once. */
+export function withScreenLines(terms: RawTerms, options: { read: ScreenRecordRead; linesPerLead: number }): RawTerms {
+    const matcher = new SoundMatcher();
+    const linesOf = lineCache();
     const near = (lead: { heard: string; written: string[]; times: number[] }): ScreenNear =>
         screenNear({ ...lead, read: options.read, matcher, linesOf, linesPerLead: options.linesPerLead });
     const timesOf = (examples: Array<{ atSec?: number }>) =>
@@ -197,6 +215,109 @@ export function withScreenLines(terms: RawTerms, options: { read: ScreenRecordRe
               }
             : {}),
     };
+}
+
+/** A term fix as `items add` checks it against the screen. */
+export interface TermFix {
+    atSec: number;
+    heard: string;
+    proposed: string;
+}
+
+/**
+ * The screen line near a term fix that spells it otherwise: of the frames within 60 s of the fix, a line whose words
+ * sound like the heard words or the fix (at least 85 of 100), when no line near it shows the fix itself. Undefined
+ * when the screen agrees, shows nothing like it, or kept no frame then.
+ */
+export function termScreenConflict(options: {
+    read: ScreenRecordRead;
+    fix: TermFix;
+    matcher?: SoundMatcher;
+    linesOf?: (file: string, text: string) => LineWords[];
+}): ScreenLine | undefined {
+    const { fix } = options;
+    const near = screenNear({
+        heard: fix.heard,
+        written: [fix.proposed],
+        times: [fix.atSec],
+        read: options.read,
+        matcher: options.matcher ?? new SoundMatcher(),
+        linesOf: options.linesOf ?? lineCache(),
+        linesPerLead: DEFAULT_SCREEN_LINES,
+    });
+    if (near.lines.some((line) => sameSpelling(line.form, fix.proposed))) {
+        return undefined;
+    }
+
+    return near.lines.find((line) => line.score >= CONFLICT_MIN_SCORE);
+}
+
+/** Letters and digits only, folded: `col-administration`, `COL_ADMINISTRATION` and `col administration` are one form. */
+function spellingKey(text: string): string {
+    return foldText(text).replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+/**
+ * Whether the screen form spells the fix the same way, give or take what a screen shows of a spoken word: case,
+ * accents and separators, a longer or shorter word around it (`Jenkins` on screen, `Jenkinsfile` said), or another
+ * ending of the same stem (`klienti` on screen, `klientovi` said).
+ */
+function sameSpelling(screen: string, proposed: string): boolean {
+    const a = spellingKey(screen);
+    const b = spellingKey(proposed);
+
+    if (a === b || a.startsWith(b) || b.startsWith(a)) {
+        return true;
+    }
+
+    let shared = 0;
+
+    while (shared < a.length && a[shared] === b[shared]) {
+        shared += 1;
+    }
+
+    const endings = [a.slice(shared), b.slice(shared)];
+    return (
+        shared >= STEM_CHARS && endings.every((ending) => ending.length <= ENDING_CHARS && ENDING_LETTERS.test(ending))
+    );
+}
+
+/** The key `termScreenWarnings` files a fix under. */
+export function termFixKey(fix: TermFix): string {
+    return SafeJSON.stringify([fix.atSec, fix.heard, fix.proposed]);
+}
+
+/**
+ * `items add`: for each term fix whose nearby screen spells it otherwise, the warning to print, keyed by
+ * {@link termFixKey}. Reads the screen record only when there is a fix to check; a meeting without one gets none.
+ */
+export async function termScreenWarnings(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    fixes: TermFix[];
+}): Promise<Map<string, string>> {
+    const warnings = new Map<string, string>();
+    const read = options.fixes.length > 0 ? await openScreenRecord(options.store, options.record) : undefined;
+
+    if (!read) {
+        return warnings;
+    }
+
+    const matcher = new SoundMatcher();
+    const linesOf = lineCache();
+
+    for (const fix of options.fixes) {
+        const line = termScreenConflict({ read, fix, matcher, linesOf });
+
+        if (line) {
+            warnings.set(
+                termFixKey(fix),
+                `the screen at ${formatClock(line.atSec)} shows "${line.form}" (${line.score} % like it, ${line.frame}), not "${fix.proposed}": look at ${toolCommand("meetings", "screen", options.record.id, "--at", formatClock(line.atSec))} before it is confirmed`
+            );
+        }
+    }
+
+    return warnings;
 }
 
 /** The lines of the frames within the window of any of the lead's times that sound like it, best first, one per text. */

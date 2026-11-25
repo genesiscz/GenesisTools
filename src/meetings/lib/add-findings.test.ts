@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -63,6 +63,55 @@ describe("a line on a speaker range", () => {
     test("on a range inside one second it names that line, with no warning", () => {
         const one = findingsFileSchema.parse([{ ...wide[0], from: 10, to: 10 }]);
         expect(prepareFindings({ findings: one, items: [], transcript }).warnings).toEqual([]);
+    });
+});
+
+describe("a term fix against the screen", () => {
+    test("adding a fix the screen near it spells otherwise warns with the screen line; a fix the screen shows does not", async () => {
+        const store = new MeetingStore(new Storage("term-screen-fixture"));
+        const start = Date.parse("2026-11-01T10:00:00Z");
+        const saved = await store.create(
+            { title: "Invented meeting", start: new Date(start).toISOString(), createdBy: "new" },
+            { command: "fixture", change: "created" }
+        );
+        const folder = store.folder(saved.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const row = {
+            file: "frames/a.png",
+            at: new Date(start + 70_000).toISOString(),
+            displayId: 1,
+            text: "ContentRows grid",
+            blocks: [],
+        };
+        writeFileSync(join(folder, "ocr.jsonl"), `${SafeJSON.stringify(row)}\n`);
+        const journal = new DecisionJournal({ store, ledger: () => {} });
+        const term = (proposed: string) =>
+            findingsFileSchema.parse([
+                {
+                    kind: "term",
+                    at: "01:05",
+                    heard: "content rouz",
+                    proposed,
+                    confidence: 0.8,
+                    reason: "the component name",
+                },
+            ]);
+
+        const wrong = await journal.apply({
+            meeting: saved.id,
+            action: { kind: "add", findings: term("ContentRoes") },
+            actor: { kind: "listen" },
+        });
+        expect(wrong.warnings?.find((warning) => warning.includes("the screen at"))).toStartWith(
+            'i1: the screen at 01:10 shows "ContentRows"'
+        );
+
+        const right = await journal.apply({
+            meeting: saved.id,
+            action: { kind: "add", findings: term("ContentRows") },
+            actor: { kind: "listen" },
+        });
+        expect((right.warnings ?? []).some((warning) => warning.includes("the screen at"))).toBe(false);
     });
 });
 
