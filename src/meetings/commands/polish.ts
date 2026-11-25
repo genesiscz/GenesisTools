@@ -136,13 +136,18 @@ export function registerPolishCommands(program: Command): void {
             "--record <id...>",
             "markdown: the meeting record of each part, in order, when its front matter and play links name none"
         )
+        .option(
+            "--all-links",
+            "markdown: also make tokens of the play links of an older meeting id or another time form (6:07); the first build rewrites them to the record id"
+        )
         .option("--json", "print the result as JSON")
-        .action(async (opts: { from: string; out?: string; record?: string[]; json?: boolean }) => {
+        .action(async (opts: { from: string; out?: string; record?: string[]; allLinks?: boolean; json?: boolean }) => {
             try {
                 const result = await initPolished({
                     from: opts.from,
                     ...(opts.out ? { out: opts.out } : {}),
                     ...(opts.record?.length ? { records: opts.record } : {}),
+                    ...(opts.allLinks ? { allLinks: true } : {}),
                 });
 
                 if (opts.json) {

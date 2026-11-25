@@ -535,13 +535,14 @@ export const polishInit = defineMethod({
             from: z.string().min(1),
             out: z.string().min(1).optional(),
             records: z.array(z.string().min(1)).optional(),
+            allLinks: z.boolean().optional(),
         })
         .strict(),
-    positional: ["from", "out", "records"],
+    positional: ["from", "out", "records", "allLinks"],
     result: z.unknown(),
     resultName: "{ path, report: { mapped, kept, notes }, unlinkedDir }",
     effect: "reversible",
-    doc: `Write a NEW .polished.ts, once, from a draft polished JSON (every field becomes a config field or is kept under extras) or from a polished markdown that has none: its front matter and authored sections become config fields, its play links [[<token>:MM:SS]] tokens, and each section the build writes from the records keeps the markdown's text as an override, so the first build writes the same body. records names the parts of a markdown that names none. Refuses an existing file. Same as ${toolCommand("meetings polish init")} --from <json|md> [--out <file>] [--record <id...>].`,
+    doc: `Write a NEW .polished.ts, once, from a draft polished JSON (every field becomes a config field or is kept under extras) or from a polished markdown that has none: its front matter and authored sections become config fields, its play links [[<token>:MM:SS]] tokens, and each section the build writes from the records keeps the markdown's text as an override, so the first build writes the same body. records names the parts of a markdown that names none; allLinks also makes tokens of the play links of an older meeting id or another time form (6:07), which the first build rewrites to the record id. Refuses an existing file. Same as ${toolCommand("meetings polish init")} --from <json|md> [--out <file>] [--record <id...>] [--all-links].`,
 });
 
 export const dictionaryTest = defineMethod({

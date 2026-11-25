@@ -236,7 +236,8 @@ A missing meeting names only the store that was searched. To find which store ho
    file, never the markdown: the build stamps it and refuses to overwrite a hand edit; `--check` (REPL: `meetings.polish.check(file)`) says clean, stale or hand-edited. A draft
    `<name>.polished.json` becomes the `.ts` once with `tools meetings polish init --from <json>` (REPL:
    `meetings.polish.init(from)`); so does a hand-written `<name>.polished.md` with no `.ts`
-   (`--from <md> [--record <id...>]`, REPL: `meetings.polish.init(md, undefined, records)`): the sections the records
+   (`--from <md> [--record <id...>] [--all-links]`, REPL: `meetings.polish.init(md, undefined, records, allLinks)`;
+   `--all-links` also makes tokens of the play links of an older meeting id or a `6:07` time): the sections the records
    would write stay frozen as `overrides.sections`, so run `--check`, then `--force` once, then delete an override to
    hand that section back to the records. That first build also drops the front matter keys the `.ts` took over
    (`adopted.frontmatterKeys`: `meeting_record`, `share_link`, `<source>_id`) and writes its own names. A vault folder needs `tools link install` once so the import resolves.
