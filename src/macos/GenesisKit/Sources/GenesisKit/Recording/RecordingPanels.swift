@@ -111,7 +111,8 @@ struct RecordingWindowDragArea: NSViewRepresentable {
 
 final class RecordingWindowDragView: NSView {
     var dragged: (() -> Void)?
-    private var last: CGPoint?
+    /// Where the drag began: the pointer in global CoreGraphics points, and this view's origin on the screen.
+    private var grab: (pointer: CGPoint, view: CGPoint)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -124,29 +125,43 @@ final class RecordingWindowDragView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: last == nil ? .openHand : .closedHand) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: grab == nil ? .openHand : .closedHand) }
 
     /// Global CoreGraphics points (y down), from the event itself, so a drag delivered in the background moves it too.
     private func location(_ event: NSEvent) -> CGPoint {
         event.cgEvent?.location ?? CGPoint(x: NSEvent.mouseLocation.x, y: -NSEvent.mouseLocation.y)
     }
 
+    /// This view's origin in its window, where it sits now.
+    private var originInWindow: CGPoint { convert(bounds.origin, to: nil) }
+
     override func mouseDown(with event: NSEvent) {
-        last = location(event)
-        window?.invalidateCursorRects(for: self)
+        guard let window else { return }
+        grab = (location(event), window.convertPoint(toScreen: originInWindow))
+        window.invalidateCursorRects(for: self)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window, let last else { return }
-        let point = location(event)
-        window.setFrameOrigin(CGPoint(x: window.frame.minX + point.x - last.x, y: window.frame.minY - (point.y - last.y)))
-        self.last = point
+        guard let window, let grab else { return }
+        window.setFrameOrigin(Self.windowOrigin(grabbedAt: grab.pointer, viewWas: grab.view, pointer: location(event),
+                                                viewInWindow: originInWindow))
         dragged?()
     }
 
     override func mouseUp(with event: NSEvent) {
-        last = nil
+        grab = nil
         window?.invalidateCursorRects(for: self)
+    }
+
+    /// The window origin that puts this view where the pointer has carried it since mouse-down: the view's screen
+    /// origin then, plus the pointer's whole travel (CoreGraphics y runs down, so it is flipped), less where the view
+    /// sits in its window now, so a window that changes height during the drag keeps the grabbed spot under the
+    /// pointer. Whole points, as the window server keeps them. Adding each event's delta to the window's rounded
+    /// origin lost the fraction on every event: 200 steps of 0.4 pt moved the window 0 pt one way and 200 pt the other.
+    static func windowOrigin(grabbedAt start: CGPoint, viewWas view: CGPoint, pointer: CGPoint,
+                             viewInWindow: CGPoint) -> CGPoint {
+        CGPoint(x: (view.x + pointer.x - start.x - viewInWindow.x).rounded(),
+                y: (view.y - (pointer.y - start.y) - viewInWindow.y).rounded())
     }
 }
 
