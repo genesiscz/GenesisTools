@@ -10,11 +10,18 @@ import {
     postRoots,
     recordFileToolChange,
 } from "../lib/hooks/diff/run";
+import { scriptCallIdNotice } from "../lib/hooks/diff/script-calls";
 import { gitOnly } from "../lib/hooks/diff/status/modes";
 import { prepareStatus, type StatusCall, statusEligible } from "../lib/hooks/diff/status/prepare";
 import { sweepAbandonedCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
-import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
+import {
+    HARNESS_HOOK_FACTS,
+    isHarnessName,
+    isTerminalTool,
+    normalizeEvent,
+    parseHookPayload,
+} from "../lib/hooks/payload";
 import { rmRequestNotice } from "../lib/hooks/rm-requests";
 
 if (env.agents.areHooksDisabled()) {
@@ -94,12 +101,38 @@ for (const item of [...flushed, decision]) {
 
 // A `tools rm` call whose output was cut (`>/dev/null`, `| head`) still tells the model about the request it opened.
 const rmNotice = await rmRequestNotice(payload);
+// At most once a day: the ids of a code-mode script's calls no longer look as `callHasOwnRow` expects.
+const idNotice = isHarnessName(payload.harness)
+    ? scriptCallIdNotice({
+          harness: payload.harness,
+          facts: HARNESS_HOOK_FACTS[payload.harness],
+          toolUseId: payload.toolUseId,
+          vars: env.getProcessEnv(),
+      })
+    : null;
 
-if ((message || rmNotice) && !config.shadow) {
+if (idNotice) {
+    logDecision(
+        {
+            at: new Date().toISOString(),
+            phase: "post",
+            harness: payload.harness,
+            session: payload.sessionId,
+            toolUseId: payload.toolUseId,
+            decision: "warn",
+            reason: idNotice,
+        },
+        config.logPath
+    );
+}
+
+const shown = [message, idNotice].filter((part) => part).join("\n\n");
+
+if ((shown || rmNotice) && !config.shadow) {
     // systemMessage is the only field the USER sees; additionalContext is model-only.
     process.stdout.write(
         SafeJSON.stringify({
-            ...(message ? { systemMessage: message } : {}),
+            ...(shown ? { systemMessage: shown } : {}),
             ...(rmNotice ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: rmNotice } } : {}),
         })
     );

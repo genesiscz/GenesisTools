@@ -79,6 +79,7 @@ import {
 } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
+import { callHasOwnRow } from "./script-calls";
 import { gitReads, type StatusReads } from "./status/prepare";
 import { terminalColumns } from "./terminal";
 import { type Palette, resolvePalette } from "./theme";
@@ -922,7 +923,7 @@ export function modDrawsDiffs({
     return (
         isHarnessName(harness) &&
         HARNESS_HOOK_FACTS[harness].modsDrawDiffs &&
-        HARNESS_HOOK_FACTS[harness].callHasOwnRow(toolUseId) &&
+        callHasOwnRow(HARNESS_HOOK_FACTS[harness], toolUseId) &&
         config.mods.diff.fullDiff &&
         diffFor(config, harness).fullDiff !== "off" &&
         isEnabled(sessionId)
