@@ -180,11 +180,55 @@ struct WidgetDecisionBody<OwnAnswer: View, Footer: View>: View {
             }
             VStack(alignment: .leading, spacing: surface.optionSpacing) {
                 if value.answerable { options(pickUnder: pickUnder) }
+                if surface == .session { recommendedPick }
                 ownAnswer
+                if surface == .session { stagedNote }
                 // Send and Unstage of a staged pick or note, beside the options they send.
                 if surface.placement == .row { surface.stagedActions(value, host: host).padding(.top, 2) }
             }
-            footer
+            if surface == .session {
+                // Send now is the card's one primary action while a pick or a note waits, at the footer's start; the
+                // footer's own buttons follow. Every staged decision at once, this one included, from the card being
+                // read (Martin, 2026-10-28), while another one is staged too.
+                HStack(spacing: 8) {
+                    surface.stagedActions(value, host: host)
+                    footer
+                }
+                .buttonStyle(.genHover()).font(.caption)
+            } else {
+                footer
+            }
+        }
+    }
+
+    /// A set the agent recommends, ticked in one click while it is not the ticked set already. The list rows draw it in
+    /// their staged row instead.
+    @ViewBuilder private var recommendedPick: some View {
+        let stage = host.stage
+        if value.answerable, stage.takesSeveral, let recommended = stage.recommendedSet, recommended != stage.letters {
+            WidgetRecommendedPickButton(letters: recommended) { host.pickSet(recommended) }
+                .disabled(model.cardPending || stage.busy)
+                .padding(.leading, 4)
+        }
+    }
+
+    /// "Note staged: …" under the own answer, beside the buttons that act on it: at the top of the card it pushed the
+    /// options and the buttons down under the pointer.
+    @ViewBuilder private var stagedNote: some View {
+        if let card = value.card {
+            let note = model.shownStagedNote(card.sourceId, card.draft)
+            if let saved = model.draftSavedAt[card.id] ?? (note != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
+               card.kind == "decision", card.needsAnswer, !model.heldDecisionIDs.contains(card.sourceId) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
+                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
+                    Text(note.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
+                    if model.draftSavedAt[card.id] != nil {
+                        Text("·")
+                        LiveAgo(date: saved, style: .brief)
+                    }
+                }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+            }
         }
     }
 

@@ -700,14 +700,6 @@ public struct LiveWidgetView: View {
             && model.shownStaged(card.sourceId, option: card.draftOption, draft: card.draft)
     }
 
-    /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.
-    private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
-                           focused: Bool) -> some View {
-        WidgetOptionButton(model: model, card: card, choice: choice, index: index, key: key, picked: picked,
-                           focused: focused)
-            .id("choice-" + card.id + "-" + choice.id)
-    }
-
     /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
     static func choiceKey(_ index: Int) -> String? {
         guard index < 9 else { return nil }
@@ -723,35 +715,36 @@ public struct LiveWidgetView: View {
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
         let preferences = model.preferences
-        // The agent's pick sits under the option it recommends, else above the options (Decision cards → The agent's
-        // pick).
-        let pickUnder = WidgetProposal.placement(card, preferences: preferences)
+        let value = WidgetDecisionValue(card: card)
         VStack(alignment: .leading, spacing: 10) {
             if let origin = card.messageOrigin {
                 Text(origin).font(.caption).foregroundStyle(.secondary)
             }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
-            if !card.body.isEmpty {
-                WidgetMarkdown(text: card.body)
-            }
-            // The hub Inbox card's context: Context, Code, the notes, the pick (WidgetDecisionDetailsView).
-            if let details = card.decision {
-                WidgetDecisionDetailsView(card: card, details: details, preferences: preferences,
-                                          proposal: pickUnder == nil ? details.proposal : nil)
-            }
-            if !card.attachments.isEmpty {
-                WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
-            }
-            if card.kind == "decision" && !card.needsAnswer {
-                // The agent that stored the answer opens its session, unless it is this card's own, which is open.
-                let answerer = model.answererSession(card.answeredBy).flatMap { $0.key == card.sessionKey ? nil : $0 }
-                WidgetDecisionOutcome(card: card, openAnswerer: answerer.map { session in { model.openSessionInbox(session) } }) {
-                    model.openDecision(id: $0.id, sessionKey: $0.sessionKey)
+            if value.answerable {
+                // An open decision or dialog: the shared decision body draws its text, the hub Inbox card's sections
+                // (Context, Code, the notes, the agent's pick), its options, the own answer, the staged note and the
+                // staged actions. The number keys pick its options (`choiceKey`).
+                WidgetDecisionBody(model: model, value: value, surface: .session,
+                                   host: WidgetCardStagingHost(model: model, card: card),
+                                   ownAnswer: { if card.kind == "decision" { ownAnswer(card) } },
+                                   footer: { cardFooterEnd(card) })
+            } else {
+                if !card.body.isEmpty {
+                    WidgetMarkdown(text: card.body)
                 }
-            }
-            if card.needsAnswer {
-                if card.kind == "form" {
+                // Not waiting, so the agent's pick sits above where the options were.
+                WidgetDecisionSections(card: card, preferences: preferences, proposalAbove: true,
+                                       images: WidgetDecisionSurface.session.images, showMedia: showMedia)
+                if card.kind == "decision" {
+                    // The agent that stored the answer opens its session, unless it is this card's own, which is open.
+                    let answerer = model.answererSession(card.answeredBy).flatMap { $0.key == card.sessionKey ? nil : $0 }
+                    WidgetDecisionOutcome(card: card, openAnswerer: answerer.map { session in { model.openSessionInbox(session) } }) {
+                        model.openDecision(id: $0.id, sessionKey: $0.sessionKey)
+                    }
+                }
+                if card.needsAnswer, card.kind == "form" {
                     ForEach(card.formItems ?? []) { item in
                         formItem(item, card: card, showsPrompt: !Self.asksOneQuestion(card))
                             .disabled(model.cardPending)
@@ -759,89 +752,31 @@ public struct LiveWidgetView: View {
                     Button(model.cardPending ? "Answer queued" : "Send answers") { model.submit(answering: true) }
                         .buttonStyle(.borderedProminent).pointerCursor(!model.cardPending)
                         .disabled(model.importing > 0 || model.cardPending)
-                } else {
-                    let staged = model.shownStagedOption(card.sourceId, stored: card.draftOption)
-                    ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
-                        let picked = staged?.contains(choice.id) ?? false
-                        let key = Self.choiceKey(index)
-                        let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
-                        optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
-                        if let pickUnder, pickUnder.letter == choice.id {
-                            // Under the option's text: the label's padding, its badge and the gap after it.
-                            WidgetProposalLine(text: pickUnder.text)
-                                .padding(.leading, DecisionOptionMetrics.textInset(multiple: card.takesSeveral))
-                                .padding(.trailing, 8)
+                }
+                HStack(spacing: 8) {
+                    if let task = card.task, let store = model.taskActions {
+                        WidgetTaskActionsCard(store: store, task: task, style: .actions, identifier: "widget.inbox.task." + task.id)
+                    } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
+                        if card.status == "open" {
+                            Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
                         }
+                        Button("Mark complete") { holdMove(card, to: "implemented") }
+                        LegacyWidgetTodoDismissButton(card: card, model: model)
+                    } else if card.kind == "decision" && card.status == "answered" {
+                        // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
+                        let sending = model.sendingDecisionIDs.contains(card.sourceId)
+                        Button(sending ? "Sending…" : "Send again") { model.resendAnswers([WidgetModel.inboxItem(card)]) }
+                            .disabled(sending)
+                            .instantTooltip("Sends the answer to the session now instead of at its next prompt.")
                     }
-                    // A set the agent recommends, ticked in one click while it is not the ticked set already.
-                    if card.takesSeveral,
-                       let recommended = DecisionAnswering.recommendedSet(
-                           card.choices.filter(\.recommended).map(\.id).joined(), count: card.choices.count),
-                       recommended != staged {
-                        WidgetRecommendedPickButton(letters: recommended) { model.pickSet(card, option: recommended) }
-                            .disabled(model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
-                            .padding(.leading, 4)
+                    if card.kind == "result" || card.kind == "answer" {
+                        Button("Create handoff") { model.destination("handoff") }
+                        Button("New agent with context…") { model.destination("new") }
                     }
-                    if card.kind == "decision" { ownAnswer(card) }
+                    cardFooterEnd(card)
                 }
+                .buttonStyle(.genHover()).font(.caption)
             }
-            // Under the options, beside the buttons that act on it: at the top of the card it pushed the options and
-            // the buttons down under the pointer.
-            let note = model.shownStagedNote(card.sourceId, card.draft)
-            if let saved = model.draftSavedAt[card.id] ?? (note != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
-               card.kind == "decision", card.needsAnswer, !model.heldDecisionIDs.contains(card.sourceId) {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
-                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
-                    Text(note.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
-                    if model.draftSavedAt[card.id] != nil {
-                        Text("·")
-                        LiveAgo(date: saved, style: .brief)
-                    }
-                }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-            }
-            HStack(spacing: 8) {
-                if let task = card.task, let store = model.taskActions {
-                    WidgetTaskActionsCard(store: store, task: task, style: .actions, identifier: "widget.inbox.task." + task.id)
-                } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
-                    if card.status == "open" {
-                        Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
-                    }
-                    Button("Mark complete") { holdMove(card, to: "implemented") }
-                    LegacyWidgetTodoDismissButton(card: card, model: model)
-                } else if card.kind == "decision" && card.needsAnswer {
-                    // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
-                    // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
-                    // Every staged decision at once, this one included, from the card being read (Martin,
-                    // 2026-10-28), while another one is staged too.
-                    WidgetStagedActions(
-                        host: WidgetCardStagingHost(model: model, card: card), placement: .footer,
-                        identifier: "widget.card.send." + card.sourceId,
-                        sendAllIdentifier: "widget.card.sendAll." + card.sourceId,
-                        unstageTooltip: card.draft == nil ? "Clears the staged pick."
-                            : "Clears the staged pick and puts the note back into the answer field.")
-                } else if card.kind == "decision" && card.status == "answered" {
-                    // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
-                    let sending = model.sendingDecisionIDs.contains(card.sourceId)
-                    Button(sending ? "Sending…" : "Send again") { model.resendAnswers([WidgetModel.inboxItem(card)]) }
-                        .disabled(sending)
-                        .instantTooltip("Sends the answer to the session now instead of at its next prompt.")
-                }
-                if card.kind == "result" || card.kind == "answer" {
-                    Button("Create handoff") { model.destination("handoff") }
-                    Button("New agent with context…") { model.destination("new") }
-                }
-                Spacer(minLength: 0)
-                if card.kind == "decision" && card.needsAnswer {
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
-                        .foregroundStyle(.secondary)
-                        .instantTooltip("Drops the decision without an answer. Undo brings it back.")
-                }
-                IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
-                           tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
-                    .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
-            }
-            .buttonStyle(.genHover()).font(.caption)
             // A file the Code section already shows with its lines is not listed again under the buttons.
             ForEach(Array(Self.listedRefs(card, preferences: preferences).enumerated()), id: \.offset) { _, ref in
                 if ref.value.hasPrefix("/") {
@@ -855,6 +790,20 @@ public struct LiveWidgetView: View {
                 }
             }
         }
+    }
+
+    /// The right end of a card's footer: Dismiss while a decision waits, quiet and at the right edge, so it never
+    /// moves when staging adds the buttons before it (UX audit P13); then Read aloud.
+    @ViewBuilder private func cardFooterEnd(_ card: WidgetCard) -> some View {
+        Spacer(minLength: 0)
+        if card.kind == "decision" && card.needsAnswer {
+            Button("Dismiss") { holdMove(card, to: "dismissed") }
+                .foregroundStyle(.secondary)
+                .instantTooltip("Drops the decision without an answer. Undo brings it back.")
+        }
+        IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
+                   tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
+            .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
     }
 
     /// The decision's own answer: a field under its options that is there before it is asked for (Martin, 2026-10-26:
