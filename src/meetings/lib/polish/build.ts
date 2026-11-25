@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { linkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -49,7 +49,9 @@ export async function unlinkedPolishedDir(modulePath: string): Promise<string | 
 
 /**
  * Loads a `.polished.ts` and returns its `defineMeetingsPolished` export. The import names the file's modification
- * time, so a long-lived process (the node REPL) reads the file again after an agent edits it.
+ * time, so a long-lived process (the node REPL) reads the file again after an agent edits it, and its real path:
+ * Bun 1.4.2 lists a folder reached through a symlink (`/tmp` and `/var` on macOS) once per process, so a module
+ * written there after an earlier import was "not found" (1.3.13 and a real path see it).
  */
 export async function loadPolishedModule(modulePath: string): Promise<DefinedMeetingsPolished> {
     const unlinked = await unlinkedPolishedDir(modulePath);
@@ -58,7 +60,7 @@ export async function loadPolishedModule(modulePath: string): Promise<DefinedMee
         throw new PolishedModuleUnlinkedError(unlinked);
     }
 
-    const loaded: unknown = await import(`${modulePath}?mtime=${statSync(modulePath).mtimeMs}`);
+    const loaded: unknown = await import(`${realpathSync(modulePath)}?mtime=${statSync(modulePath).mtimeMs}`);
     const candidate = typeof loaded === "object" && loaded !== null && "default" in loaded ? loaded.default : undefined;
 
     if (isDefinedMeetingsPolished(candidate)) {
