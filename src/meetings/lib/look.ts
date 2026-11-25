@@ -54,9 +54,9 @@ function voicePrediction(match: VoiceMatch | undefined, covering: SpeakerRange[]
 }
 
 /**
- * The decisions that name each line's speaker, as `look` reads them: the strongest suggested range (a stated one before
- * a rule's, the latest of equals) and the last confirmed range of the line's label that covers it, a person assignment, and the label's rename. The polished file's speaker diff
- * reads the same facts, so both name a line alike.
+ * The decisions that name each line's speaker, as `look` reads them: the strongest suggested range (`compareRanges`)
+ * and the last confirmed range of the line's label that covers it, a person assignment, and the label's rename. The
+ * polished file's speaker diff reads the same facts, so both name a line alike.
  */
 export function lineSpeakerFacts(record: MeetingRecord, window: { fromSec: number; toSec: number }) {
     const ranges = record.items.filter(

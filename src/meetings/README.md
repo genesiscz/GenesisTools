@@ -324,6 +324,12 @@ stated (`items add`, an answer) names its line at any confidence: the confidence
 as `confidence`, never a `[Name: NN %]` guess. A range owned by an open speaker question stays a guess until answered
 or confirmed.
 
+When several ranges cover one line, one order decides its name in every reader (the transcript, `look`, the polished
+file, the naming pass): a confirmed range first (a person's later decision replaces the earlier one), then a range built
+on the user's answer (its rules include `user`), then one an agent stated, then a rule's automatic range, whatever
+their age. Within one kind the higher confidence wins, and the later range only on a tie
+(`src/utils/meetings/range-strength.ts`).
+
 `tools meetings thresholds <meeting>` lists the effective thresholds, their global values, defaults and sources.
 With the default settings, a 79% term applies. Preview a higher cutoff to see where the term would stop applying.
 
