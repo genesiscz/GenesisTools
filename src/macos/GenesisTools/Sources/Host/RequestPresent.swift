@@ -93,6 +93,8 @@ final class RequestPresenter {
     private var pending: [Entry] = []
     private var head = 0
     private var cancelTimeout: (() -> Void)?
+    /// Answers the open request and closes its window, once: what Allow, Deny and its deadline call.
+    private var finishActive: ((RequestPresentResultStatus, String?, [String]?) -> Void)?
     var onIdle: (() -> Void)?
     var onBusy: (() -> Void)?
 
@@ -106,6 +108,30 @@ final class RequestPresenter {
     }
 
     var waiting: Int { pending.count - head }
+
+    /// Why a window of `change.id` closes: nil while the request still waits for an answer. A request withdrawn by its
+    /// caller, answered in another surface or ended any other way is no longer asked here.
+    static func endedElsewhere(_ change: RequestChangedEvent) -> String? {
+        guard change.outcome.status != .value4 else { return nil }
+        let why = change.outcome.reason.map { " \($0)" } ?? ""
+        return "This window closed without an answer, because the request ended elsewhere (\(change.state.rawValue)).\(why)"
+    }
+
+    /// Closes the window of request `id`, or takes it out of the queue, and answers `obsolete` with `reason`: the
+    /// request ended elsewhere, so an answer here would count for nothing. Another id changes nothing.
+    func end(_ id: String, reason: String) {
+        if active == id {
+            finishActive?(.value3, reason, nil)
+            return
+        }
+        guard let index = pending[head...].firstIndex(where: { $0.params.id == id }) else { return }
+        let entry = pending.remove(at: index)
+        if head == pending.count {
+            pending.removeAll(keepingCapacity: true)
+            head = 0
+        }
+        entry.completion(RequestPresentResult(id: id, status: .value3, reason: reason))
+    }
 
     func show(_ params: RequestPresentParams) async -> RequestPresentResult {
         await withCheckedContinuation { continuation in
@@ -184,6 +210,7 @@ final class RequestPresenter {
             cancelTimeout = nil
             panel.close()
             active = nil
+            finishActive = nil
             entry.completion(RequestPresentResult(id: params.id, status: status, reason: reason, picked: picked))
             showNext()
         }
@@ -198,6 +225,7 @@ final class RequestPresenter {
             let note = model?.denyNote ?? ""
             finish(.value2, note.isEmpty ? nil : note, nil)
         }
+        finishActive = finish
         cancelTimeout = clock.after(remaining) { finish(.value4, "The window wait ended; the request stays open.", nil) }
         // The person area owns notice sound/repetition; generic approval reminders would post a second notice.
         panel.present(model, reminders: false)
@@ -205,9 +233,33 @@ final class RequestPresenter {
     }
 }
 
+/// Closes the window of each request that ends elsewhere while it shows or waits here: withdrawn by its caller (a rerun
+/// that asks again), answered in a terminal or another window. The service sends every change of its request journal
+/// to a subscribed connection as `request.changed`, also a change another process wrote; the stream ends with the
+/// connection.
+@MainActor
+func followEndedRequests(_ rpc: GenesisToolsRPC) {
+    Task { @MainActor in
+        do {
+            for try await change in rpc.events.requestChanged {
+                if let reason = RequestPresenter.endedElsewhere(change) { RequestPresenter.shared.end(change.id, reason: reason) }
+            }
+        } catch {
+            HubPerf.log("request window: no request.changed events, so a request that ends elsewhere keeps its window: \(error)")
+        }
+    }
+}
+
+/// A one-shot window never starts the service: without one, nothing else can end its request.
+private struct NoServiceForRequestEvents: Error {}
+
 func presentRequest(_ params: RequestPresentParams) {
     MainActor.assumeIsolated {
+        // The one-shot window (no resident face was connected) listens on its own connection.
+        let events = GenesisToolsRPC(startService: { throw NoServiceForRequestEvents() })
+        followEndedRequests(events)
         RequestPresenter.shared.enqueue(params) { result in
+            events.close()
             do {
                 let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any] ?? [:]
                 emitResult(object)
@@ -250,6 +302,7 @@ func runRequestFace(_ arguments: [String]) -> Never {
     let rpc = GenesisToolsRPC(path: socket)
     residentRequests = rpc
     rpc.serve.requestPresent { params in await RequestPresenter.shared.show(params) }
+    followEndedRequests(rpc)
     // A face whose service went away renders nothing yet holds the lock: exit, so the next request starts a new face.
     rpc.onDisconnect = {
         HubPerf.log("request.face lost its service connection; exiting so a new face can take the lock")
