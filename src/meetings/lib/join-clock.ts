@@ -1,4 +1,3 @@
-import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import {
     type JoinPart,
     type MeetingItem,
@@ -6,6 +5,7 @@ import {
     toJoinedSec,
     toPartSec,
 } from "@genesiscz/utils/meetings/record";
+import { isRecord } from "@genesiscz/utils/object";
 
 export { toJoinedSec, toPartSec };
 
