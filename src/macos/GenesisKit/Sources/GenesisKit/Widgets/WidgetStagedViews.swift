@@ -510,16 +510,22 @@ struct WidgetStagedDecisionRow: View {
                     ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                         WidgetItemOptionButton(model: model, item: item, index: index, option: option)
                     }
-                    // A set's clicks only tick, so this one decision's Send sits under its options too.
-                    if item.takesSeveral {
-                        WidgetSetSendBar(
-                            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-                            recommended: DecisionAnswering.recommendedSet(item.recommended, count: options.count),
-                            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                            identifier: "widget.staged.sendSet." + item.sourceId,
-                            pick: { model.pickSet(item, option: $0) },
-                            send: { model.sendStaged([item.sourceId], known: [item]) })
-                    }
+                    // This one decision's Send and Unstage sit under its options.
+                    WidgetStagedActions(
+                        letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
+                        takesSeveral: item.takesSeveral,
+                        recommendedSet: item.takesSeveral
+                            ? DecisionAnswering.recommendedSet(item.recommended, count: options.count) : nil,
+                        phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
+                        staged: model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft),
+                        busy: model.sendingDecisionIDs.contains(item.sourceId), placement: .row,
+                        identifier: (item.takesSeveral ? "widget.staged.sendSet." : "widget.staged.sendStaged.")
+                            + item.sourceId,
+                        unstageIdentifier: "widget.staged.unstage." + item.sourceId,
+                        unstageTooltip: "Clears the staged pick and note. Undo brings them back.",
+                        send: { model.sendStaged([item.sourceId], known: [item]) },
+                        unstage: { model.holdDiscard([item.sourceId]) },
+                        pickRecommended: { model.pickSet(item, option: $0) })
                 }
             }
             Button("Open in its session") {

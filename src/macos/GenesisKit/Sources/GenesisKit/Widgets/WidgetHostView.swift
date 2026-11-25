@@ -973,19 +973,17 @@ struct WidgetPeekView: View {
                 .instantTooltip("Sends every staged decision now, one message per session")
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
-            let sending = model.sendingDecisionIDs.contains(item.sourceId)
-            let phase = model.stagePhase(item.sourceId, draftedAt: item.draftedAt)
-            // A set's Send names the ticked letters: "Send a + b + c".
-            let letters = model.shownStagedOption(item.sourceId, stored: item.draftOption)
-            let namesSet = item.takesSeveral && letters != nil
-            Button(phase.sendTitle(letters, multiple: item.takesSeveral)) {
-                model.sendStaged([item.sourceId], known: [item])
-                if Self.sendOpensSession(model.preferences) { open() }
-            }
-                .buttonStyle(.genPrimary())
-                .disabled(sending || phase.onItsWay)
-                .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
-                                         : "Sends this staged decision alone, without the others.")
+            // A second click on the option unstages here, so the alert has no Unstage of its own.
+            WidgetStagedActions(
+                letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
+                takesSeveral: item.takesSeveral, recommendedSet: nil,
+                phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
+                staged: true, busy: model.sendingDecisionIDs.contains(item.sourceId), placement: .footer,
+                identifier: "widget.peek.send." + item.sourceId,
+                send: {
+                    model.sendStaged([item.sourceId], known: [item])
+                    if Self.sendOpensSession(model.preferences) { open() }
+                })
         } else {
             Button(openTitle) { open() }
         }

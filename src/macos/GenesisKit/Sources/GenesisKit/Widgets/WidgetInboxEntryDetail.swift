@@ -96,21 +96,37 @@ struct WidgetInboxEntryDetail: View {
                                            focused: focusRow && focusedOption == letter)
                         .id(item.id + "#" + letter)
                 }
-                // A set's clicks only tick, so its Send lives here, beside the options it sends.
-                if item.takesSeveral { setSendBar(item) }
+                // Send and Unstage of a staged pick or note, beside the options they send.
+                stagedActions(item)
             }
         }
     }
 
-    /// The Send of a decision that takes any set of its options, and its recommended set in one click.
-    private func setSendBar(_ item: WidgetInboxItem) -> some View {
-        WidgetSetSendBar(
+    /// A staged decision's Send and Unstage, and for a set its recommended set in one click. The hover list
+    /// (`compact`) adds Send now (all N): it has no staged chip, which the overview draws above its list.
+    private func stagedActions(_ item: WidgetInboxItem) -> some View {
+        let staged = item.kind == "decision" && item.needsAnswer
+            && model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft)
+        let others = compact && staged ? model.stagedForLeave.filter { $0.sourceId != item.sourceId } : []
+        return WidgetStagedActions(
             letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-            recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
+            takesSeveral: item.takesSeveral,
+            recommendedSet: item.takesSeveral
+                ? DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0) : nil,
             phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-            identifier: "widget.overview.sendSet." + item.sourceId,
-            pick: { model.pickSet(item, option: $0) },
-            send: { model.sendStaged([item.sourceId], known: [item]) })
+            staged: staged, busy: model.sendingDecisionIDs.contains(item.sourceId),
+            othersStaged: others.count, placement: .row,
+            identifier: (item.takesSeveral ? "widget.overview.sendSet." : "widget.overview.sendStaged.") + item.sourceId,
+            sendAllIdentifier: "widget.overview.sendAll." + item.sourceId,
+            unstageIdentifier: "widget.overview.unstage." + item.sourceId,
+            unstageTooltip: "Clears the staged pick and note. Undo brings them back.",
+            send: { model.sendStaged([item.sourceId], known: [item]) },
+            unstage: { model.holdDiscard([item.sourceId]) },
+            sendAll: others.isEmpty ? nil : {
+                let all = [item] + others
+                model.sendStaged(all.map(\.sourceId), known: all)
+            },
+            pickRecommended: { model.pickSet(item, option: $0) })
             .padding(.top, 2)
     }
 
