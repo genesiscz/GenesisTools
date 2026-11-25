@@ -184,33 +184,25 @@ struct WidgetHostView: View {
                 if selected?.id == "agents" {
                     // No spacing between the buttons: each bubble takes half the 5 pt gap as its own target (R2).
                     HStack(spacing: 0) {
-                        ForEach(Array(model.railActivitySessions.prefix(3))) { session in
-                            Button {
-                                model.toggleSession(session.key, on: surface)
-                            } label: {
-                                sessionActivity(session)
-                                    .frame(minWidth: 30, minHeight: 30).fixedSize()
-                                    .modifier(bubbleChrome(session, hitPadding: EdgeInsets(
-                                        top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2)))
-                            }.buttonStyle(.plain)
-                                .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
-                                .accessibilityLabel(sessionSummary(session))
-                                .accessibilityIdentifier("widget.agent." + session.key)
-                                .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+                        ForEach(Array(model.railActivitySessions.prefix(Self.topBubbleLimit))) { session in
+                            sessionBubble(session, size: nil, hitPadding: EdgeInsets(
+                                top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2), glyph: true)
                         }
                     }
                     // The outer bubbles' halves of the gap reach past the row; the row keeps its old width.
                     .padding(.horizontal, -Self.topBubbleGap / 2)
                 }
-                ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
+                ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(Self.topModuleLimit)), id: \.self) { id in
                     moduleButton(id, size: 25, location: "strip")
                 }
-                if moduleIDs.count > 5 {
+                // The selected module and the ones beside it; the rest wait in Settings.
+                let hidden = moduleIDs.count - (Self.topModuleLimit + 1)
+                if hidden > 0 {
                     Button {
                         model.showSettings?()
                     } label: {
-                        Text("+\(moduleIDs.count - 5)").font(.caption2)
-                    }.buttonStyle(.genHoverPlain()).instantTooltip("\(moduleIDs.count - 5) more widgets: choose them in Settings")
+                        Text("+\(hidden)").font(.caption2)
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("\(hidden) more widgets: choose them in Settings")
                         .accessibilityLabel("Choose widgets")
                 }
             }.fixedSize()
@@ -325,26 +317,9 @@ struct WidgetHostView: View {
                 // spare width beside it, as its own target, so no click between two bubbles is lost (R2).
                 VStack(spacing: 0) {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
-                        Button {
-                            model.toggleSession(session.key, on: surface)
-                        } label: {
-                            sessionActivity(session)
-                                .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
-                                .modifier(bubbleChrome(session, hitPadding: WidgetSideStripMetrics.sessionHitPadding))
-                                .overlay(alignment: .bottomTrailing) {
-                                    // Which agent the count belongs to, at a glance; the tooltip names the session.
-                                    // Inset by the hit padding, so it sits on the bubble's corner as before.
-                                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
-                                        .opacity(0.85).allowsHitTesting(false)
-                                        .padding(.bottom, WidgetSideStripMetrics.sessionHitPadding.bottom)
-                                        .padding(.trailing, WidgetSideStripMetrics.sessionHitPadding.trailing)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
-                        .accessibilityLabel(sessionSummary(session))
-                        .accessibilityIdentifier("widget.agent." + session.key)
-                        .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+                        sessionBubble(session, size: CGSize(width: WidgetSideStripMetrics.sessionWidth,
+                                                            height: WidgetSideStripMetrics.sessionHeight),
+                                      hitPadding: WidgetSideStripMetrics.sessionHitPadding, glyph: true)
                     }
                 }
                 // The first and last bubbles' halves of the gap reach into the stack's neighbours' spacing, so the
@@ -498,6 +473,43 @@ struct WidgetHostView: View {
     static let topBubbleGap: CGFloat = 5
 
     /// The bubble's hover ring and the alert flash, in place of the rectangular hover plate of `.genHoverPlain`.
+    /// The notch bar's caps: three session bubbles, and four module buttons beside the selected one.
+    static let topBubbleLimit = 3
+    static let topModuleLimit = 4
+
+    /// One session's bubble, the same in the notch bar and the side rail: its activity and count, the provider glyph on
+    /// its corner, its attention flash and its hit area. `size` nil sizes it to at least 30 pt (the notch); the rail
+    /// passes its own size and hit padding.
+    private func sessionBubble(_ session: WidgetSession, size: CGSize?, hitPadding: EdgeInsets, glyph: Bool) -> some View {
+        Button {
+            model.toggleSession(session.key, on: surface)
+        } label: {
+            Group {
+                if let size {
+                    sessionActivity(session).frame(width: size.width, height: size.height)
+                } else {
+                    sessionActivity(session).frame(minWidth: 30, minHeight: 30).fixedSize()
+                }
+            }
+            .modifier(bubbleChrome(session, hitPadding: hitPadding))
+            .overlay(alignment: .bottomTrailing) {
+                // Which agent the count belongs to, at a glance; the tooltip names the session. Inset by the hit
+                // padding, so it sits on the bubble's corner, and an overlay, so the bar's measured width stays.
+                if glyph {
+                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
+                        .opacity(0.85).allowsHitTesting(false)
+                        .padding(.bottom, hitPadding.bottom)
+                        .padding(.trailing, hitPadding.trailing)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
+        .accessibilityLabel(sessionSummary(session))
+        .accessibilityIdentifier("widget.agent." + session.key)
+        .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+    }
+
     private func bubbleChrome(_ session: WidgetSession, hitPadding: EdgeInsets = EdgeInsets()) -> WidgetBubbleChrome {
         var style = model.attentionStyle
         style.cornerRadius = 17
