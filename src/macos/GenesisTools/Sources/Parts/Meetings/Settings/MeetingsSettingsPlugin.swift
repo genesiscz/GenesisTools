@@ -410,6 +410,9 @@ struct MeetingsWindowPage: View {
                     let presets = await TonePresetList.load(service: model.service)
                     if presets != .loading { tonePresets = presets }
                 }
+            MeetingsCatalogCard(section: SidePanelCatalog.windowPlaySection(raw.at(SidePanelCatalog.segments(SidePanelCatalog.windowPlayPath))),
+                                change: changeEngine, reset: resetEngine)
+                .nativeSettingsAnchor(MeetingsSettingsPages.anchor(forSection: "links"))
         } else if let failure = model.settings.failure {
             NoticePill(text: "The clip and tone settings did not load: \(failure.sentence)", more: failure.detail, tone: .error,
                        fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() },

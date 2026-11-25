@@ -459,6 +459,26 @@ enum SidePanelCatalog {
 
     /// The tone's sound (config version 5): a sine, a named preset or a sound file.
     static let toneSoundPath = "\(listenPath).tone.sound"
+
+    /// How `tools meetings play --window` and a play link reach this window (`playback.window` in config.ts).
+    static let windowPlayPath = "global.playback.window"
+
+    /// The play link rows, from `config.read global.playback.window` (missing keys read as the defaults).
+    static func windowPlaySection(_ window: JSONValue) -> SidePanelSection {
+        func text(_ key: String) -> String? { if case .string(let value) = window.at([key]) { return value } else { return nil } }
+        return SidePanelSection(id: "links", title: "Play links", rows: [
+            SidePanelRow(store: .engine(path: "\(windowPlayPath).mode"), title: "While the window is closed",
+                         detail: "A play link or tools meetings play --window opens this window, or plays in the terminal's player.",
+                         choices: [.init(value: .text("open"), title: "Open the window"),
+                                   .init(value: .text("running"), title: "Play in the terminal")],
+                         value: .text(text("mode") ?? "open"), defaultValue: .text("open")),
+            SidePanelRow(store: .engine(path: "\(windowPlayPath).focus"), title: "Keyboard",
+                         detail: "The window comes to the front for the link. The keyboard stays in the app you type in, or moves to Meetings.",
+                         choices: [.init(value: .text("keep"), title: "Stays where you type"),
+                                   .init(value: .text("take"), title: "Moves to Meetings")],
+                         value: .text(text("focus") ?? "keep"), defaultValue: .text("keep")),
+        ])
+    }
     /// The "Sound file…" choice: it opens a file panel, then writes the file it picked. Never stored.
     static let chooseFileValue = SidePanelValue.text("chooseFile")
     /// A sine set by hand that no named tone matches.

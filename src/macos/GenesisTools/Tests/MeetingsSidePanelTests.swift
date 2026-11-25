@@ -365,6 +365,19 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(unset.args, ["config", "unset", #"["global","playback","listen","longestClipSec"]"#, "--expect", "null"])
     }
 
+    /// D1: how a play link reaches the window is a setting, opening the window and keeping the keyboard by default.
+    func testThePlayLinkRowsDefaultToOpenAndKeepAndWriteTheirPaths() {
+        let empty = SidePanelCatalog.windowPlaySection(.null)
+        XCTAssertEqual(empty.rows.map(\.id), ["global.playback.window.mode", "global.playback.window.focus"])
+        XCTAssertEqual(empty.rows.map(\.value), [.text("open"), .text("keep")])
+        XCTAssertTrue(empty.isDefault)
+        let saved = SidePanelCatalog.windowPlaySection(.object(["mode": .string("running"), "focus": .string("take")]))
+        XCTAssertEqual(saved.rows.map(\.valueTitle), ["Play in the terminal", "Moves to Meetings"])
+        XCTAssertFalse(saved.isDefault)
+        XCTAssertEqual(SidePanelCatalog.enginePick(.text("running"), for: empty.rows[0]), .set(.string("running")))
+        XCTAssertEqual(saved.enginePaths, ["global.playback.window.mode", "global.playback.window.focus"])
+    }
+
     func testTheEngineDefaultIsTheBeepSine() throws {
         XCTAssertEqual(MeetingsAPI.ToneSoundSetting.engineDefault, .sine(hz: 880, sec: 0.15, volume: 0.6), "DEFAULT_TONE_SOUND in config.ts")
         XCTAssertEqual(SidePanelCatalog.toneSetting(.null), .engineDefault)
