@@ -980,15 +980,10 @@ struct WidgetPeekView: View {
         } else if staged {
             // A second click on the option unstages here, so the alert has no Unstage of its own.
             WidgetStagedActions(
-                letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-                takesSeveral: item.takesSeveral, recommendedSet: nil,
-                phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                staged: true, busy: model.sendingDecisionIDs.contains(item.sourceId), placement: .footer,
-                identifier: "widget.peek.send." + item.sourceId,
-                send: {
-                    model.sendStaged([item.sourceId], known: [item])
+                host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false, afterSend: {
                     if Self.sendOpensSession(model.preferences) { open() }
-                })
+                }),
+                placement: .footer, identifier: "widget.peek.send." + item.sourceId, unstages: false)
         } else {
             Button(openTitle) { open() }
         }

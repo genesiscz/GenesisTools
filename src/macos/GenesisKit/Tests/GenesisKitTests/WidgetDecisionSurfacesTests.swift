@@ -11,6 +11,30 @@ import XCTest
 /// `WIDGET_DECISION_SHOTS=<folder>` (the same calls before and after a change, so the pairs match).
 @MainActor
 final class WidgetDecisionSurfacesTests: XCTestCase {
+    /// An inbox item unstages with an Undo note (`holdDiscard`); a session card puts its staged note back into its own
+    /// answer field (`unstage(card)`). The two hosts never swap them.
+    func testTheWidgetHostsUnstageByTheirKind() throws {
+        var staged = Self.card(key + "0", number: 8, draftOption: "b")
+        staged["status"] = "drafted"
+        staged["draft"] = "keep the crate"
+        let model = try self.model(cards: [staged])
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let card = try XCTUnwrap(model.cards.first { $0.number == 8 })
+        let itemHost = WidgetItemStagingHost(model: model, item: WidgetModel.inboxItem(card), surface: nil, sendsAll: false)
+        XCTAssertTrue(itemHost.stage.staged)
+        XCTAssertEqual(itemHost.stage.letters, "b")
+        itemHost.unstage()
+        XCTAssertTrue(model.heldDecisionIDs.contains(card.sourceId), "an inbox item unstages with Undo")
+        model.undoHeldDiscard()
+        XCTAssertFalse(model.heldDecisionIDs.contains(card.sourceId))
+        let cardHost = WidgetCardStagingHost(model: model, card: card)
+        XCTAssertTrue(cardHost.stage.staged)
+        cardHost.unstage()
+        XCTAssertFalse(model.heldDecisionIDs.contains(card.sourceId), "a session card unstages without the Undo hold")
+        XCTAssertTrue(model.draft.text.contains("keep the crate"), "its note goes back into its own answer field")
+    }
+
     /// One option row draws every state in the widget's look and the hub's: open, a staged word, answered, and a key
     /// badge with the letter before the text.
     func testOneOptionRowDrawsEveryStateInBothLooks() throws {

@@ -533,6 +533,20 @@ public struct WidgetStagedActions: View {
         self.pickRecommended = pickRecommended
     }
 
+    /// The stage and the actions of one decision from its surface's host. `unstages` false hides Unstage (the alert,
+    /// where a second click on the option unstages).
+    public init(host: any DecisionStagingHost, placement: Placement, sendSymbol: String? = nil, identifier: String,
+                sendAllIdentifier: String? = nil, unstageIdentifier: String? = nil,
+                unstageTooltip: String = "Clears the staged pick.", unstages: Bool = true) {
+        let stage = host.stage
+        self.init(letters: stage.letters, takesSeveral: stage.takesSeveral, recommendedSet: stage.recommendedSet,
+                  phase: stage.phase, staged: stage.staged, busy: stage.busy, othersStaged: stage.othersStaged,
+                  placement: placement, sendSymbol: sendSymbol, identifier: identifier,
+                  sendAllIdentifier: sendAllIdentifier, unstageIdentifier: unstageIdentifier,
+                  unstageTooltip: unstageTooltip, send: { host.send() }, unstage: unstages ? { host.unstage() } : nil,
+                  sendAll: { host.sendAll() }, pickRecommended: { host.pickSet($0) })
+    }
+
     public var body: some View {
         switch placement {
         case .row:
@@ -569,6 +583,7 @@ public struct WidgetStagedActions: View {
             if let sendSymbol { Label(title, systemImage: sendSymbol) } else { Text(title) }
         }
         .buttonStyle(.genPrimary())
+        .fixedSize()
         .disabled(busy || phase.onItsWay)
         .instantTooltip(takesSeveral && letters != nil ? DecisionAnswering.setSendTooltip(letters)
                                                        : "Sends this staged decision alone, without the others.")
@@ -577,20 +592,36 @@ public struct WidgetStagedActions: View {
 
     @ViewBuilder private var unstageButton: some View {
         if let unstage {
-            Button("Unstage", action: unstage)
-                .disabled(busy)
-                .instantTooltip(unstageTooltip)
-                .identifier(unstageIdentifier)
+            StagedActionButton(title: "Unstage", enabled: !busy, tooltip: unstageTooltip, identifier: unstageIdentifier,
+                               action: unstage)
         }
     }
 
     @ViewBuilder private var sendAllButton: some View {
         // Only while another decision is staged too: alone it is the same as Send.
         if othersStaged > 0, let sendAll {
-            Button("Send now (all \(othersStaged + 1))", action: sendAll)
-                .disabled(busy)
-                .identifier(sendAllIdentifier)
-                .instantTooltip("Sends this decision and the \(Plural.count(othersStaged, "other staged decision")) now, one message per session.")
+            StagedActionButton(title: "Send now (all \(othersStaged + 1))", enabled: !busy,
+                               tooltip: "Sends this decision and the \(Plural.count(othersStaged, "other staged decision")) now, one message per session.",
+                               identifier: sendAllIdentifier, action: sendAll)
+        }
+    }
+}
+
+/// A quiet action of the staged block: a `Button` in the caller's style while the row is live, the same words as a
+/// resting control at rest, which VoiceOver still presses (a raw `Button` in a hub row is the defect).
+private struct StagedActionButton: View {
+    @Environment(\.rowLive) private var rowLive
+    let title: String
+    let enabled: Bool
+    let tooltip: String
+    let identifier: String?
+    let action: () -> Void
+
+    var body: some View {
+        if rowLive {
+            Button(title, action: action).disabled(!enabled).instantTooltip(tooltip).identifier(identifier)
+        } else {
+            Text(title).opacity(enabled ? 1 : 0.4).restingButton(enabled: enabled, action: action).identifier(identifier)
         }
     }
 }
