@@ -57,8 +57,13 @@ export interface UnclearPassage {
     line?: number;
     heard?: string;
     readings: string[];
-    /** A question-owned speaker proposal, shown as a guess while the question is open. */
+    /** A speaker proposal (a question's, or a rule's under the apply threshold), shown as a guess (`[Name: 60 %]`). */
     guess?: { name: string; confidence?: number };
+    /**
+     * An open question's passage: someone asked about the line, so it doubts the line's label and marks the line even
+     * where its guess names the person the label already gives.
+     */
+    asked?: boolean;
 }
 
 /** A mark on the passage `heard` of the line that starts at `atSec`. */
@@ -331,8 +336,13 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     const rangeOwner = new Map<TranscriptEntry, string>();
     /** The confidence of the range that set each line's voice last, when that range names it only as a guess. */
     const rangeGuess = new Map<TranscriptEntry, number>();
-    /** The names that ranges naming plainly gave each line, so a later guess for one of them stays plain. */
+    /**
+     * The names each line carries plainly: its label's (after a rename) while no passage doubts it, and the ones ranges
+     * naming plainly gave it. A later guess for one of them stays plain: a suggestion that agrees with the line makes
+     * it no less certain.
+     */
     const plainNames = new Map<TranscriptEntry, Set<string>>();
+    const carries = (line: TranscriptEntry, name: string) => plainNames.get(line)?.has(name.normalize("NFC")) === true;
 
     for (const join of corrections.joins ?? []) {
         const found = joinLine(source, join);
@@ -399,6 +409,25 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
     lines = lines.filter((line) => line.text.trim());
 
+    const speakerPassages = (corrections.unclear?.passages ?? []).filter((passage) => passage.speaker !== undefined);
+    const passageCovers = (passage: UnclearPassage, line: TranscriptEntry) =>
+        sourceLabel.get(line) === passage.speaker &&
+        inRange(line, passage) &&
+        (passage.line === undefined || indexOf.get(line) === passage.line);
+
+    // A speaker passage with no guess doubts the label of its lines (a label that tracks no one person, a range that
+    // says the label is wrong), and so does an open question; any other label names its lines plainly.
+    for (const line of lines) {
+        const label = sourceLabel.get(line) ?? line.speaker;
+        const doubted = speakerPassages.some(
+            (passage) => (passage.guess === undefined || passage.asked === true) && passageCovers(passage, line)
+        );
+
+        if (!doubted) {
+            plainNames.set(line, new Set([(corrections.labels?.[label] ?? label).normalize("NFC")]));
+        }
+    }
+
     for (const range of corrections.ranges ?? []) {
         const labelled = lines.filter((line) => {
             if (range.overrideJoin && joinedOrigins) {
@@ -427,12 +456,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             line.speaker = range.speaker;
             ranged.add(line);
             rangeOwner.set(line, range.item ?? "later range");
-            // A guess on a line that a weaker range names plainly for the same person keeps the plain name: that range
-            // backs the name on its own, so the line shows no less certainty than it has.
+            // A guess on a line that its label or a weaker range names plainly for the same person keeps the plain
+            // name: that evidence backs the name on its own, so the line shows no less certainty than it has.
             if (range.guess === undefined) {
-                plainNames.set(line, new Set([...(plainNames.get(line) ?? []), range.speaker]));
+                plainNames.set(line, new Set([...(plainNames.get(line) ?? []), range.speaker.normalize("NFC")]));
                 rangeGuess.delete(line);
-            } else if (plainNames.get(line)?.has(range.speaker)) {
+            } else if (carries(line, range.speaker)) {
                 rangeGuess.delete(line);
             } else {
                 rangeGuess.set(line, range.guess);
@@ -494,15 +523,18 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         for (const line of lines) {
             const open =
                 passage.speaker !== undefined &&
-                sourceLabel.get(line) === passage.speaker &&
                 !ranged.has(line) &&
                 !voiced.has(line) &&
                 !speakerMarked.has(line) &&
-                inRange(line, passage) &&
-                (passage.line === undefined || indexOf.get(line) === passage.line);
+                passageCovers(passage, line);
 
             if (open) {
                 speakerMarked.add(line);
+                // A guess for the person the line's undoubted label already names leaves the plain name.
+                if (passage.guess && carries(line, passage.guess.name)) {
+                    continue;
+                }
+
                 line.speaker = passageMarker(unclearLabel, passage.speaker!, passage);
                 if (passage.guess) {
                     line.guess = true;

@@ -138,6 +138,7 @@ function unclearPassages(
                               speaker: item.label,
                               ...rangeAddress(item),
                               readings: question.choices,
+                              asked: true,
                               ...(opts.guesses && item.speaker
                                   ? {
                                         guess: {
