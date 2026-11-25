@@ -167,7 +167,10 @@ A missing meeting names only the store that was searched. To find which store ho
    fixes, and a term fix wins over a dictionary entry for the same words: when the dictionary gives the wrong
    grammatical case on one line ("UVČ" becomes "UIčko" after a genitive), store a `"scope": "line"` term fix with the
    right form ("UIčka"). `items add` and `transcript` print each item that did not apply and why (`i42 did not apply:
-   no "X" at 37:43`); fix that finding instead of ignoring the warning.
+   no "X" at 37:43`); fix that finding instead of ignoring the warning. `items add` (REPL: `meeting.items.add`) also
+   warns when the screen within 60 s of a term fix shows another spelling of it (`the screen at 01:10 shows
+   "ContentRows" …, not "ContentRoes"`): open `tools meetings screen <meeting> --at <time>` and fix the term before
+   it is confirmed, since what the screen showed wins (polishing.md, D7).
 
    Check every `readAloud` and `identifiers` fact against the transcript before you store it: the line number can be
    off, and a match can be a false one. A context document can be newer than the meeting and already hold its

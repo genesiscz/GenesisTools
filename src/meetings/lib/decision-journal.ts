@@ -68,6 +68,7 @@ import {
     type LabelChange,
     MEETING_FIELDS,
 } from "./decision-actions";
+import { type Finding, findingItems } from "./findings";
 import { appendLines, parseJsonLine } from "./ndjson-lines";
 import { projectRequired } from "./project";
 import {
@@ -91,6 +92,7 @@ import {
 } from "./questions";
 import { type RejectFilter, rejectFilterIds } from "./reject-filter";
 import type { ReviewRow } from "./review-row-schema";
+import { type TermFix, termFixKey, termScreenWarnings } from "./screen-leads";
 import { TOOL } from "./shared";
 import {
     type AssignReachStretch,
@@ -204,6 +206,8 @@ interface Prepared {
     transcript?: TranscriptEntry[];
     people?: string[];
     micShare?: MicShare;
+    /** An `add`'s term fixes the screen near them spells otherwise, keyed by `termFixKey`. */
+    screenWarnings?: Map<string, string>;
 }
 
 type FieldValues = Record<(typeof MEETING_FIELDS)[number], FieldChange["before"]>;
@@ -262,7 +266,12 @@ interface ActionContext {
 }
 
 interface ActionHandler<K extends JournalActionKind> {
-    prepare?(record: MeetingRecord, action: ActionOf<K>, inputs: SplitInputs | undefined): Promise<Prepared>;
+    prepare?(
+        record: MeetingRecord,
+        action: ActionOf<K>,
+        inputs: SplitInputs | undefined,
+        store: MeetingStore
+    ): Promise<Prepared>;
     /** Mutates `record`; returns what it did, or `skipped` alone when it changed nothing. */
     mutate(record: MeetingRecord, action: ActionOf<K>, context: ActionContext): ActionOutcome;
 }
@@ -812,6 +821,22 @@ function replacementScope(options: {
     };
 }
 
+/** A term item's fix as the screen check reads it: a time, the heard words and the proposed spelling. */
+function termFixOf(item: Extract<MeetingItem, { kind: "term" }>): TermFix | undefined {
+    // An unclear mark (`[nejasné: …]`) asks; it spells nothing the screen could contradict.
+    return item.atSec !== undefined && item.proposed && !item.proposed.startsWith("[")
+        ? { atSec: item.atSec, heard: item.heard, proposed: item.proposed }
+        : undefined;
+}
+
+/** The term fixes of a batch of findings, read as the items they become. */
+function termFixesOf(findings: Finding[]): TermFix[] {
+    return findingItems(findings, [], new Date().toISOString()).flatMap((item) => {
+        const fix = item.kind === "term" ? termFixOf(item) : undefined;
+        return fix ? [fix] : [];
+    });
+}
+
 const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     confirm: { mutate: (record, action, context) => decideAgain(record, "confirmed", action, context) },
     reject: { mutate: (record, action, context) => decideAgain(record, "rejected", action, context) },
@@ -1095,13 +1120,22 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
         },
     },
     add: {
-        prepare: async (record, _action, inputs) => {
+        prepare: async (record, action, inputs, store) => {
             // The transcript anchors each join and line-bound term to one line; with none at hand, items go in as given.
             const transcript = await inputs?.transcript(record).catch((error: unknown) => {
                 log.debug({ error, meeting: record.id }, "no transcript to check the anchors against");
                 return undefined;
             });
-            return transcript ? { transcript } : {};
+            // What the screen showed near a term fix wins over a guess (polishing D7): a fix it spells otherwise warns.
+            const fixes = termFixesOf(action.findings);
+            const screenWarnings = await termScreenWarnings({ store, record, fixes }).catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "no screen record to check the term fixes against");
+                return undefined;
+            });
+            return {
+                ...(transcript ? { transcript } : {}),
+                ...(screenWarnings?.size ? { screenWarnings } : {}),
+            };
         },
         mutate: (record, action, { prepared, now }) => {
             if (action.findings.length === 0 && !action.replace) {
@@ -1130,9 +1164,17 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
             });
             record.items.push(...added);
+            const screen = prepared.screenWarnings;
+            const screenWarnings = screen
+                ? added.flatMap((item) => {
+                      const fix = item.kind === "term" ? termFixOf(item) : undefined;
+                      const warning = fix ? screen.get(termFixKey(fix)) : undefined;
+                      return warning ? [`${item.id}: ${warning}`] : [];
+                  })
+                : [];
             return {
                 history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },
-                warnings,
+                warnings: [...warnings, ...screenWarnings],
                 // The suggestions a replacement rejected carry its token, so a later decision on them fences its Undo;
                 // the added items have no earlier state and take no stamp.
                 stamps: replace !== undefined,
@@ -2346,7 +2388,7 @@ export class DecisionJournal {
             throw new Error(`No meeting ${meeting} (or its record does not validate): ${store.path(meeting)}`);
         }
 
-        const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
+        const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split, store) : {};
         const replay = action.kind === "answer" ? action.knownAnswer : undefined;
         if (replay && request.actor.kind !== "listen") {
             throw new Error("Only a Listen round can replay a known speaker answer.");

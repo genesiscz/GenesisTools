@@ -124,7 +124,7 @@ import {
     renderScreenBoxes,
     type ScreenRecordRead,
 } from "./lib/screen-boxes";
-import { type RawTerms, screenRecordFacts, withScreenLines } from "./lib/screen-leads";
+import { type RawTerms, screenRecordFacts, termScreenConflict, withScreenLines } from "./lib/screen-leads";
 import { InProcessMeetingsClient } from "./lib/service/client";
 import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
@@ -4074,6 +4074,19 @@ describe("evidence --raw", () => {
                 frames: 0,
                 lines: [],
             });
+        });
+
+        test("a term fix the screen near it spells otherwise names that screen line; a fix the screen shows does not", () => {
+            const fix = { atSec: 65, heard: "content rouz", proposed: "ContentRoes" };
+
+            expect(termScreenConflict({ read, fix })).toMatchObject({
+                form: "ContentRows",
+                atSec: 70,
+                frame: "frames/b.jpg",
+            });
+            expect(termScreenConflict({ read, fix: { ...fix, proposed: "ContentRows" } })).toBeUndefined();
+            expect(termScreenConflict({ read, fix: { ...fix, atSec: 700 } })).toBeUndefined();
+            expect(termScreenConflict({ read, fix: { ...fix, heard: "platby", proposed: "Platby" } })).toBeUndefined();
         });
 
         test("the summary names the screen record, or says the meeting kept none", () => {

@@ -481,7 +481,12 @@ the person: the terminal (clack and audio, in `commands/listen.ts`) or `GivenAns
 
 A question is `Q<n>` to people: the n-th question of the record, as listen's header and the polished file number it.
 `items` shows the number in its `Q` column, and `confirm`, `reject` and `listen --item` take `Q12`. `items add` warns
-about a question whose text repeats another open question, one that decides no item, and one with no priority.
+about a question whose text repeats another open question, one that decides no item, and one with no priority. It also
+warns about a term fix (`at` and `proposed`) whose screen spells it otherwise: of the frames within 60 s, an OCR line
+that sounds like the heard words or the fix (85 of 100 or more) while no line near it shows the fix, give or take case,
+accents, separators, a longer word around it and a Czech ending (`i3: the screen at 01:10 shows "ContentRows" (…), not
+"ContentRoes": look at tools meetings screen <meeting> --at 01:10 …`). Every door that adds findings warns alike (the
+CLI, the REPL's `meeting.items.add`, the decision inbox): the check runs in the decision journal's `add`.
 A word question finds its heard words as whole words (`TranscriptLines` in `src/utils/transcribe/lines.ts`), so
 "Ada" never matches inside "zadání"; its clip is cut around the spot the words are said, and two questions on the
 same words over the same range take the first and the second occurrence, each with its own time and line.
