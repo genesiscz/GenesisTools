@@ -809,8 +809,12 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         }
         let line = try shown("staged-row-age")
         XCTAssertTrue(line.contains("Staged: b)"), line)
-        XCTAssertTrue(line.contains("2m ago"), "the age is the stage's: \(line)")
-        XCTAssertFalse(line.contains("3h ago"), "not the ask's: \(line)")
+        // The stage line counts from the stage. The kind line under it keeps the ask's age, as the overview's row does.
+        let stageLine = line.components(separatedBy: "Staged: b)").dropFirst().first?
+            .components(separatedBy: "Decision").first ?? ""
+        XCTAssertTrue(stageLine.contains("2m ago"), "the age is the stage's: \(line)")
+        XCTAssertFalse(stageLine.contains("3h ago"), "not the ask's: \(line)")
+        XCTAssertTrue(line.contains("3h ago"), "the kind line says when it was asked: \(line)")
 
         model.sendingDecisionIDs.insert("d8")
         XCTAssertTrue(try shown("sending-row").contains("Sending: b)"))

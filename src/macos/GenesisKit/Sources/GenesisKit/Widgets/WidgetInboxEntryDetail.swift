@@ -21,8 +21,8 @@ struct WidgetInboxEntry: View {
         let stage = stagedLine(item)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 2) {
-                WidgetInboxOverviewRow(item: item, open: open, focused: focused,
-                                       source: sourceLabel(session), stagedLine: stage, toggle: toggle)
+                WidgetInboxRowHead(value: .init(item: item, source: sourceLabel(session)), open: open,
+                                   selected: open || focused, focused: focused, stage: stage, toggle: toggle)
                     .equatable()
                 if context == .inlineSource, let session {
                     IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
