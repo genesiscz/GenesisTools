@@ -130,6 +130,11 @@ export interface CorrectionsApplied {
      * Their speaker is a mark, not a decided name, so a reader keeps them apart from the people.
      */
     guessed: ReadonlyMap<TranscriptEntry, string>;
+    /**
+     * Each line of `entries` with its index in the source lines, so a reader finds a line's own decisions even when two
+     * lines start in one second and carry no id.
+     */
+    sources: ReadonlyMap<TranscriptEntry, number>;
     /** Local speech lines a confirmed removal hid. */
     removed: number;
     /** One per correction that names its item, in the order the corrections were given. */
@@ -621,6 +626,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
     // The dictionary writes a changed line anew, line for line, so the named lines are followed through it.
     let named = new Set<TranscriptEntry>([...ranged, ...voiced.keys()]);
+    let sources = new Map(
+        lines.flatMap((line): Array<[TranscriptEntry, number]> => {
+            const index = indexOf.get(line);
+            return index === undefined ? [] : [[line, index]];
+        })
+    );
 
     if (corrections.dictionary) {
         const applied = applyDictionary(lines, corrections.dictionary, { notes: corrections.notes });
@@ -629,6 +640,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             applied.entries.flatMap((entry, index): Array<[TranscriptEntry, string]> => {
                 const name = guessed.get(lines[index]!);
                 return name === undefined ? [] : [[entry, name]];
+            })
+        );
+        sources = new Map(
+            applied.entries.flatMap((entry, index): Array<[TranscriptEntry, number]> => {
+                const source = sources.get(lines[index]!);
+                return source === undefined ? [] : [[entry, source]];
             })
         );
         lines = applied.entries;
@@ -670,7 +687,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
-    return { entries: lines, named, guessed, outcomes, ...counts };
+    return { entries: lines, named, guessed, sources, outcomes, ...counts };
 }
 
 /** The source line a removal names: its address when that line still holds the heard text, else the one in its range. */
