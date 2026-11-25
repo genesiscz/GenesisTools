@@ -28,6 +28,8 @@ Start capture with `tools meetings record start` or `meetings.recordStart({ meet
 
 Both modes share the meeting record, its items and `tools meetings listen`.
 
+Before you read a large output or start a pass-2 agent, read [efficiency.md](references/efficiency.md): the cheap door of each step with its size, the agent brief and the code-mode traps.
+
 For an isolated store, prefix **every command** with the same `GENESIS_TOOLS_HOME`, including reads, playback and the
 answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home tools meetings show <meeting> --json`.
 A missing meeting names only the store that was searched. To find which store holds an id, run
