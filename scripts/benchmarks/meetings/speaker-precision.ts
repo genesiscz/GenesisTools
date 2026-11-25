@@ -439,6 +439,11 @@ async function labelsOf(store: MeetingStore, blind: MeetingRecord): Promise<Map<
     return byLine;
 }
 
+/** A rule's reason code (`seat-of-one`, `named`). An agent's reason is free text about the meeting and never leaves the record. */
+function reasonCode(value: unknown): string | undefined {
+    return typeof value === "string" && /^[a-z][a-z-]{0,39}$/.test(value) ? value : undefined;
+}
+
 function compactRange(item: Range): Record<string, unknown> {
     const evidence = item.evidence ?? {};
     const support = evidence.voiceSupport as { score?: number; person?: string } | undefined;
@@ -452,7 +457,7 @@ function compactRange(item: Range): Record<string, unknown> {
         strength: rangeStrength(item),
         point: item.fromSec === item.toSec,
         labeler: evidence.labeler,
-        reason: typeof evidence.reason === "string" && evidence.reason.length < 40 ? evidence.reason : undefined,
+        reason: reasonCode(evidence.reason),
         seat: evidence.seat,
         score: evidence.score,
         support: support?.score,
@@ -591,7 +596,7 @@ async function measure(options: {
                               rules: winner.rules,
                               confidence: winner.confidence,
                               status: winner.status,
-                              reason: winner.evidence?.reason,
+                              reason: reasonCode(winner.evidence?.reason),
                               labeler: winner.evidence?.labeler,
                           },
                       }
