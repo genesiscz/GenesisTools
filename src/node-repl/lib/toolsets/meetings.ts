@@ -6,6 +6,7 @@ import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { findingsFromDecisions } from "@app/meetings/lib/from-decisions";
 import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels";
+import { packMeeting, readLineTable } from "@app/meetings/lib/line-table";
 import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
@@ -54,12 +55,14 @@ import {
     levels,
     type lineEligibility,
     lines,
+    lineTable,
     list,
     locate,
     type look,
     type measure,
     meetingsToolsetApi,
     overview,
+    pack,
     play,
     polishBuild,
     polishCheck,
@@ -668,6 +671,22 @@ export class MeetingsToolset extends ReplToolset {
                     return raw;
                 }
                 return opened().evidence();
+            },
+            lineTable: async (input: z.input<typeof lineTable.params> = {}) => {
+                const options = lineTable.params.parse(input);
+                const windowed = options.from !== undefined || options.to !== undefined;
+                return readLineTable(opened(), {
+                    ...(windowed ? { window: { fromSec: options.from ?? 0, toSec: options.to ?? Infinity } } : {}),
+                    withVoices: options.withVoices === true,
+                });
+            },
+            pack: async (input: z.input<typeof pack.params>) => {
+                const options = pack.params.parse(input);
+                return packMeeting(opened(), {
+                    out: options.out,
+                    ...(options.chunkChars === undefined ? {} : { chunkChars: options.chunkChars }),
+                    withVoices: options.voices !== false,
+                });
             },
             acousticCollect: () =>
                 withMeetingsClient((client) =>

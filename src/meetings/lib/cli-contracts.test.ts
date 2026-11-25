@@ -38,6 +38,7 @@ import { z } from "zod";
 import { seatLabels } from "../commands/seats";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
+import * as channelOperation from "./channel-operation";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
 import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
@@ -1990,6 +1991,70 @@ test("items, seats and voices preview print the compact form in a pipe and the t
         result.mockRestore();
         println.mockRestore();
         preview.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("evidence --format tsv prints the line table and pack writes it in chunks, refusing a folder that holds files", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Line table", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const raw = {
+        meeting: { id: record.id, title: record.title, start: record.start },
+        people: [],
+        lines: [0, 1].map((index) => ({
+            index,
+            fromSec: 61,
+            toSec: 63,
+            label: "Speaker 1",
+            text: `Line ${index}.`,
+            channel: { micShare: null },
+            speaking: [],
+            speakingUnknown: true,
+            muted: [],
+            present: [],
+        })),
+    } as unknown as Awaited<ReturnType<typeof channelOperation.channelEvidence>>;
+    const measured = spyOn(channelOperation, "channelEvidence").mockResolvedValue(raw);
+    const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(null);
+    const results: string[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(String(data));
+    });
+    const error = spyOn(ui, "err").mockImplementation(() => {});
+    const folder = join(mkdtempSync(join(tmpdir(), "meetings-pack-cli-")), "pack");
+    async function run(requested: string, ...args: string[]) {
+        results.length = 0;
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested });
+        await program.parseAsync(args, { from: "user" });
+    }
+    try {
+        await run("evidence", "evidence", record.id, "--format", "tsv", "--from", "1:00", "--to", "1:05");
+        expect(measured.mock.calls.at(-1)?.[1]).toEqual({ fromSec: 60, toSec: 65 });
+        expect(results).toEqual([
+            "# legend S1=Speaker 1\nidx\tt\tlabel\tmic\tspk\tvoice\tnext\ttext\n0\t01:01\tS1\t\t?\t-\t\tLine 0.\n1\t01:01\tS1\t\t?\t-\t\tLine 1.",
+        ]);
+        await run("evidence", "evidence", record.id, "--with-voices");
+        expect(process.exitCode).toBe(1);
+        expect(error).toHaveBeenCalledWith("--with-voices adds the voice columns of --format tsv");
+        process.exitCode = 0;
+        await run("pack", "pack", record.id, "--out", folder, "--no-voices", "--json");
+        expect(SafeJSON.parse(results[0] ?? "", { strict: true })).toMatchObject({
+            rows: 2,
+            voices: false,
+            chunks: [{ file: "lines-1.tsv", fromIdx: 0, toIdx: 1, rows: 2 }],
+        });
+        expect(existsSync(join(folder, "facts.md"))).toBe(true);
+        await run("pack", "pack", record.id, "--out", folder, "--no-voices");
+        expect(process.exitCode).toBe(1);
+    } finally {
+        measured.mockRestore();
+        evidence.mockRestore();
+        result.mockRestore();
+        error.mockRestore();
         process.exitCode = 0;
     }
 });

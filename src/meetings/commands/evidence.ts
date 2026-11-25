@@ -15,6 +15,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
 import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
+import { lineTableTsv, readLineTable } from "../lib/line-table";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence } from "../lib/raw";
 import { rawEvidence, withDeviceFacts } from "../lib/raw-evidence";
@@ -30,7 +31,7 @@ import { meetingVoices } from "../lib/voice";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
-const FORMATS = ["table", "json", "lines"] as const;
+const FORMATS = ["table", "json", "lines", "tsv"] as const;
 /** The user's microphone recognized this many times more words than their own label holds: they are spread over others. */
 const VOLUME_RATIO = 2;
 /** A line this sure on the microphone is the user's (the energy rule). */
@@ -54,6 +55,7 @@ async function evidence(
         screenLines?: string;
         voices?: string;
         voiceFeatures?: boolean;
+        withVoices?: boolean;
         lineEligibility?: string;
         channel?: string;
         levels?: boolean;
@@ -112,8 +114,26 @@ async function evidence(
         readiness.hints.forEach(ui.info);
         // The voice measurement decodes the whole recording: only when asked for, and only into an output that shows it.
         const wantsVoice = opts.voiceFeatures === true || opts.voices !== undefined;
-        if (wantsVoice && (opts.table || (format === "table" && !opts.raw))) {
+        if (wantsVoice && (opts.table || format === "tsv" || (format === "table" && !opts.raw))) {
             throw new Error("--voices and --voice-features print with --format json, --format lines or --raw");
+        }
+
+        if (opts.withVoices && format !== "tsv") {
+            throw new Error("--with-voices adds the voice columns of --format tsv");
+        }
+
+        if (format === "tsv") {
+            if (opts.raw || opts.table) {
+                throw new Error("--format tsv is the line table; it does not go with --raw or --table");
+            }
+
+            const window = clockWindow(opts);
+            const table = await readLineTable(opened, {
+                ...(window ? { window } : {}),
+                withVoices: opts.withVoices === true,
+            });
+            out.result(lineTableTsv(table));
+            return;
         }
 
         const screenLines = opts.screenLines === undefined ? undefined : Number(opts.screenLines);
@@ -123,12 +143,7 @@ async function evidence(
         }
 
         if (opts.table) {
-            const from = opts.from === undefined ? 0 : (parseClock(opts.from) ?? NaN);
-            const to = opts.to === undefined ? Infinity : (parseClock(opts.to) ?? NaN);
-            if (!Number.isFinite(from) || Number.isNaN(to) || from < 0 || to < from) {
-                throw new Error("--from/--to need ordered, nonnegative seconds");
-            }
-            const raw = await channelEvidence(opened, { fromSec: from, toSec: to });
+            const raw = await channelEvidence(opened, clockWindow(opts) ?? { fromSec: 0, toSec: Infinity });
             out.print(`${compactEvidence(raw)}\n`);
             return;
         }
@@ -326,6 +341,21 @@ async function evidence(
     }
 }
 
+/** `--from`/`--to` as a window of seconds (MM:SS, H:MM:SS or seconds); undefined when neither is given. */
+function clockWindow(opts: { from?: string; to?: string }): { fromSec: number; toSec: number } | undefined {
+    if (opts.from === undefined && opts.to === undefined) {
+        return undefined;
+    }
+
+    const from = opts.from === undefined ? 0 : (parseClock(opts.from) ?? NaN);
+    const to = opts.to === undefined ? Infinity : (parseClock(opts.to) ?? NaN);
+    if (!Number.isFinite(from) || Number.isNaN(to) || from < 0 || to < from) {
+        throw new Error("--from/--to need ordered, nonnegative seconds");
+    }
+
+    return { fromSec: from, toSec: to };
+}
+
 function levelLine(row: MeetingLevelRow): string {
     const source = (one: MeetingLevelRow["mic"]) => {
         const value = one.sampled ? (one.dbfs === null ? "silent" : `${one.dbfs.toFixed(1)} dBFS`) : "no samples";
@@ -405,8 +435,9 @@ export function registerEvidenceCommand(program: Command): void {
             "--line-eligibility <index>",
             "print eligible and excluded speakers for one zero-based transcript line as JSON"
         )
-        .option("--from <seconds>", "table start time")
-        .option("--to <seconds>", "table end time")
+        .option("--from <seconds>", "--table and --format tsv: start time")
+        .option("--to <seconds>", "--table and --format tsv: end time")
+        .option("--with-voices", "--format tsv: fill the voice and next columns with the voice verdicts (slow)")
         .option(
             "--raw",
             "the facts per line as JSON, with no rule or confidence: who, channel, platform, present, terms, summary"
@@ -419,7 +450,10 @@ export function registerEvidenceCommand(program: Command): void {
             "--screen-lines <n>",
             `--raw: screen OCR lines per unknown word, vocabulary run and spoken identifier, from frames within ${SCREEN_LEAD_WINDOW_SEC} s that sound like it (default ${DEFAULT_SCREEN_LINES}, 0 = none)`
         )
-        .option("--format [format]", "table | json | lines (compact per-line facts with a name legend)")
+        .option(
+            "--format [format]",
+            "table | json | lines (compact per-line facts with a name legend) | tsv (the line table: one row per line, full text)"
+        )
         .option("--json", "the same as --format json")
         .action(evidence);
 }
