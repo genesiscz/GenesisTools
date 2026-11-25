@@ -319,6 +319,8 @@ export const rejectParams = z
         minConfidence: z.number().min(0).max(1).optional(),
         kind: z.enum(FINDING_KINDS).optional(),
         where: z.string().optional(),
+        /** Why, kept in the decision journal; an agent relaying the user quotes the user's words here. */
+        reason: z.string().min(1).optional(),
     })
     .strict();
 export const confirm = defineMethod({
@@ -332,13 +334,18 @@ export const confirm = defineMethod({
     doc:
         'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
         toolCommand("meetings listen") +
-        "). Those come back in `skipped` with the reason and what they need. `token` undoes it with items.reopen.",
+        "). Those come back in `skipped` with the reason and what they need. `token` undoes it with items.reopen. `reason` is kept in the decision journal: to relay what the user said in chat, quote the user's words there, then call meetings.confirmRelayed({ meeting, items }), which asks the user in a window whether the decision is theirs. CLI twin: " +
+        toolCommand("meetings confirm") +
+        " <meeting> <items...> --reason <text> [--relayed] --json.",
 });
 export const reject = defineMethod({
     name: "items.reject",
     ...decide,
     params: rejectParams,
-    doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again. `token` undoes it with items.reopen.",
+    doc:
+        "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again. `token` undoes it with items.reopen. `reason` is kept in the decision journal (quote the user's words when you relay them, then meetings.confirmRelayed). CLI twin: " +
+        toolCommand("meetings reject") +
+        " <meeting> <items...> --reason <text> [--relayed] --json.",
 });
 export const reopen = defineMethod({
     name: "items.reopen",

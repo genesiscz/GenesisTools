@@ -4542,6 +4542,47 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
     });
 
+    test("a finding the user named in chat is added, then confirmed as relayed: the tick makes the confirm the user's, and the add stays the agent's suggestion", async () => {
+        const fx = await fixture([]);
+        const finding = {
+            kind: "term" as const,
+            at: 20,
+            heard: "harbour",
+            proposed: "Harbor",
+            confidence: 0.9,
+            reason: "the user named the spelling",
+        };
+        const added = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "add", findings: [finding] },
+            actor: relayer,
+        });
+        const id = added.entry!.changes[0]!.id;
+        const confirmed = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: [id] },
+            actor: relayer,
+            reason: 'Alice in chat: "it is Harbor"',
+        });
+        const { journal } = requestJournal();
+        const door = personDoor(journal);
+
+        const first = await confirmRun(fx, [id], door, journal);
+        expect(first.instructions?.stop).toBe(true);
+        const [request] = door.posted;
+        expect(request?.rows?.map((row) => row.quote)).toEqual(["it is Harbor"]);
+
+        const picked = [relayedRowId(fx.meeting.id, id, confirmed.entry!.token)];
+        await journal.settle(request!.id, "done", null, { via: "native", picked });
+        const second = await confirmRun(fx, [id], door, journal);
+        expect(second.adopted).toEqual([{ meeting: fx.meeting.id, items: [id], token: expect.any(String) }]);
+        expect(fx.item(id)).toMatchObject({ status: "confirmed", proposed: "Harbor" });
+        expect(fx.item(id)?.decision?.actor).toMatchObject({ kind: "request", relayedBy: relayer });
+        // Only a decision becomes the user's; the add that made the item stays the agent's suggestion in the journal.
+        const addEntry = fx.journal.read(fx.meeting.id).find((entry) => entry.token === added.entry!.token);
+        expect(addEntry?.actor).toEqual(relayer);
+    });
+
     test("a row at one instant plays the line that starts there: a one-line speaker range and a question asked at one second", async () => {
         const lines: TranscriptEntry[] = [
             { speaker: "Voice", startSec: 30, text: "We ship the Ada build on Friday." },
