@@ -9,9 +9,12 @@ import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentActor, DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { DecisionAction, JournalReadEntry } from "./decision-actions";
 import { itemIdOf, shownValue, spanOf } from "./decision-journal";
+import { itemLines } from "./listen-answers";
 import { questionLabel } from "./questions";
 import type { MeetingsClient } from "./service/client";
 import { errorText } from "./shared";
@@ -216,8 +219,91 @@ export interface RelayedPlay {
 }
 
 /**
- * What one row shows: the item and its decision, the user's words, where it is, and Play for exactly its range: the
- * item's own range, or for an item at one instant the stretch its Moment plans (`play`).
+ * The longest stretch a row plays: enough to hear who speaks and what is said, never a question's whole context (a
+ * question about a speaker can span forty minutes of the meeting).
+ */
+export const RELAYED_CLIP_MAX_SEC = 30;
+
+/** A row whose lines the transcript does not show plays this much from the item's time. */
+const RELAYED_FALLBACK_SEC = 5;
+
+/** A stretch shorter than this is one instant: a range or question whose from and to are one second. */
+const INSTANT_SEC = 1;
+
+type MeetingItem = MeetingRecord["items"][number];
+
+/**
+ * The lines one item is about, as `look` names them: a range's own lines (its label's lines that start inside it); a
+ * range, question or word at one instant the line that starts at that second (`TranscriptLines.resolve`, as voice
+ * samples read it since 8010f25684); a question the lines of the items its answer decides.
+ */
+function ownLines(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): RelayedPlay[] {
+    const spans = (indexes: readonly number[]): RelayedPlay[] => indexes.flatMap((index) => lines.span(index) ?? []);
+    const address = item.evidence?.transcriptLine;
+    const lineAt = (atSec: number, labels: readonly string[]): RelayedPlay[] => {
+        const found = lines.resolve(
+            { atSec, ...(typeof address === "number" && Number.isInteger(address) ? { line: address } : {}) },
+            (entry) => labels.length === 0 || labels.includes(entry.speaker)
+        );
+        return found.kind === "found" ? spans([found.index]) : [];
+    };
+    const inRange = (fromSec: number, toSec: number, labels: readonly string[]): RelayedPlay[] =>
+        toSec - fromSec < INSTANT_SEC
+            ? lineAt(fromSec, labels)
+            : spans(itemLines(item, lines).map((line) => line.index));
+
+    switch (item.kind) {
+        case "question": {
+            const decided = record.items
+                .filter((one) => one.kind !== "question" && item.decides.includes(one.id))
+                .flatMap((one) => ownLines(record, one, lines));
+            const labels = Array.isArray(item.evidence?.labels)
+                ? item.evidence.labels.filter((label): label is string => typeof label === "string")
+                : [];
+            return decided.length ? decided : inRange(item.fromSec, item.toSec, labels);
+        }
+        case "speaker-range":
+        case "label":
+            return inRange(item.fromSec, item.toSec, [item.label]);
+        case "removal":
+            return inRange(item.fromSec, item.toSec, []);
+        case "term":
+        case "join":
+            return item.atSec === undefined ? [] : lineAt(item.atSec, []);
+    }
+}
+
+/**
+ * What a row's Play button plays: the lines its decision is about, from the first one's start to the last one's end,
+ * at most {@link RELAYED_CLIP_MAX_SEC} long. `tools meetings play --at --to` pads that stretch as every Moment of a
+ * range is padded (`playback.listen.padBeforeSec` and `padAfterSec`), so a one-second line is heard with its
+ * surroundings. Without the transcript's lines, the item's own range or a few seconds from its time; undefined only
+ * for an item with no time at all.
+ */
+export function relayedClip(
+    record: MeetingRecord,
+    item: MeetingItem,
+    lines: TranscriptLines | undefined
+): RelayedPlay | undefined {
+    const own = lines ? ownLines(record, item, lines).sort((a, b) => a.fromSec - b.fromSec) : [];
+    const span = spanOf(item);
+    const fromSec = own[0]?.fromSec ?? span?.fromSec;
+
+    if (fromSec === undefined) {
+        return undefined;
+    }
+
+    const endSec = own.length
+        ? Math.max(...own.map((one) => one.toSec))
+        : span && span.toSec - span.fromSec >= INSTANT_SEC
+          ? span.toSec
+          : fromSec + RELAYED_FALLBACK_SEC;
+    return { fromSec, toSec: Math.min(Math.max(endSec, fromSec + INSTANT_SEC), fromSec + RELAYED_CLIP_MAX_SEC) };
+}
+
+/**
+ * What one row shows: the item and its decision, the user's words, where it is, and Play for the lines it is about
+ * (`relayedClip`). Every row with a time has Play; for a meeting with no sound the window dims it and says why.
  */
 function requestRow(row: RelayedRow, record: MeetingRecord, play?: RelayedPlay): RequestRow {
     const item = record.items.find((each) => each.id === row.item);
@@ -229,7 +315,6 @@ function requestRow(row: RelayedRow, record: MeetingRecord, play?: RelayedPlay):
               ? `rejected: ${shownValue(item) ?? row.item}`
               : (shownValue(item) ?? "confirmed");
     const span = item ? spanOf(item) : undefined;
-    const heard = span && span.toSec > span.fromSec ? span : play;
     const quote = relayedQuote(row.entry);
     const where = [
         record.title || record.id,
@@ -241,14 +326,14 @@ function requestRow(row: RelayedRow, record: MeetingRecord, play?: RelayedPlay):
         title: `${row.label} · ${decision}`.slice(0, 200),
         ...(quote ? { quote: quote.slice(0, 2000) } : {}),
         detail: where.filter(Boolean).join(" · ").slice(0, 500),
-        ...(heard && heard.toSec > heard.fromSec
+        ...(play
             ? {
                   action: {
                       kind: "play-meeting" as const,
                       label: "Play clip",
                       meeting: row.meeting.id,
-                      fromSec: Math.max(0, heard.fromSec),
-                      toSec: heard.toSec,
+                      fromSec: Math.max(0, play.fromSec),
+                      toSec: play.toSec,
                   },
               }
             : {}),
@@ -256,52 +341,44 @@ function requestRow(row: RelayedRow, record: MeetingRecord, play?: RelayedPlay):
 }
 
 /**
- * The stretch to play for each row whose item sits at one instant (a speaker range of one line, a question asked at one
- * second): the span of the item's Moment, which hears the line or the lines the decision names. Keyed by
- * `relayedRowId`; a row whose Moment cannot be planned keeps its own span.
+ * The stretch each row plays (`relayedClip`), keyed by `relayedRowId`, over each meeting's transcript lines (absent
+ * for a meeting whose transcript does not read).
  */
-export async function relayedPlays(
+export function relayedPlays(
     rows: readonly RelayedRow[],
     records: ReadonlyMap<string, MeetingRecord>,
-    client: Pick<MeetingsClient, "call">
-): Promise<Map<string, RelayedPlay>> {
+    lines: ReadonlyMap<string, TranscriptLines | undefined>
+): Map<string, RelayedPlay> {
     const plays = new Map<string, RelayedPlay>();
 
-    await Promise.all(
-        rows.map(async (row) => {
-            const item = records.get(row.meeting.id)?.items.find((each) => each.id === row.item);
-            const span = item ? spanOf(item) : undefined;
+    for (const row of rows) {
+        const record = records.get(row.meeting.id);
+        const item = record?.items.find((each) => each.id === row.item);
+        const clip = record && item ? relayedClip(record, item, lines.get(record.id)) : undefined;
 
-            if (!item || (span && span.toSec > span.fromSec)) {
-                return;
-            }
-
-            try {
-                const { moment, cannot } = await client.call("moment.plan", {
-                    meeting: row.meeting.id,
-                    target: { kind: "item", id: row.item },
-                    tone: false,
-                    screen: false,
-                });
-
-                if (moment) {
-                    plays.set(relayedRowId(row.meeting.id, row.item, row.entry.token), {
-                        fromSec: moment.fromSec,
-                        toSec: moment.toSec,
-                    });
-                } else {
-                    logger.debug({ meeting: row.meeting.id, item: row.item, cannot }, "relayed row: no Moment to play");
-                }
-            } catch (error) {
-                logger.debug(
-                    { error, meeting: row.meeting.id, item: row.item },
-                    "relayed row: its Moment did not plan"
-                );
-            }
-        })
-    );
+        if (clip) {
+            plays.set(relayedRowId(row.meeting.id, row.item, row.entry.token), clip);
+        }
+    }
 
     return plays;
+}
+
+/** A meeting's transcript lines, as the Moment engine reads them; undefined when the transcript does not read. */
+async function meetingLines(
+    store: MeetingStore,
+    record: MeetingRecord
+): Promise<readonly TranscriptEntry[] | undefined> {
+    try {
+        const { OpenedMeeting } = await import("./opened-meeting");
+        return (await OpenedMeeting.of(store, record).meeting()).transcript;
+    } catch (error) {
+        logger.debug(
+            { error, meeting: record.id },
+            "relayed rows: no transcript, so each row plays its item's own time"
+        );
+        return undefined;
+    }
 }
 
 /** The window (D443): who asks, what a confirmation changes, one row per answer, and Confirm as mine / Not now. */
@@ -584,6 +661,8 @@ export async function confirmRelayed(options: {
     gt?: RelayedConfirmDoor;
     /** The person area's request journal; the default is the one the person area writes. */
     requests?: RelayedRequests;
+    /** A meeting's transcript lines, for each row's Play; the default reads the meeting's source. */
+    transcript?: (record: MeetingRecord) => Promise<readonly TranscriptEntry[] | undefined>;
 }): Promise<RelayedResult> {
     const { store, client, rerun } = options;
     const rows: RelayedRow[] = [];
@@ -644,7 +723,16 @@ export async function confirmRelayed(options: {
         };
     }
 
-    const fresh = relayedRequest(rows, records, await relayedPlays(rows, records, client));
+    const read = options.transcript ?? ((record: MeetingRecord) => meetingLines(store, record));
+    const lines = new Map(
+        await Promise.all(
+            [...records.values()].map(async (record) => {
+                const entries = await read(record);
+                return [record.id, entries ? new TranscriptLines(entries) : undefined] as const;
+            })
+        )
+    );
+    const fresh = relayedRequest(rows, records, relayedPlays(rows, records, lines));
     const [{ createRequestJournal }, { noticeInputSchema }] = await Promise.all([
         import("@genesiscz/utils/genesis-tools/areas/person/journal"),
         import("@genesiscz/utils/genesis-tools/areas/person/request"),
