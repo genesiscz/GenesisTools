@@ -46,12 +46,11 @@ export function prepareFindings(options: {
             item.evidence = { ...item.evidence, transcriptLine: line };
         }
         if (item.kind === "question" && options.transcript) {
-            const words = options.transcript
-                .filter(
-                    (entry) =>
-                        entry.startSec !== undefined && entry.startSec >= item.fromSec && entry.startSec <= item.toSec
-                )
-                .reduce((sum, entry) => sum + entry.text.split(/\s+/).filter(Boolean).length, 0);
+            const lines = options.transcript;
+            const words = questionLines(item, lines).reduce(
+                (sum, index) => sum + lines[index]!.text.split(/\s+/).filter(Boolean).length,
+                0
+            );
             const shared = [...options.items, ...added].filter(
                 (candidate) =>
                     candidate.kind === "speaker-range" &&
@@ -175,6 +174,15 @@ function findingKey(item: MeetingItem): string {
     return SafeJSON.stringify(stable(content));
 }
 
+/** The source lines a question asks about: the lines that start inside its range. */
+function questionLines(question: { fromSec: number; toSec: number }, transcript: readonly TranscriptEntry[]): number[] {
+    return transcript.flatMap((entry, index) =>
+        entry.startSec !== undefined && entry.startSec >= question.fromSec && entry.startSec <= question.toSec
+            ? [index]
+            : []
+    );
+}
+
 /** A pure preview through the same corrections and line-address pipeline used to render the transcript. */
 export function planFindings(options: {
     findings: Finding[];
@@ -206,17 +214,23 @@ export function planFindings(options: {
                 include: [item.id],
             });
             const outcome = result.outcomes.find((outcome) => outcome.item === item.id);
+            const changed =
+                item.kind === "question"
+                    ? result.entries.flatMap((entry, line) =>
+                          entry.text !== options.transcript[line]?.text ||
+                          entry.speaker !== options.transcript[line]?.speaker
+                              ? [line]
+                              : []
+                      )
+                    : [];
+            // A question that changes no line is still stored, as `items add` stores it: it asks about the lines of
+            // its range. Only a term or text question whose heard words are not in them is not found.
+            const asked =
+                item.kind === "question" && !changed.length && !(item.heard && item.about !== "speaker")
+                    ? questionLines(item, options.transcript)
+                    : [];
             const indexes =
-                outcome && "lines" in outcome
-                    ? outcome.lines.map((line) => line.index)
-                    : item.kind === "question"
-                      ? result.entries.flatMap((entry, line) =>
-                            entry.text !== options.transcript[line]?.text ||
-                            entry.speaker !== options.transcript[line]?.speaker
-                                ? [line]
-                                : []
-                        )
-                      : [];
+                outcome && "lines" in outcome ? outcome.lines.map((line) => line.index) : [...changed, ...asked];
             return {
                 finding: index + 1,
                 kind: item.kind,

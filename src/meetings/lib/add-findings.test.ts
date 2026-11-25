@@ -327,6 +327,37 @@ test("plan uses shared term, join and label addresses", async () => {
     expect(join.findings[0]!.lines.map((line) => line.index)).toEqual([0, 1]);
 });
 
+test("plan shows a question that changes no line as stored on the lines of its range, as add stores it", async () => {
+    const { planFindings } = await import("./add-findings");
+    const record = meetingRecordSchema.parse({
+        id: "2026-11-02_15-00-asked",
+        title: "Asked",
+        start: "2026-11-02T15:00:00.000Z",
+        createdAt: "2026-11-02T15:00:00.000Z",
+        createdBy: "new",
+    });
+    const plan = (finding: Record<string, unknown>) =>
+        planFindings({
+            record,
+            transcript,
+            config: meetingsConfigSchema.parse({}),
+            findings: findingsFileSchema.parse([
+                {
+                    kind: "question",
+                    from: 4,
+                    to: 10,
+                    question: "Is this the second voice?",
+                    choices: ["Yes", "No"],
+                    ...finding,
+                },
+            ]),
+        }).findings[0];
+
+    expect(plan({})).toMatchObject({ status: "applied", lines: [{ index: 1 }, { index: 2 }] });
+    expect(plan({ heard: "Other voice" })).toMatchObject({ status: "applied", lines: [{ index: 1 }, { index: 2 }] });
+    expect(plan({ about: "term", heard: "never said" })).toMatchObject({ status: "not-found", lines: [] });
+});
+
 test("CLI finding batches preserve retries and forward explicit duplicates through the service action schema", async () => {
     const { Command } = await import("commander");
     const { ui } = await import("@genesiscz/utils/cli/ui");
