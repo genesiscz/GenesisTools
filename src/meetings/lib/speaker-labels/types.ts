@@ -66,6 +66,11 @@ export interface LabelContext {
     /** Lines the seat labeler gave to the only person at their seat, keyed by source transcript index. */
     seatOwners?: ReadonlyMap<number, string>;
     applyAbove?: number;
+    /**
+     * Remote people the call's speaking indicator never shows speaking in this meeting, while it shows another remote
+     * person speaking. Unset or empty: the indicator says nothing about who did not speak.
+     */
+    neverShownSpeaking?: readonly string[];
     project: string | undefined;
 }
 

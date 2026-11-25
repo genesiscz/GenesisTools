@@ -442,6 +442,15 @@ const speakerLabelsSchema = z.object({
              * voice only checks such a line for a stranger.
              */
             supportOnSeatLines: z.boolean().default(true),
+            /**
+             * A remote person with no voice sample (or too few to share a seat) whom the call's speaking indicator never
+             * shows speaking in the whole meeting is no possible speaker of a line: they hold no line back for a sample
+             * (`unsampled-present`, `few-samples`), raise no line to `gate.unsampledScore`, and are never offered by
+             * exclusion. It applies only in a meeting where the indicator shows at least one other remote person
+             * speaking; a meeting without such reads is named as before, and so is a person shown speaking even once.
+             * Off: every present person without a sample holds the line back.
+             */
+            skipUnsampledNeverSpeaking: z.boolean().default(true),
             /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
             gate: z
                 .object({

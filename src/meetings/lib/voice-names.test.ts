@@ -1185,6 +1185,80 @@ test("a live speaking indicator enrols its own line only when the existing rule 
     expect(await preview(0.71)).toEqual([]);
 });
 
+test("a remote person the call's indicator never shows speaking holds no line back once it shows another remote", async () => {
+    const carol = "Carol Example";
+    const { opened, record } = await sampledMeeting("never-speaking-fixture");
+    record.seats = { room: ["Owner Example"], remote: [{ name: alice.person }, { name: bob.person }, { name: carol }] };
+    const callPrint = { ...basePrint, seat: "call" as const, track: "source-call" as const };
+    addVoicePrint(record.project!, alice.person, { ...callPrint, embedding: [1, 0, 0] }, "fixture-model");
+    addVoicePrint(
+        record.project!,
+        bob.person,
+        { ...callPrint, sourceSha: "bob-training", embedding: [0, 1, 0] },
+        "fixture-model"
+    );
+    const meeting = await opened.meeting();
+    meeting.transcript = [0, 15, 30, 45].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "Hello." }));
+    const presence = [alice.person, bob.person, carol].map((name) => ({ name, fromSec: 0, toSec: 60 }));
+    // Each read shows two people, so no read alone names a line and seeds a temporary sample.
+    let speaking: Array<{ tSec: number; speaking: string[] }> = [];
+    spies.push(
+        spyOn(opened, "evidence").mockImplementation(async () => ({
+            selfName: "Owner Example",
+            files: [],
+            segments: [{ startSec: 0, endSec: 60, channel: "system" }],
+            speaking,
+        })),
+        spyOn(opened, "sound").mockResolvedValue({
+            tracks: [],
+            slice: (request) => ({
+                fileFromSec: request.fromSec,
+                fileToSec: request.toSec,
+                track: "source-call",
+                path: "call.wav",
+                channel: 0,
+                clock: "source",
+            }),
+        }),
+        // Alice scores 0.5 on every line: past the ordinary gate (0.45), under the one for an unsampled person (0.55).
+        spyOn(voice, "embedVoiceLines").mockImplementation(async (input) =>
+            input.spans.map((span) => timedLine(span.index, span.fromSec, [0.5, 0, Math.sqrt(0.75)], "call"))
+        )
+    );
+    const config = meetingsConfigSchema.parse({});
+    config.global.speakerLabels.seat.enabled = false;
+    // Each person has one print; the split of three people at one seat would otherwise wait for more.
+    config.global.speakerLabels.voice.minSamples = 1;
+    const second = async () =>
+        (await proposeSpeakerLabels(opened, config.global.speakerLabels, presence, { voiceOnly: true })).find(
+            (row) => row.index === 1
+        );
+
+    // The indicator shows Alice and Bob, never Carol: Carol said none of the call's lines.
+    speaking = [{ tSec: 0, speaking: [alice.person, bob.person] }];
+    const named = await second();
+    expect(named).toMatchObject({ reason: "named", person: alice.person });
+    expect(named?.score).toBeCloseTo(0.5);
+    config.global.speakerLabels.voice.skipUnsampledNeverSpeaking = false;
+    expect(await second()).toMatchObject({ reason: "unsampled-present", next: { person: carol } });
+    config.global.speakerLabels.voice.skipUnsampledNeverSpeaking = true;
+
+    // Shown speaking once, Carol may have said any line, so a line under the unsampled gate still waits for her.
+    speaking = [
+        { tSec: 0, speaking: [alice.person, bob.person] },
+        { tSec: 31, speaking: [bob.person, carol] },
+    ];
+    expect(await second()).toMatchObject({ reason: "unsampled-present", next: { person: carol } });
+
+    // An indicator that shows only the user did not show that it works for the call.
+    speaking = [{ tSec: 0, speaking: ["Owner Example"] }];
+    expect(await second()).toMatchObject({ reason: "unsampled-present", next: { person: carol } });
+
+    // A meeting with no speaking reads at all is named as before.
+    speaking = [];
+    expect(await second()).toMatchObject({ reason: "unsampled-present", next: { person: carol } });
+});
+
 test("only human speaker answers wholly containing a line persist prints; Undo reopens the store", async () => {
     const { record, opened } = await sampledMeeting("answer-voice-fixture");
     const question = {

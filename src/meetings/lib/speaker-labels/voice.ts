@@ -407,6 +407,9 @@ export function voiceLabeler(options: {
                 sources,
                 applyAbove: context.applyAbove,
                 attended: context.attended.map((stay) => ({ ...stay, person: canonical(stay.person) })),
+                neverShownSpeaking: options.settings.skipUnsampledNeverSpeaking
+                    ? context.neverShownSpeaking?.map(canonical)
+                    : undefined,
                 lines,
             };
             const certain = new Map([...(context.certain ?? [])].map(([index, name]) => [index, canonical(name)]));
