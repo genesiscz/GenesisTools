@@ -280,11 +280,13 @@ export const add = defineMethod({
         findings: z.array(findingSchema).min(1),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
+        /** Preview only, as `items add --plan`: each finding's status and lines; nothing is written. */
+        plan: z.boolean().optional(),
     }),
     result: z.unknown(),
-    resultName: "{ added: items.list rows, duplicates: string[], warnings }",
+    resultName: "{ added: items.list rows, duplicates: string[], warnings } | plan: { warnings, findings }",
     effect: "reversible",
-    doc: "Add validated findings under the meeting store lock. Equal open findings are retained and reported as duplicate ids; allowDuplicates appends deliberately. Answers added items.list rows, duplicate ids and warnings. An all-duplicate retry writes nothing.",
+    doc: `Add validated findings under the meeting store lock. Equal open findings are retained and reported as duplicate ids; allowDuplicates appends deliberately. Answers added items.list rows, duplicate ids and warnings. An all-duplicate retry writes nothing. With plan: true, answers { warnings, findings: [{ finding, kind, status, lines }] } from the local transcript and writes nothing. CLI twin: ${toolCommand("meetings items add")} <meeting> --from-file <json> [--plan].`,
 });
 export const suggest = defineMethod({
     name: "items.suggest",

@@ -1,4 +1,4 @@
-import { prepareFindings } from "@app/meetings/lib/add-findings";
+import { planFindings, prepareFindings } from "@app/meetings/lib/add-findings";
 import { type ByChannelOptions, byChannelOptionsSchema } from "@app/meetings/lib/by-channel";
 import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/meetings/lib/channel-operation";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
@@ -91,6 +91,7 @@ import {
 } from "@app/meetings/lib/service/toolset-api";
 import { locateMeeting } from "@app/meetings/lib/shared";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
+import { localMeetingTranscript } from "@app/meetings/lib/sources";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { previewSuggestions, runSuggest } from "@app/meetings/lib/suggest-run";
 import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
@@ -696,7 +697,17 @@ export class MeetingsToolset extends ReplToolset {
                     });
                 },
                 add: async (input: z.input<typeof add.params>) => {
-                    const { findings, allowDuplicates, force } = add.params.parse(input);
+                    const { findings, allowDuplicates, force, plan } = add.params.parse(input);
+                    if (plan) {
+                        // `items add --plan`: the same preview from the local transcript only, and nothing written.
+                        return planFindings({
+                            findings,
+                            record: current(),
+                            transcript: await localMeetingTranscript(current()),
+                            config: await opened().config(),
+                        });
+                    }
+
                     // The same anchors as `items add`; with no transcript at hand, the items are added as given.
                     const source = await opened()
                         .meeting()
