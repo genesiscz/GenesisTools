@@ -54,8 +54,7 @@ struct WidgetTasksModuleView: View {
                     .instantTooltip(store.project.isEmpty ? "Open the Work screen" : "Open \(store.project) in Work")
                     .accessibilityIdentifier("tasks.open-work")
                 }
-                // The host's own rows (Expand, the module switcher) sit 18 pt in; the module's edges line up with them.
-                .padding(.horizontal, 18).padding(.vertical, 16)
+                .padding(WidgetModuleMetrics.padding)
             }
         }
         .accessibilityElement(children: .contain)
@@ -73,10 +72,7 @@ struct WidgetTasksModuleView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "checklist").foregroundStyle(.mint)
-            Text("Tasks").font(.system(size: 15, weight: .semibold))
-            Spacer()
+        WidgetModuleHeader(symbol: "checklist", title: "Tasks", tint: .mint) {
             if store.snapshot != nil {
                 Text(Plural.count(store.activeCount, "active to-do") + (store.project.isEmpty && store.session.isEmpty ? "" : " overall"))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
