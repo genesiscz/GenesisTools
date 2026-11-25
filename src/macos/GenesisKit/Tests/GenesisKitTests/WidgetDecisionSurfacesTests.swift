@@ -11,6 +11,20 @@ import XCTest
 /// `WIDGET_DECISION_SHOTS=<folder>` (the same calls before and after a change, so the pairs match).
 @MainActor
 final class WidgetDecisionSurfacesTests: XCTestCase {
+    /// One chrome for every decision row: a staged decision's edge is blue at 1.5 pt even while it waits, a waiting
+    /// one's orange at 1 pt, a closed one takes its surface's tint, and the rest draws none.
+    func testOneChromeMarksStagedBlueAndWaitingOrange() {
+        let staged = WidgetDecisionChrome.border(waiting: true, staged: true, closedTint: nil)
+        XCTAssertEqual(staged?.color, SessionPalette.blue.opacity(0.6))
+        XCTAssertEqual(staged?.width, 1.5)
+        let waiting = WidgetDecisionChrome.border(waiting: true, staged: false, closedTint: .green)
+        XCTAssertEqual(waiting?.color, Color.orange.opacity(0.28))
+        XCTAssertEqual(waiting?.width, 1)
+        XCTAssertEqual(WidgetDecisionChrome.border(waiting: false, staged: false, closedTint: .green)?.color, .green)
+        XCTAssertNil(WidgetDecisionChrome.border(waiting: false, staged: false, closedTint: nil))
+        XCTAssertEqual(WidgetDecisionChrome.cornerRadius, 11)
+    }
+
     private let key = "local:claude:fixture-decisions:"
 
     /// `inbox`: the first session's waiting entries, and the only session in the inbox of every session; nil lists the

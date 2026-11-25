@@ -18,10 +18,11 @@ struct WidgetInboxEntry: View {
 
     var body: some View {
         let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
+        let stage = stagedLine(item)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 2) {
                 WidgetInboxOverviewRow(item: item, open: open, focused: focused,
-                                       source: sourceLabel(session), stagedLine: stagedLine(item), toggle: toggle)
+                                       source: sourceLabel(session), stagedLine: stage, toggle: toggle)
                     .equatable()
                 if context == .inlineSource, let session {
                     IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
@@ -37,13 +38,7 @@ struct WidgetInboxEntry: View {
                     .transition(.genReveal)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
-        // The keyboard's row: a focus ring, the look of the system's own.
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
+        .decisionChrome(waiting: item.needsAnswer, staged: stage != nil, open: open, focused: focused)
         .id(item.id)
     }
 

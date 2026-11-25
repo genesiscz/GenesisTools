@@ -671,14 +671,7 @@ public struct LiveWidgetView: View {
                     .transition(.genReveal)
             }
         }
-        // The card closes over its detail instead of the rows below sliding up over fading text.
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            // A staged decision reads blue as clearly as a waiting one reads orange: at 0.3 the blue was lost on the
-            // dark card (Martin, 2026-10-28: "somehow marked as staged - the blue border probably?").
-            .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.6) : .clear,
-                          lineWidth: staged ? 1.5 : 1))
+        .decisionChrome(waiting: waiting, staged: staged, open: open)
         .attentionPulse(trigger: model.revealTrigger("card-" + card.id), style: model.revealStyle,
                         since: model.revealStart("card-" + card.id))
     }

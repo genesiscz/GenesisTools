@@ -494,10 +494,10 @@ struct WidgetStagedDecisionRow: View {
                 detail.padding(.horizontal, 10).padding(.bottom, 10).transition(.genReveal)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .background(Color.white.opacity(open ? 0.055 : 0), in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .modifier(RowHover())
+        // Every row of this list is staged, so the staged edge would say nothing here.
+        .decisionChrome(waiting: false, staged: false, open: open)
+        .contentShape(RoundedRectangle(cornerRadius: WidgetDecisionChrome.cornerRadius))
+        .modifier(RowHover(cornerRadius: WidgetDecisionChrome.cornerRadius))
     }
 
     private var detail: some View {
@@ -540,11 +540,12 @@ struct WidgetStagedDecisionRow: View {
 
 /// The soft fill a list row gets under the pointer, for a row made of several buttons.
 private struct RowHover: ViewModifier {
+    var cornerRadius: CGFloat = 8
     @State private var hovered = false
 
     func body(content: Content) -> some View {
         content
-            .background(Color.white.opacity(hovered ? 0.04 : 0), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.white.opacity(hovered ? 0.04 : 0), in: RoundedRectangle(cornerRadius: cornerRadius))
             .onHover { hovered = $0 }
     }
 }
