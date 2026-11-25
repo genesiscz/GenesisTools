@@ -1,7 +1,13 @@
 import { sha256Json } from "@genesiscz/utils/hash";
-import { DEFAULT_APPLY_ABOVE } from "@genesiscz/utils/meetings/config";
+import {
+    DEFAULT_APPLY_ABOVE,
+    DEFAULT_FUSION_VOICE_MARGIN,
+    DEFAULT_SPEAKER_FUSION,
+    type MeetingsConfig,
+    type SeatRetireMode,
+} from "@genesiscz/utils/meetings/config";
 import type { RoomDevice } from "@genesiscz/utils/meetings/people";
-import { RangeStrength, rangeStrength } from "@genesiscz/utils/meetings/range-strength";
+import { agreeingKey, RangeStrength, rangeStrength } from "@genesiscz/utils/meetings/range-strength";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople, roomSeatNames, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
@@ -536,6 +542,44 @@ function confidentVoiceName(item: NewItem, applyAbove: number): boolean {
     );
 }
 
+type FusionSettings = MeetingsConfig["global"]["speakerLabels"]["fusion"];
+
+/** A voice match counts as agreement only when it led a rival by `margin`: with no rival it compared nothing. */
+function ledRival(
+    match: { score?: number; next?: { score: number } } | undefined,
+    margin: number
+): match is { score: number } {
+    return match?.score !== undefined && match.next !== undefined && match.score - match.next.score >= margin;
+}
+
+/**
+ * What a labeler found for a line, as agreement another range can record (`evidence.agreeing`): the seat's reading of
+ * the audio levels, and a voice match that led a rival. A label that waits for a person's review agrees with nothing.
+ */
+function labelFinding(label: LineLabel, voiceMargin: number): Record<string, number> | undefined {
+    if (label.reviewOnly || !label.person) {
+        return undefined;
+    }
+
+    if (label.reason === "seat-of-one") {
+        return {
+            [agreeingKey(["levels"])]: label.score ?? CONFIDENCE.attendance,
+            ...(ledRival(label.voiceSupport, voiceMargin)
+                ? { [agreeingKey(["voice"])]: label.voiceSupport.score }
+                : {}),
+        };
+    }
+
+    return label.reason === "named" && ledRival(label, voiceMargin)
+        ? { [agreeingKey(["voice"])]: label.score }
+        : undefined;
+}
+
+/** When a stored item was suggested; a finding of this run has no time yet and sorts first. */
+function madeAt(item: NewItem): string {
+    return "suggestedAt" in item && typeof item.suggestedAt === "string" ? item.suggestedAt : "";
+}
+
 /** Reconcile line proposals here, where the old rules already meet; labelers never create or save items. */
 function labeledItems(options: {
     labels: LineLabel[];
@@ -543,7 +587,10 @@ function labeledItems(options: {
     record: MeetingRecord;
     meeting: SourceMeeting;
     applyAbove?: number;
+    fusion?: Partial<FusionSettings>;
 }): NewItem[] {
+    const fuses = (options.fusion?.mode ?? DEFAULT_SPEAKER_FUSION) === "independent";
+    const voiceMargin = options.fusion?.voiceMargin ?? DEFAULT_FUSION_VOICE_MARGIN;
     const { record, meeting } = options;
     const spans = new TranscriptLines(meeting.transcript);
     const proposed = new Map<number, NewItem>();
@@ -647,6 +694,15 @@ function labeledItems(options: {
             continue;
         }
 
+        // The voice agrees with a calibrated seat name from other evidence than the audio levels, when it had a rival to
+        // compare: the seat keeps its own confidence, and the transcript counts the two together (`fusedConfidence`).
+        const seatAgreement =
+            fuses &&
+            label.reason === "seat-of-one" &&
+            label.score !== undefined &&
+            ledRival(label.voiceSupport, voiceMargin)
+                ? { [agreeingKey(["voice"])]: label.voiceSupport.score }
+                : undefined;
         const previous = proposed.get(label.index - 1);
         const continuesExclusion =
             previous?.kind === "speaker-range" &&
@@ -673,6 +729,7 @@ function labeledItems(options: {
                 ...(label.score === undefined ? {} : { score: label.score }),
                 ...(label.next ? { next: label.next } : {}),
                 ...(label.voiceSupport ? { voiceSupport: label.voiceSupport } : {}),
+                ...(seatAgreement ? { agreeing: seatAgreement } : {}),
                 ...(label.reviewOnly && !label.voiceSupport ? { reviewOnly: true, listen: true } : {}),
                 ...(label.reason === "exclusion"
                     ? {
@@ -714,7 +771,13 @@ function labeledItems(options: {
                     old.speaker &&
                     sameName(old.speaker, label.person)
                 ) {
-                    const { voiceSupport: _previous, score: _score, retired: _retired, ...rest } = old.evidence;
+                    const {
+                        voiceSupport: _previous,
+                        score: _score,
+                        retired: _retired,
+                        agreeing: _agreeing,
+                        ...rest
+                    } = old.evidence;
                     old.status = "suggested";
                     const confidence = label.score ?? CONFIDENCE.attendance;
                     const scores =
@@ -727,8 +790,45 @@ function labeledItems(options: {
                         ...(scores ? { candidateScores: scores } : {}),
                         ...(label.score !== undefined ? { score: label.score } : {}),
                         ...(label.voiceSupport ? { voiceSupport: label.voiceSupport } : {}),
+                        ...(seatAgreement ? { agreeing: seatAgreement } : {}),
                     };
                 }
+            }
+        }
+
+        // An agent's one-line range for the same person keeps its own confidence, and this line's finding is recorded
+        // beside it, so the transcript counts both. Not when a rule's range already named the person on the line
+        // before the agent stated it: the agent could have read that range, so the two are one finding.
+        const finding = fuses ? labelFinding(label, voiceMargin) : undefined;
+        for (const old of stored) {
+            if (
+                old.kind !== "speaker-range" ||
+                old.status !== "suggested" ||
+                old.fromSec !== old.toSec ||
+                !old.speaker ||
+                !sameName(old.speaker, label.person) ||
+                rangeStrength(old) !== RangeStrength.Stated ||
+                (typeof old.evidence?.transcriptLine === "number" && old.evidence.transcriptLine !== label.index)
+            ) {
+                continue;
+            }
+
+            const statedAt = madeAt(old);
+            const readable = (storedByLabel.get(entry.speaker) ?? []).some(
+                (one) =>
+                    one !== old &&
+                    one.kind === "speaker-range" &&
+                    covers(one, entry.speaker, at) &&
+                    !!one.speaker &&
+                    sameName(one.speaker, label.person!) &&
+                    rangeStrength(one) === RangeStrength.Automatic &&
+                    madeAt(one) <= statedAt
+            );
+            const { agreeing: stale, ...rest } = old.evidence ?? {};
+            if (finding && !readable) {
+                old.evidence = { ...rest, agreeing: finding };
+            } else if (stale !== undefined) {
+                old.evidence = rest;
             }
         }
         const rivals: string[] = [];
@@ -867,6 +967,10 @@ export interface SuggestInputs {
     voice?: LineVoice[];
     labels?: LineLabel[];
     applyAbove?: number;
+    /** How findings that agree on a line's speaker combine (`speakerLabels.fusion`). */
+    fusion?: Partial<FusionSettings>;
+    /** When a seat name the calibrated audio no longer supports is set aside (`speakerLabels.seat.retire`). */
+    seatRetire?: SeatRetireMode;
     /** In a stored suggestion run, update roster stays with the voice evidence from this same pass. */
     leaveSilenceMinutes?: number;
     /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
@@ -1245,7 +1349,12 @@ function buildSuggestions(options: SuggestInputs): void {
     found.splice(0, found.length, ...found.map(unlabeled.restore));
 
     if (options.labels && (options.rules.includes("speakers") || options.rules.includes("evidence"))) {
-        retireContradictedSeats({ record, lines: sourceLines, applyAbove: options.applyAbove });
+        retireContradictedSeats({
+            record,
+            lines: sourceLines,
+            applyAbove: options.applyAbove,
+            mode: options.seatRetire,
+        });
     }
 
     if (options.labels?.length && (options.rules.includes("speakers") || options.rules.includes("evidence"))) {
@@ -1261,6 +1370,7 @@ function buildSuggestions(options: SuggestInputs): void {
                 record,
                 meeting: options.meeting,
                 applyAbove: options.applyAbove,
+                fusion: options.fusion,
             })
         );
     }

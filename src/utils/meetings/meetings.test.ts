@@ -30,6 +30,9 @@ import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo"
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { DEFAULT_POLISHED_PHRASES, POLISHED_PHRASES_BY_LANGUAGE } from "./polished";
 import {
+    evidenceSources,
+    fuseConfidence,
+    fusedConfidence,
     RangeStrength,
     rangeStrength,
     showsAsGuess,
@@ -376,7 +379,8 @@ describe("meetings config", () => {
         expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
         expect(config.global.speakerLabels).toEqual({
             channels: { minSeparation: 0.3 },
-            seat: { enabled: true, deviceOfferMinMeetings: 2 },
+            seat: { enabled: true, deviceOfferMinMeetings: 2, retire: "calibration" },
+            fusion: { mode: "independent", voiceMargin: 0.15 },
             voice: {
                 enabled: true,
                 gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
@@ -1944,5 +1948,45 @@ describe("speaker range strength", () => {
         expect(showsAsGuess(range("suggested", ["agent"]), 0.7)).toBe(false);
         expect(showsAsGuess(range("suggested", ["agent", "user"], 0.3), 0.7)).toBe(false);
         expect(showsAsGuess(range("confirmed", ["agent"], 0.3), 0.7)).toBe(false);
+    });
+
+    test("findings that agree add up once per kind of evidence; the same evidence and a voice with no rival add nothing", () => {
+        const seat = { rules: ["RA"], evidence: { labeler: "seat", reason: "seat-of-one" } };
+        expect(evidenceSources(seat)).toEqual(["levels"]);
+        expect(evidenceSources({ rules: ["RA"] })).toEqual(["platform"]);
+        expect(evidenceSources({ rules: ["E1", "energy", "E3", "R17"] })).toEqual(["levels", "platform", "words"]);
+        expect(
+            evidenceSources({ rules: ["voice-embedding"], evidence: { next: { person: "Bob Example", score: 0.3 } } })
+        ).toEqual(["voice"]);
+        // Negative control: a voice name that compared no rival is no countable evidence, and neither is an unknown rule.
+        expect(evidenceSources({ rules: ["voice-embedding"], evidence: { reason: "named" } })).toEqual([]);
+        expect(evidenceSources({ rules: ["a rule from a newer build"] })).toEqual([]);
+
+        expect(fuseConfidence([0.6, 0.6])).toBe(0.84);
+        expect(fuseConfidence([0.6])).toBe(0.6);
+        expect(fuseConfidence([0.9, 0.9])).toBe(0.95);
+        expect(fuseConfidence([0.97, 0.5])).toBe(0.97);
+
+        const stated = (agreeing?: Record<string, unknown>) => ({
+            status: "suggested" as const,
+            rules: ["agent"],
+            confidence: 0.6,
+            ...(agreeing ? { evidence: { agreeing } } : {}),
+        });
+        expect(fusedConfidence(stated())).toBe(0.6);
+        expect(fusedConfidence(stated({ voice: 0.6 }))).toBe(0.84);
+        expect(fusedConfidence(stated({ levels: 0.6, voice: 0.5 }))).toBe(0.92);
+        // Negative controls: the range's own evidence, a finding that shares a source with one already counted, and an
+        // unreadable entry never add up.
+        expect(fusedConfidence(stated({ agent: 0.9 }))).toBe(0.6);
+        expect(fusedConfidence(stated({ voice: 0.6, "levels+voice": 0.5 }))).toBe(0.84);
+        expect(fusedConfidence(stated({ voice: "sure", levels: 7 }))).toBe(0.6);
+        expect(
+            fusedConfidence({ ...seat, confidence: 0.62, evidence: { ...seat.evidence, agreeing: { levels: 0.9 } } })
+        ).toBe(0.62);
+
+        expect(showsAsGuess(stated({ voice: 0.6 }), 0.7)).toBe(true);
+        expect(showsAsGuess(stated({ voice: 0.6 }), 0.7, { fused: true })).toBe(false);
+        expect(showsAsGuess(stated({ voice: 0.2 }), 0.7, { fused: true })).toBe(true);
     });
 });

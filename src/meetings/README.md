@@ -454,6 +454,20 @@ confirmed term or join, for every path that confirms one.
 The rules are one documented enum, `MeetingRule` in `src/utils/meetings/rules.ts`. Two rules that reach the same item
 merge into one, with the confidence 1 − (1 − a)(1 − b), at most 0.95.
 
+Findings that stay separate items can agree too. With `global.speakerLabels.fusion.mode` `independent` (the default),
+a speakers pass records what a labeler found beside an agent's one-line range for the same person, and a voice match
+that led a rival beside a calibrated seat name (`evidence.agreeing`). The transcript and the question picker then read
+the range's confidence together with that agreement (`fusedConfidence` in `src/utils/meetings/range-strength.ts`):
+once per kind of evidence, 1 − (1 − a)(1 − b), at most 0.95. An agent's 50 % guess that the voice backs at 0.6 shows
+the plain name, and the agent's own confidence stays in the record. Three things never add up: findings from the same
+evidence (the seat, the channel and the energy all read the audio levels), a voice match with no rival or with a lead
+under `global.speakerLabels.fusion.voiceMargin` (0.15), and a rule's range that named the person before the agent
+stated it. `off` keeps every finding's own confidence. `global.speakerLabels.seat.retire` says when a pass sets aside
+a seat name that the calibrated share no longer supports: `calibration` (the default) on the share alone,
+`contradicted` only when another range or the speaking indicator names someone else on the line. Change either with
+`tools meetings config set`. `scripts/benchmarks/meetings/speaker-precision.ts` measures both on the lines people
+decided, on a scratch copy of the store (`docs/adr/0050-agreeing-evidence.md`).
+
 ### Which items become questions
 
 Only what is unsure and matters (Martin, 2026-11-02: "just on those which are really important and not sure of"):

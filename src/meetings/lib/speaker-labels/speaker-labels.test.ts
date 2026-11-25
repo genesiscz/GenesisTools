@@ -1816,6 +1816,138 @@ describe("voice support on seat lines", () => {
         await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
         expect(storedRanges(store, record.id)).toEqual(before);
     });
+
+    test("a pass records a labeler's finding beside an agent's one-line range for the same person, and the line then shows the name plainly", async () => {
+        const alice = "Alice Example";
+        const { record, meeting, config } = await runnerFixture();
+        meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "A line." }];
+        const stated = meetingItemSchema.parse({
+            kind: "speaker-range",
+            id: "i1",
+            status: "suggested",
+            label: "Speaker 1",
+            fromSec: 0,
+            toSec: 0,
+            speaker: alice,
+            confidence: 0.5,
+            rules: [MeetingRule.Agent],
+            suggestedAt: START,
+            evidence: { transcriptLine: 0 },
+        });
+        const voice = (next?: number): LineLabel => ({
+            labeler: "voice",
+            index: 0,
+            seat: "call",
+            person: alice,
+            reason: "named",
+            score: 0.6,
+            ...(next === undefined ? {} : { next: { person: "Bob Example", score: next } }),
+        });
+        const pass = (options: {
+            label: LineLabel;
+            items?: MeetingRecord["items"];
+            fusion?: "independent" | "off";
+        }) => {
+            const held = { ...record, items: structuredClone(options.items ?? [stated]) };
+            suggestItems({
+                record: held,
+                meeting,
+                labels: [options.label],
+                rules: ["speakers"],
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceWords: [],
+                now: "2026-11-01T11:00:00.000Z",
+                ...(options.fusion ? { fusion: { mode: options.fusion } } : {}),
+            });
+            const shown = correctTranscript({
+                record: held,
+                transcript: meeting.transcript,
+                config,
+                format: "json",
+                withSuggested: true,
+            }).entries[0];
+            return {
+                agreeing: held.items.find((item) => item.id === "i1")?.evidence?.agreeing,
+                speaker: shown?.speaker,
+            };
+        };
+
+        // The agent said 50 %, the voice led its rival by 0.3 with 0.6: together 0.8, over the 0.7 threshold.
+        expect(pass({ label: voice(0.3) })).toEqual({ agreeing: { voice: 0.6 }, speaker: alice });
+        // The agent's own confidence and rules stay the agent's.
+        expect(stated).toMatchObject({ confidence: 0.5, rules: [MeetingRule.Agent] });
+
+        // Negative controls: a voice with no rival, a lead under speakerLabels.fusion.voiceMargin, fusion off, and a
+        // rule's range that named the person on the line before the agent stated it (the agent could have read it).
+        const guess = { agreeing: undefined, speaker: "[Alice Example: 50 %]" };
+        expect(pass({ label: voice() })).toEqual(guess);
+        expect(pass({ label: voice(0.5) })).toEqual(guess);
+        expect(pass({ label: voice(0.3), fusion: "off" })).toEqual(guess);
+        const older = meetingItemSchema.parse({
+            ...stated,
+            id: "i0",
+            status: "rejected",
+            rules: [MeetingRule.VoiceEmbedding],
+            suggestedAt: "2026-11-01T09:00:00.000Z",
+            evidence: { labeler: "voice", reason: "named", transcriptLine: 0, retired: "independent-voice" },
+        });
+        expect(pass({ label: voice(0.3), items: [older, stated] })).toEqual(guess);
+        // A pass with no agreement takes an earlier one away.
+        const agreed = meetingItemSchema.parse({
+            ...stated,
+            evidence: { transcriptLine: 0, agreeing: { voice: 0.6 } },
+        });
+        expect(pass({ label: voice(), items: [agreed] })).toEqual(guess);
+    });
+
+    test("a calibrated seat name keeps its own confidence and records a voice match that led a rival", async () => {
+        const alice = "Alice Example";
+        const { record, meeting, config } = await runnerFixture();
+        meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "A line." }];
+        const seat = (next?: number): LineLabel => ({
+            labeler: "seat",
+            index: 0,
+            seat: "mic",
+            person: alice,
+            reason: "seat-of-one",
+            score: 0.62,
+            voiceSupport: {
+                person: alice,
+                score: 0.7,
+                samples: 3,
+                ...(next === undefined ? {} : { next: { person: "Bob Example", score: next } }),
+            },
+        });
+        const pass = (label: LineLabel, fusion?: "off") => {
+            const held = { ...record, items: [] as MeetingRecord["items"] };
+            held.items.push(
+                ...suggestItems({
+                    record: held,
+                    meeting,
+                    labels: [label],
+                    rules: ["speakers"],
+                    dictionary: { abbrExpansion: "every", entries: [] },
+                    sourceWords: [],
+                    now: START,
+                    ...(fusion ? { fusion: { mode: fusion } } : {}),
+                })
+            );
+            const range = held.items.find((item) => item.evidence?.reason === "seat-of-one");
+            const shown = correctTranscript({
+                record: held,
+                transcript: meeting.transcript,
+                config,
+                format: "json",
+                withSuggested: true,
+            }).entries[0];
+            return [range?.confidence, range?.evidence?.agreeing, shown?.speaker];
+        };
+
+        expect(pass(seat(0.3))).toEqual([0.62, { voice: 0.7 }, alice]);
+        // Negative controls: support that compared no rival, and fusion off.
+        expect(pass(seat())).toEqual([0.62, undefined, "[Alice Example: 62 %]"]);
+        expect(pass(seat(0.3), "off")).toEqual([0.62, undefined, "[Alice Example: 62 %]"]);
+    });
 });
 
 describe("voice worker start", () => {

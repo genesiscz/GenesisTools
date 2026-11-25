@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { type LineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
-import { type EvidenceInput, evidenceItems, independentIndicatorLines, speakerEvidence } from "./speaker-evidence";
+import {
+    type EvidenceInput,
+    evidenceItems,
+    independentIndicatorLines,
+    retireContradictedSeats,
+    speakerEvidence,
+} from "./speaker-evidence";
 
 const dana = "Dana Example";
 const eli = "Eli Example";
@@ -206,5 +212,73 @@ describe("per-line speaker evidence", () => {
         expect(evaluate(input).evidence.labels[0]?.outcomes[1]?.kind).toBe("direct");
         input.items = [{ ...confirmed, rules: [], label: dana }];
         expect(evaluate(input).evidence.labels[0]?.outcomes[1]?.kind).not.toBe("direct");
+    });
+
+    test("a seat name the calibrated share no longer supports is set aside; with seat.retire contradicted only when the line names someone else", () => {
+        const seatRecord = (others: unknown[] = []) =>
+            meetingRecordSchema.parse({
+                id: "2026-11-01_12-00-planning",
+                title: "Planning",
+                start,
+                createdAt: start,
+                createdBy: "new",
+                items: [
+                    {
+                        kind: "speaker-range",
+                        id: "i1",
+                        status: "suggested",
+                        label: dana,
+                        fromSec: 10,
+                        toSec: 10,
+                        speaker: eli,
+                        confidence: 0.95,
+                        rules: [MeetingRule.Attendance],
+                        suggestedAt: start,
+                        evidence: { labeler: "seat", reason: "seat-of-one", seat: "mic", transcriptLine: 0 },
+                    },
+                    ...others,
+                ],
+            });
+        const quiet = (energyMic: number): LineEvidence => ({
+            ...callLine(0, 10),
+            energyMic,
+            speaking: {},
+            liveName: undefined,
+        });
+        const statusAfter = (options: {
+            mode?: "calibration" | "contradicted";
+            line: LineEvidence;
+            others?: unknown[];
+        }) => {
+            const record = seatRecord(options.others);
+            retireContradictedSeats({ record, lines: [options.line], ...(options.mode ? { mode: options.mode } : {}) });
+            return [record.items[0]?.status, record.items[0]?.evidence?.retired];
+        };
+
+        expect(statusAfter({ line: quiet(0.2) })).toEqual(["rejected", "calibrated-seat"]);
+        expect(statusAfter({ mode: "contradicted", line: quiet(0.2) })).toEqual(["suggested", undefined]);
+        // The speaking indicator shows someone else, or another range names someone else: the name goes in both modes.
+        expect(statusAfter({ mode: "contradicted", line: { ...quiet(0.2), speaking: { [dana]: 1 } } })).toEqual([
+            "rejected",
+            "calibrated-seat",
+        ]);
+        const other = {
+            kind: "speaker-range",
+            id: "i2",
+            status: "suggested",
+            label: dana,
+            fromSec: 10,
+            toSec: 10,
+            speaker: dana,
+            confidence: 0.5,
+            rules: [MeetingRule.Agent],
+            suggestedAt: start,
+        };
+        expect(statusAfter({ mode: "contradicted", line: quiet(0.2), others: [other] })).toEqual([
+            "rejected",
+            "calibrated-seat",
+        ]);
+        // Negative control: a share that still supports the seat retires nothing in either mode.
+        expect(statusAfter({ line: quiet(0.9) })).toEqual(["suggested", undefined]);
     });
 });
