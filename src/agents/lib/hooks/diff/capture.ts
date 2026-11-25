@@ -20,7 +20,7 @@ import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
 import { actorOf, readOnlyCommand } from "./attribution";
-import { commandDirs, namedArguments, programDirs } from "./command-paths";
+import { namedArguments, workDirs } from "./command-paths";
 import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
@@ -221,13 +221,6 @@ export function captureRoots(payload: HookPayload, config: DiffConfig): string[]
     return rootsOf(workDirs(payload.command, payload.cwd, readOnlyCommand(payload.command)), config).map(
         (entry) => entry.root
     );
-}
-
-/** The folders a call works in: `commandDirs`, then, for a command that may write, its `programDirs`. */
-function workDirs(command: string, cwd: string, readOnly: boolean): string[] {
-    const dirs = commandDirs(command, cwd);
-
-    return readOnly ? dirs : [...dirs, ...programDirs(command, cwd)];
 }
 
 /**
