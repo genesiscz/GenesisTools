@@ -1436,6 +1436,18 @@ console.log("nearestHint");
         "the declared count decides: twice is 'already applied' at count 2, not at 1 or all",
         hintAt(2).includes("already") && !hintAt(1).includes("already") && !hintAt("all").includes("already")
     );
+    check(
+        "a replacement inside a longer word is not 'already applied'",
+        !nearestHint({ content: 'export const newName = "a";\n', needle: "nope-not-there", replacement: "x" }).includes(
+            "already"
+        )
+    );
+    check(
+        "a replacement that stands as its own token once is 'already applied', with its line",
+        nearestHint({ content: "// one\nconst x = 1;\n", needle: "nope-not-there", replacement: "x" }).includes(
+            "already in the file (first at line 2)"
+        )
+    );
     const chance = applyOps(src, [{ find: "nope-not-there", replace: "e" }]);
     check("a literal op hands its count to the hint", !(chance.results[0].reason ?? "").includes("REPLACEMENT"));
     const r = applyOps(src, [{ find: "two = 3;", replace: "two = 4;" }]);

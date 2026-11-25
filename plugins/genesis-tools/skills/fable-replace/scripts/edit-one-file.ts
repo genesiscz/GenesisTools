@@ -272,6 +272,27 @@ const squashedIndexOf = ({ content, needle }: { content: string; needle: string 
 /** 1-based line number of the line that contains offset `at`. */
 const lineAt = (content: string, at: number): number => content.slice(0, at).split("\n").length;
 
+const WORD_CHAR = /[\p{L}\p{N}_$]/u;
+
+/** The offsets where `text` stands as its own token: a word character at its edge does not run on into the file. */
+const standaloneAt = (content: string, text: string): number[] => {
+    const at: number[] = [];
+    const wordStart = WORD_CHAR.test(text.at(0) ?? "");
+    const wordEnd = WORD_CHAR.test(text.at(-1) ?? "");
+
+    for (let i = content.indexOf(text); i !== -1; i = content.indexOf(text, i + text.length)) {
+        const runsOn =
+            (wordStart && WORD_CHAR.test(content[i - 1] ?? "")) ||
+            (wordEnd && WORD_CHAR.test(content[i + text.length] ?? ""));
+
+        if (!runsOn) {
+            at.push(i);
+        }
+    }
+
+    return at;
+};
+
 /**
  * Why did a literal needle miss? Say something a reader can act on: the file
  * already holds the replacement, the needle matches once whitespace is ignored
@@ -298,10 +319,12 @@ export const nearestHint = ({
             return `the REPLACEMENT is present only because ${who} produced it: that op consumed this needle before this one ran. This is not a re-run. Reorder or merge the two ops, or drop this one.`;
         }
 
-        // A short replacement ("x") occurs by chance. Only the count this op would have left behind reads as a re-run,
-        // so "all", which leaves any count, never claims one.
-        if (expected !== "all" && countOccurrences(content, replacement) === (expected ?? 1)) {
-            return "the REPLACEMENT is already in the file: this edit was probably applied before (make the op optional to allow re-runs).";
+        // A short replacement ("x") occurs by chance, also inside a longer word ("export"). Only the count this op would
+        // have left behind, counted where the replacement stands as its own token, reads as a re-run, so "all", which
+        // leaves any count, never claims one.
+        const standalone = expected === "all" ? [] : standaloneAt(content, replacement);
+        if (standalone.length > 0 && standalone.length === (expected ?? 1)) {
+            return `the REPLACEMENT is already in the file (first at line ${lineAt(content, standalone[0])}): this edit was probably applied before (make the op optional to allow re-runs).`;
         }
     }
 
