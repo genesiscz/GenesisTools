@@ -328,6 +328,41 @@ final class RecordingBarViewTests: XCTestCase {
         try await assertBar(f, shows: ["clock", "pause", "stop"])
     }
 
+    /// A bar window shorter than its content (a reserve that fell short of the drawer, or content that grew a turn
+    /// before the window followed) keeps the first row against the edge the window holds: the top while the drawer
+    /// opens downward, the bottom while it opens upward. With no minimum, the flexible frame took the content's own
+    /// height and the hosting view centred it, so the first row moved by half the shortfall.
+    func testABarWindowShorterThanItsContentKeepsTheFirstRowAtTheEdgeItHolds() async throws {
+        for growth in [RecordingBarGrowth.down, .up] {
+            let f = try fixture()
+            f.panel.motion.decideGrowth = { growth }
+            try await assertBar(f, shows: ["record"])
+            let closed = f.panel.window.frame.height
+            f.model.expanded = true
+            let deadline = ContinuousClock.now + .seconds(3)
+            while f.panel.motion.moving || f.panel.window.frame.height <= closed {
+                guard ContinuousClock.now < deadline else { return XCTFail("the drawer did not open (\(growth))") }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            try await f.host.wait(for: expandedControls)
+            XCTAssertEqual(f.panel.motion.growth, growth)
+            let window = f.panel.window
+            func firstRowOnScreen() throws -> CGFloat {
+                window.contentView?.layoutSubtreeIfNeeded()
+                let frame = try XCTUnwrap(FrameProbe.frames["recording.bar.target"])
+                return window.frame.maxY - frame.minY
+            }
+            let before = try firstRowOnScreen()
+            // 40 pt shorter than its content, the held edge kept, as anchored() keeps it.
+            let frame = window.frame
+            window.setFrame(CGRect(x: frame.minX, y: growth == .down ? frame.minY + 40 : frame.minY, width: frame.width,
+                                   height: frame.height - 40), display: false)
+            let after = try firstRowOnScreen()
+            XCTAssertEqual(after, before, accuracy: 0.5,
+                           "the first row moved \(after - before) pt in a window 40 pt short (drawer opening \(growth))")
+        }
+    }
+
     /// The owner saw the first row jump while "…" opened and closed the extra rows. Samples the first row's place on
     /// the screen through a real expand and collapse: it must hold still, and the window resizes once per change.
     func testExpansionKeepsTheFirstRowStillAndResizesTheWindowOncePerChange() async throws {
