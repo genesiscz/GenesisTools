@@ -16,6 +16,48 @@ call, needs no code, and refuses to write anything unless every op matched exact
 The Edit tool is fine for ONE edit in ONE file you have just read. From two edits up, the CLI
 is fewer calls and the only option that verifies.
 
+## Code mode: JSON in, JSON out
+
+In a REPL or a tool call, send the edits as data and read one JSON report. Do not build a
+heredoc, and do not parse the printed lines.
+
+1. **The MCP tool, when your session lists it** (`searchTools("genesis_replace")`; the
+   genesis-tools server with capability `replace`). `genesis_replace` takes `cwd` (absolute)
+   and exactly one of `edits` (FileEdit objects), `spec` (FRSPEC text) or `renameModule`
+   (`{file, symbol, to, roots}`), plus `dryRun`, `diff` (default `stat`), `verify` and
+   `verifyControl: "ts"`. Its `structuredContent` is the report below. `genesis_replace_find`
+   takes `cwd`, `pattern`, `regex`, `roots` and `exts`, and answers
+   `{total, files: [{file, count, declares}]}`. It writes nothing.
+2. **The CLI with `--json`.** One door per call: `--edits <file|->` (FileEdit[] JSON),
+   `--spec <file>`, `--rename-module <file|->` (the same object as `renameModule`) or
+   `--find <literal|/regex/flags>`. stdout holds exactly one JSON object on one line, and every
+   other line goes to stderr. A shell that merges the two (the REPL's `$`) can print a stderr
+   line after it (the exit prune), so parse the line that starts with `{"v":`:
+
+   ```js
+   const cli = "${CLAUDE_PLUGIN_ROOT}/skills/fable-replace/scripts/cli.ts";
+   const edits = [{ file: "src/a.ts", ops: [{ find: "oldName", replace: "newName", count: "all" }] }];
+   const out = await $`printf '%s' ${JSON.stringify(edits)} | bun ${cli} --edits - --json --dry --cwd ${repo}`.nothrow();
+   const report = JSON.parse(out.stdout.split("\n").findLast((line) => line.startsWith('{"v":'))); // ok, exitCode, files[].ops
+   ```
+
+   A regex field is `{ source, flags }`. An unknown key is refused (exit 2) and named by its
+   path. A refusal is a report too: `ok: false`, `exitCode`, `error`.
+
+- **Diff levels** (`--diff <level>`, or `diff` on a FileEdit and on the MCP call): `none` prints
+  each file's header line, `stat` adds `+N -M`, `full` adds the diff. Unset: `full` on a dry
+  run, `none` on a real run; `--quiet` alone gives `stat`. A module rename always shows `full`.
+- **Rewrite a whole file** with `{ kind: "rewrite", content, expectSha256 }`, the only op of its
+  file. `expectSha256` is `shasum -a 256 <file>` of the content you read; when the file changed
+  since, it is a MISS that names the current hash.
+- **`absentInChange: ["oldName("]`** on a FileEdit: the text must not be in a line the ops added
+  or changed. Untouched lines may keep it.
+- **`--verify-control ts`** beside `--verify "tsc-rs --noEmit -p tsconfig.json"` puts a probe
+  with one type error beside the first written file. A verify that does not report it ends
+  `unknown` (exit 3), not a green pass.
+- **Backups** go to the session's scratch folder: `/tmp/cc/<project>/<session>/fable-replace/`
+  in a Claude session, `/tmp/codex/…` in Codex. `tools rm` clears it with the session.
+
 ## Quick path: the CLI (use this 90% of the time)
 
 ```bash
@@ -75,6 +117,7 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< delete symbol=<name>` / `doc=<name>` (empty body) | remove a declaration with its doc comment and attributes, or only the doc comment above it |
 | `<<< block` (from `===` to `===` replacement) | replace the region between two anchors; empty replacement deletes it |
 | `<<< create` (content) | create a new file; refuses to overwrite an existing one |
+| `<<< rewrite sha256=<hex>` (content) | replace the whole file when its sha256 (`shasum -a 256 <file>`) still matches; the only op of its file |
 | `<<< move to=<path> symbol=<name>` | cut that declaration (doc comment included) out of this file and paste it into `<path>`; body empty |
 | `<<< move to=<path> lines=<first>-<last>` | same, for a block that is not one declaration |
 | `<<< move … at=after` / `at=before` (body is the anchor) | place it against an anchor in the target instead of appending |
@@ -82,7 +125,8 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< move … imports=fix visibility=widen` | also export (TS) or widen access (Swift) of what must cross the cut |
 
 Per-file post-conditions go between `@@` and the first op: `expect: text` (must be present
-afterwards), `absent: text` (must be gone). Both repeatable. `# comments` and blank lines are
+afterwards), `absent: text` (must be gone), `absent-in-change: text` (must not be in a line
+the ops added or changed). All repeatable. `# comments` and blank lines are
 allowed outside blocks.
 
 `block` is the only op with THREE bodies: the from-anchor, the to-anchor, then what replaces
@@ -104,7 +148,8 @@ what you want between two declarations; when it is not, put the following line i
 body instead, or use `delete`. `block` is no more markdown-aware than `append` is, so read
 the `--dry --diff` output before the real run.
 
-Flags: `--dry` (preview diffs, write nothing), `--diff` (show diffs on a real run too),
+Flags: `--dry` (preview diffs, write nothing), `--diff` (show diffs on a real run too;
+`--diff none|stat|full` sets the level, see Code mode),
 `--verify "bun run test src/x.test.ts"` (runs after writing, captured and trimmed: a pass shows
 its last 5 lines, a fail shows the first 40 and last 60 and saves the whole output as
 `verify-output.txt` in the backup dir; a red check NEVER rolls the sweep back, see exit 3 below;
@@ -112,8 +157,10 @@ a `|`, a `;` chain or a background `&` outside quotes is refused before anything
 ⚠️ in a scratch tree `bunx tsgo --noEmit` reports `Cannot find module 'bun:test'` on perfectly
 correct code, because the copy has no bun-types or tsconfig: scope tsgo to the non-test files,
 or verify with a `bun -e 'import("./x.ts")'` smoke import instead),
-`--cwd <dir>`, `--partial`, `--quiet`, `--spec <file>` (the spec from a file instead of stdin:
-use it whenever a heredoc is refused by a sandbox hook or gets long), `--rollback <backupDir>
+`--verify-control ts`, `--cwd <dir>`, `--partial`, `--quiet` (no OK lines, and one `+N -M`
+line per file instead of its diff unless `--diff` is given), `--spec <file>` (the spec from a
+file instead of stdin: use it whenever a heredoc is refused by a sandbox hook or gets long),
+`--json`, `--edits`, `--rename-module` and `--find` (Code mode), `--rollback <backupDir>
 [--force]` (undo the sweep whose backup dir a run printed), `--api [query]`, `--help`.
 
 Exit 0: everything landed, or the dry run is clean. Exit 1: at least one MISS (**nothing was
@@ -530,10 +577,11 @@ Both refuse to run without a predicate.
 
 - 🛑 `/tmp` is shared machine-wide. Two agents sweeping in parallel overwrote each other's
   log at `/tmp/sweep-dry.log`. The CLI uses `scratchDir()`; scripts must too. Every scratch
-  and backup dir lives in its session's own folder, `<tmp>/fable-replace/<session>/`, and
-  every CLI run prunes only that folder: age-only (older than 12 h), manifest-gated (only a
-  dir this tool created and finished, or an empty one), at most 50 per run, never the current
-  run's dir. `<session>` is `FABLE_REPLACE_SESSION`, else the harness session id
+  and backup dir lives in its session's own folder:
+  `/tmp/cc/<project>/<session>/fable-replace/` in a Claude session (`/tmp/codex/…` in Codex),
+  else `<tmp>/fable-replace/<session>/`; `FABLE_REPLACE_SCRATCH_ROOT` replaces the root. Every
+  CLI run prunes only that folder: age-only (older than 12 h), manifest-gated (only a dir this
+  tool created and finished, or an empty one), at most 50 per run, never the current run's dir. `<session>` is `FABLE_REPLACE_SESSION`, else the harness session id
   (`CLAUDE_CODE_SESSION_ID`, then `CODEX_THREAD_ID`), else `ppid-<parent pid>`. So a worker
   that inherits its lead's TMPDIR never prunes another session's undo trail; give a worker its
   own `FABLE_REPLACE_SESSION` when it must not share its lead's folder. `--prune` runs the same

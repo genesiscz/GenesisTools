@@ -1936,7 +1936,8 @@ console.log("round 2: cli");
         "cli: --api has no duplicate entries and no function bodies",
         apiLines.filter((l) => l.startsWith("scratchDir = ")).length === 1 &&
             !api.stdout.includes("mkdtempSync") &&
-            apiLines.length < 900,
+            // A leaked function body adds hundreds of lines; the whole API printed 1012 lines on 2026-11-25.
+            apiLines.length < 1200,
         String(apiLines.length)
     );
     const apiQ = spawnSync("bun", [cli, "--api", "rollback"], { encoding: "utf8" });

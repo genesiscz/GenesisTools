@@ -199,8 +199,8 @@ export interface RunOptions {
     /** Print the per-file diff on a REAL run too (dry runs always print it). Default false. */
     showDiff?: boolean;
     /**
-     * How much of each file's change to print. Unset: "full" on a dry run or with `showDiff` ("stat" when
-     * `verbose` is false), else "none". A FileEdit's own `diff` wins.
+     * How much of each file's change to print. Unset: "full" on a dry run or with `showDiff`, else "none";
+     * `verbose` does not change it (the CLI's `--quiet` passes "stat"). A FileEdit's own `diff` wins.
      */
     diff?: DiffLevel;
     /** Max diff lines printed per file in dry runs. Default 200. */
@@ -441,7 +441,10 @@ export interface RollbackReport {
     restored: string[];
     /** Paths skipped because they changed after the sweep wrote them. */
     drifted: string[];
-    /** Paths the restore itself could not write, with the reason. These still hold the swept content. */
+    /**
+     * Paths the restore itself could not write, with the reason; these still hold the swept content. A recorded git
+     * move that `git reset` could not unstage is listed here too, under its source path, and the restore goes on.
+     */
     failed: { file: string; error: string }[];
 }
 
@@ -482,7 +485,11 @@ export interface PruneReport {
     removed: number;
     /** Sum of the file sizes in the removed dirs. */
     bytes: number;
-    /** The root that was swept: this session's folder under `<tmp>/fable-replace`, or that root with `all-sessions`. */
+    /**
+     * The folders that were swept. `session`: this session's folder (`sessionScratchRoot`). `all-sessions`: the shared
+     * root (`scratchRoot`), plus this session's folder when it lies outside it (a harness session's folder under
+     * `/tmp/<agent dir>`).
+     */
     roots: string[];
 }
 
