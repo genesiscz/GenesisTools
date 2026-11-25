@@ -131,7 +131,8 @@ A missing meeting names only the store that was searched. To find which store ho
    to a remote source, and writes nothing. A retry of the same batch retains equal open findings and reports their
    IDs; question refs still resolve to retained IDs. Use `--allow-duplicates` only for an intentional second copy.
    The REPL equivalent is `meeting.items.add({ findings, allowDuplicates: true })`; ordinary calls return retained
-   IDs in `duplicates`. The kinds:
+   IDs in `duplicates`, and `meeting.items.add({ findings, plan: true })` is `--plan`. A question that changes no
+   line plans as applied on the lines its range covers, as `items add` stores it. The kinds:
    - `speaker-range`: `from`, `to`, `label`, `speaker`. `to` is the START time of the last line of the range, as
      `evidence --raw` prints it: a range takes every line of its label that starts inside it, so the end time of the
      last line can pull in the next line of the same label.
@@ -163,7 +164,8 @@ A missing meeting names only the store that was searched. To find which store ho
      label that go to the same person on the same evidence into one range, with the lowest confidence of its lines;
      start a new range where the evidence changes.
    - `question` (for a line or a word that stays under 60 % and matters, within the question budget in speakers.md):
-     `from`, `to`, `about` (`speaker` or `term`), `question`, `choices`, `heard` for a term, and `decides`. Give each
+     `from`, `to`, `about` (`speaker` or `term`), `question`, `choices`, `heard` for a term (on a speaker
+     question it only places the playback; the line's words stay as said), and `decides`. Give each
      finding the question settles a `ref` (a short name such as `"r-14"`) and list the refs in `decides`; the tool
      turns them into the new item ids, so the user's answer confirms or rejects those findings. Write the question in
      the user's language, and `choices` as a JSON array (the `--choices` flag splits at commas).

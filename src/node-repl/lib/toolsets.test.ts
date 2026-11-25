@@ -2907,6 +2907,22 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(new MeetingStore().read(record.id)?.items).toHaveLength(2);
     });
 
+    test("meetings: items.add with plan previews from the local transcript only and writes nothing", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Plan only", start: "2026-11-02T16:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const meeting = (await loadMeetings()).open(record.id);
+        const before = readFileSync(new MeetingStore().path(record.id), "utf8");
+        await expect(
+            meeting.items.add({
+                findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
+                plan: true,
+            })
+        ).rejects.toThrow("no linked local transcript");
+        expect(readFileSync(new MeetingStore().path(record.id), "utf8")).toBe(before);
+    });
+
     // #805: the items.add schema took force, but the adapter did not pass it on, so force: true still refused the term.
     test("meetings: items.add refuses a dead line term anchor and adds it with force", async () => {
         const record = await new MeetingStore().create(
