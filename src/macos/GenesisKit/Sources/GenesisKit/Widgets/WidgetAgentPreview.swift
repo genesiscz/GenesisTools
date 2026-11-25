@@ -185,7 +185,7 @@ struct AgentWidgetPreview: View {
             if items { cmuxPanelKey = nil } else { model.closePreviewEntry() }
         }
         .onChange(of: model.inboxGeneration) { _, _ in
-            if let id = model.previewOpenItemID, !model.inboxOverviewItems.contains(where: { $0.id == id }) {
+            if let id = model.previewOpenItemID, model.previewItem(id: id) == nil {
                 model.closePreviewEntry()
             }
         }
@@ -196,7 +196,7 @@ struct AgentWidgetPreview: View {
     }
 
     @ViewBuilder private var itemsView: some View {
-        if model.inboxFeeds.all.isEmpty {
+        if model.inboxFeeds.all.isEmpty && model.inboxFeeds.read.isEmpty {
             HStack(spacing: 12) {
                 GenesisWidgetMark()
                 VStack(alignment: .leading, spacing: 4) {
@@ -212,16 +212,33 @@ struct AgentWidgetPreview: View {
             FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
                          measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                 LazyVStack(alignment: .leading, spacing: 6) {
+                    if model.inboxFeeds.all.isEmpty {
+                        Text(model.inbox.complete ? "Nothing new in the inbox." : "Inbox status unavailable.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 4)
+                    }
                     WidgetFeedRows(runs: model.inboxFeeds.all, model: model, surface: surface) { item, context in
-                        let open = model.previewOpenItemID == item.id
-                        WidgetInboxEntry(model: model, item: item, open: open, focused: false,
-                                         context: context, compact: true, surface: surface) {
-                            GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
-                                model.togglePreviewEntry(item)
-                            }
+                        itemEntry(item, context)
+                    }
+                    if !model.inboxFeeds.read.isEmpty {
+                        WidgetReadItemsHeader(hours: model.preferences.previewReadHours,
+                                              count: model.inboxFeeds.read.reduce(0) { $0 + $1.items.count })
+                            .padding(.top, model.inboxFeeds.all.isEmpty ? 0 : 6)
+                        WidgetFeedRows(runs: model.inboxFeeds.read, model: model, surface: surface) { item, context in
+                            itemEntry(item, context)
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private func itemEntry(_ item: WidgetInboxItem, _ context: WidgetInboxRowContext) -> some View {
+        let open = model.previewOpenItemID == item.id
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: false,
+                                context: context, compact: true, surface: surface) {
+            GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                model.togglePreviewEntry(item)
             }
         }
     }

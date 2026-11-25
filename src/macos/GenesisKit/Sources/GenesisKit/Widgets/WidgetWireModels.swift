@@ -467,6 +467,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var previewFilter: String
     /// The agents hover list's order: "attention" (default), "recent" or "project".
     public var previewSort: String
+    /// Hours the Items list keeps the messages and answers already read, dimmed below the unread ones; 0 lists none.
+    /// Default 24.
+    public var previewReadHours: Int
     /// An answer's sound: "same" (default, `alertSound`), "none" or a system sound name.
     public var alertAnswerSound: String
     /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
@@ -503,6 +506,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     @WidgetInboxPreference public var inboxGrouping: String = "feed"
     @WidgetInboxPreference public var inboxFeedRuns: String = "session"
     @WidgetInboxPreference public var inboxFeedHeaders: String = "all"
+    /// What marks the message or answer the widget shows as read: "click" (default, a click on its card) or
+    /// "panel-open" (also the panel opening on it). "Mark all read" marks every item either way.
+    public var markReadOn: String
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
     public var inboxFilter: String
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".
@@ -592,6 +598,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
             alertCompactAnswer: true,
             previewFilter: "needs-you",
             previewSort: "attention",
+            previewReadHours: 24,
             alertAnswerSound: "same",
             alertFlashSeconds: 5,
             replyNames: "selected-or-newest",
@@ -607,6 +614,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
             stagedReminder: true,
             stagedOnLeave: "ask",
             sendCloseSeconds: 2.5,
+            markReadOn: "click",
             inboxFilter: "all",
             overviewFilter: "all",
             overviewSummary: true,
@@ -876,11 +884,15 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var multiple: Bool? = nil
     /// The asking session, when another agent's thread started it; see `WidgetDecisionDetails.askedIn`.
     public var askedIn: String? = nil
+    /// An answer or message already read (`WidgetInboxSummary.recentlyRead`): its row is dimmed, has no unread dot,
+    /// and no count includes it. Nil for every unread or waiting item, and from an older hub.
+    public var read: Bool? = nil
     /// `multiple`, false when the hub left it out.
     public var takesSeveral: Bool { kind == "decision" && multiple == true }
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
-    var isUnreadEntry: Bool { !needsAnswer && (kind == "answer" || kind == "result") }
+    var isUnreadEntry: Bool { !needsAnswer && read != true && (kind == "answer" || kind == "result") }
+    var isRead: Bool { read == true }
     var representedCount: Int { max(1, count ?? 1) }
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
@@ -909,6 +921,9 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var answeredElsewhere: [WidgetInboxItem]? = nil
     /// Uncapped pending decision IDs; absent from older hubs. Only complete snapshots are authoritative.
     public var pendingDecisionIDs: [String]? = nil
+    /// The answers and messages already read in the last `previewReadHours` hours, newest first, each with
+    /// `read` set: the Items list draws them dimmed below the unread entries. Nil from an older hub.
+    public var recentlyRead: [WidgetInboxItem]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

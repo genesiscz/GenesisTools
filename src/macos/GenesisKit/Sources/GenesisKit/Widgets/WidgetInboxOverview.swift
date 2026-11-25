@@ -397,8 +397,8 @@ struct WidgetInboxOverview: View {
     static func kindLabel(_ item: WidgetInboxItem) -> String {
         if item.needsAnswer { return item.kind == "decision" ? "Decision · waiting for your answer" : "Waiting for your answer" }
         switch item.kind {
-        case "answer" where item.tag == "message": return "New message"
-        case "answer": return "New answer"
+        case "answer" where item.tag == "message": return item.isRead ? "Message" : "New message"
+        case "answer": return item.isRead ? "Answer" : "New answer"
         case "result": return "Agent result"
         // Words, never the wire kind: "Todo" and "Form" read as raw data.
         case "todo": return "Task"
@@ -437,7 +437,7 @@ struct WidgetInboxOverviewRow: View, Equatable {
             // send still says it waits for your answer.
             .accessibilityLabel([stagedLine.map { "Decision · " + $0.phase.label } ?? WidgetInboxOverview.kindLabel(item),
                                  WidgetInboxOverview.title(item), source].compactMap { $0 }.joined(separator: ", "))
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            .accessibilityValue((item.isRead ? "Read, " : "") + (open ? "Expanded" : "Collapsed"))
             .accessibilityAddTraits(focused ? .isSelected : [])
             .accessibilityIdentifier("widget.overview.row." + item.id)
             .liveRow(selected: open || focused)
@@ -447,7 +447,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
         // A decision being sent or sent no longer waits for an answer, though the snapshot still says so for a moment.
         let waiting = item.needsAnswer && !(stagedLine?.phase.onItsWay ?? false)
         return HStack(alignment: .top, spacing: 9) {
-            Circle().fill(waiting ? Color.orange : SessionPalette.blue)
+            // An item already read keeps the dot's room but draws none: only unread and waiting items have one.
+            Circle().fill(item.isRead ? Color.clear : waiting ? Color.orange : SessionPalette.blue)
                 .frame(width: 7, height: 7).padding(.top, 5)
             Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
@@ -485,6 +486,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
                 .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0)).padding(.top, 4)
         }
         .padding(.horizontal, 10).padding(.vertical, 9)
+        // Read items are grey: the Items list keeps them below the unread ones for `previewReadHours`.
+        .opacity(item.isRead ? (open ? 0.8 : 0.55) : 1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }

@@ -52,6 +52,7 @@
             "previewView": "sessions",
             "previewFilter": "needs-you",
             "previewSort": "attention",
+            "previewReadHours": 24,
             "alertAnswerSound": "same",
             "alertFlashSeconds": 5,
             "replyNames": "selected-or-newest",
@@ -70,6 +71,7 @@
             "inboxGrouping": "feed",
             "inboxFeedRuns": "session",
             "inboxFeedHeaders": "all",
+            "markReadOn": "click",
             "inboxFilter": "all",
             "overviewFilter": "all",
             "overviewSummary": true,
@@ -165,6 +167,7 @@
             }
         ],
         "staged": [],
+        "recentlyRead": [],
         "pendingDecisionIDs": [
             "d1"
         ],
