@@ -40,8 +40,17 @@ export const claudeHooks: HookFacts = {
     diffLogFromTranscript: true,
     readToolCalls: claudeToolCalls,
     modsDrawDiffs: true,
-    // A code-mode script's shell call is `repl_<uuid>` (the hook payloads of 2026-11-24); a Bash tool call is `toolu_…`.
-    callHasOwnRow: (toolUseId) => !toolUseId?.startsWith("repl_"),
+    // A code-mode script's shell call is `repl_<uuid>`; a Bash tool call is `toolu_…`. The prefix is not documented.
+    // Claude Code 2.1.328 keeps it as one constant, builds every script call's id from it, and tells a script's call
+    // apart by that prefix itself (`startsWith`, in its SDK permission requests). No hook field and no transcript row
+    // names the REPL call a script's call belongs to (read in that build, 2026-11-25), so the prefix is the one fact.
+    // Code mode is `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`, the switch Claude Code reads ("Code Mode (experimental)").
+    scriptCalls: {
+        prefix: "repl_",
+        rowPrefix: "toolu_",
+        codeModeOn: (vars) =>
+            ["1", "true"].includes(vars.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE?.trim().toLowerCase() ?? ""),
+    },
     settingsModel: true,
     currentModel: claudeCurrentModel,
     subagentTranscript: claudeSubagentTranscript,

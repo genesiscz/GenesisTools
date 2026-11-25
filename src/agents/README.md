@@ -974,7 +974,10 @@ that has not loaded it (started before the install and not reloaded, or a nested
 session's id) keeps the hook's own message, and so does a marked session whose settings now disable the plugin, until
 it reloads. Codex and Grok always keep the hook's message. So does a shell call of a code-mode script (the REPL
 tool, a call id `repl_<uuid>`): it has no Bash row of its own for the mod to draw under, and on 2026-11-24 918 such
-diffs were left to the mod and drawn by no one.
+diffs were left to the mod and drawn by no one. That id prefix is the only fact the hook has: no hook field and no
+transcript row names the script a call belongs to (Claude Code 2.1.328). So the post phase checks it, at most once a
+day: a call whose id has neither the `toolu_` nor the `repl_` prefix, or a day with code mode on
+(`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) and no `repl_` call, adds a one-line self-check note to the hook's message.
 
 Each file has a `[-]` / `[+]` button that folds its diff to its name and back, and `[ files only ]` above them folds
 every file; a click on the diff itself still opens the group's calls. The diff of a call that runs `git pull`,

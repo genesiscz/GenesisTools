@@ -92,6 +92,11 @@ export function sweepStampPath(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "sweep.stamp");
 }
 
+/** When a code-mode script's call last ran and when the id self-check last spoke (`scriptCallIdNotice`). */
+export function scriptCallStampPath(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "script-calls.json");
+}
+
 /** The unpushed reminder's per-repository cache and its once-per-interval claims. */
 export function unpushedRoot(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "unpushed");
