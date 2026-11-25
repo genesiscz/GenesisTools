@@ -26,7 +26,15 @@ import { type AssignInbox, decisionInbox } from "./assign-inbox";
 import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
 import { journalEntrySchema } from "./decision-actions";
-import { movedValue, type PartMove, toJoinedSec } from "./join-clock";
+import {
+    hasLaterLineAddresses,
+    type JoinedLines,
+    joinedLineAddresses,
+    joinParts,
+    movedValue,
+    type PartMove,
+    toJoinedSec,
+} from "./join-clock";
 import {
     applyJoinSound,
     buildJoinedSourceFile,
@@ -48,6 +56,7 @@ import {
     mergeRows,
     readRows,
 } from "./merge";
+import { OpenedMeeting } from "./opened-meeting";
 import { readRecorderState } from "./recorder-shared";
 import { localStamp } from "./shared";
 import { preservedSourceAudio, syncSourceAudio } from "./source-audio";
@@ -460,11 +469,14 @@ async function joinLocked({
     renumber("a", keepsIds.record.speakers.assignments ?? [], renumbered.record.speakers.assignments ?? [], ids);
     const questions = (part: LoadedPart) => part.record.items.filter((item) => item.kind === "question").length;
     const rounded = { count: 0 };
+    // The joined transcript holds the parts' lines in time order: a part's line addresses count after the lines before it.
+    const firstLines = loaded.map((_part, index) => loaded.slice(0, index).reduce((sum, one) => sum + one.lines, 0));
     const moves = new Map<LoadedPart, PartMove>(
         loaded.map((part, index) => [
             part,
             {
                 offsetMs: offsets[index]!,
+                lineBase: firstLines[index]!,
                 ids: part === renumbered ? ids : new Map(),
                 questionBase: part === renumbered ? questions(keepsIds) : 0,
                 meeting: { from: part.record.id, to: kept.record.id },
@@ -544,6 +556,7 @@ async function joinLocked({
             zeroAt: new Date(part.zeroMs).toISOString(),
             offsetMs: offsets[index]!,
             endSec: endSec(part, index),
+            firstLine: firstLines[index]!,
             ...(audio ? { audio } : {}),
             ...(channels ? { channels } : {}),
             ...(part.record.seats ? { seats: part.record.seats } : {}),
@@ -820,7 +833,10 @@ export interface JoinRepairRequest {
 export interface JoinRepairResult {
     meeting: string;
     dryRun: boolean;
-    /** False when there was nothing to do: the record's sound is in its own folder and its source slot is whole. */
+    /**
+     * False when there was nothing to do: the record's sound is in its own folder, its source slot is whole and its
+     * later recordings' line addresses count on the joined transcript.
+     */
     repaired: boolean;
     reason?: string;
     sound?: JoinSoundSummary;
@@ -828,6 +844,11 @@ export interface JoinRepairResult {
     slot?: string;
     /** The one source file of the whole meeting the readers of one file read. */
     joinedFile?: string;
+    /**
+     * The later recordings' line addresses (an item's `transcriptLine`) that a join before 2026-11-25 left on their own
+     * recording's lines, moved onto the joined transcript's; `unplaced` name no line of their item either way and stay.
+     */
+    lines?: { moved: number; unplaced: number };
     backup?: string;
 }
 
@@ -860,10 +881,23 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
         });
     };
     const merged = (record: MeetingRecord) => (record.join?.version ?? 1) >= JOIN_SOUND_MERGED;
+    const soundDone = (record: MeetingRecord) => merged(record) && !joinedSlotProblem(record);
+    const linesDone = (record: MeetingRecord) =>
+        joinParts(record).every((part) => part.firstLine !== undefined) || !hasLaterLineAddresses(record);
     const done = (record: MeetingRecord): JoinRepairResult | undefined =>
-        merged(record) && !joinedSlotProblem(record)
-            ? { meeting: record.id, dryRun, repaired: false, reason: "its sound is in its own folder already" }
+        soundDone(record) && linesDone(record)
+            ? {
+                  meeting: record.id,
+                  dryRun,
+                  repaired: false,
+                  reason: joinParts(record).every((part) => part.firstLine !== undefined)
+                      ? "its sound is in its own folder already, and its line addresses count on the joined transcript"
+                      : "its sound is in its own folder already",
+              }
             : undefined;
+    // The joined transcript a line address is checked against: the line it names must be its item's.
+    const transcriptOf = async (record: MeetingRecord) => (await OpenedMeeting.of(store, record).meeting()).transcript;
+    const linesOf = (plan: JoinedLines) => ({ moved: plan.moved, unplaced: plan.unplaced });
 
     if (done(found)) {
         return done(found)!;
@@ -875,7 +909,8 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             meeting: found.id,
             dryRun,
             repaired: false,
-            ...(slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
+            ...(soundDone(found) ? {} : slot ? { slot } : { sound: joinSoundSummary(planOf(found)) }),
+            ...(linesDone(found) ? {} : { lines: linesOf(joinedLineAddresses(found, await transcriptOf(found))) }),
         };
     }
 
@@ -892,6 +927,7 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                 return done(record)!;
             }
 
+            const transcript = linesDone(record) ? undefined : await transcriptOf(record);
             const at = request.now ?? new Date();
             const backup = join(
                 request.backupRoot ?? genesisToolsDir("backups", "meetings"),
@@ -917,8 +953,9 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
             writeFileSync(join(backup, "README.md"), repairReadme({ ids, root: store.root, at }), { mode: 0o600 });
             const encode = request.encode ? { encode: request.encode } : {};
             const source = sourceRefOf(record);
+            const result: JoinRepairResult = { meeting: record.id, dryRun, repaired: true, backup };
 
-            if (merged(record)) {
+            if (!soundDone(record) && merged(record)) {
                 const slot = joinedSlotProblem(record)!;
                 const audio = await restoreJoinedSlot({ store, record, backup, ...encode, now: at });
                 await update(
@@ -930,54 +967,76 @@ export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepair
                         }
                     }
                 );
-                return {
-                    meeting: record.id,
-                    dryRun,
-                    repaired: true,
-                    slot,
-                    ...(audio?.pieces ? { joinedFile: audio.path } : {}),
+                result.slot = slot;
+
+                if (audio?.pieces) {
+                    result.joinedFile = audio.path;
+                }
+            } else if (!soundDone(record)) {
+                const plan = planOf(record);
+                const joinedFile = await buildJoinedSourceFile(plan, { ...encode, now: at });
+                const moved = applyJoinSound(plan, {
                     backup,
-                };
+                    keptId: record.id,
+                    ...(joinedFile ? { joined: joinedFile } : {}),
+                });
+                const sound = joinSoundSummary(plan);
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: the later recordings' sound moved into this folder (${sound.pieces} recorder files, ${sound.recordings.length} source recordings); backup ${backup}`,
+                    },
+                    (next) => {
+                        if (!next.join) {
+                            return;
+                        }
+
+                        next.join = {
+                            ...next.join,
+                            version: JOIN_SOUND_MERGED,
+                            parts: withMovedRecordings(next.join.parts, moved.moved),
+                        };
+
+                        if (moved.audio && plan.sourceId) {
+                            next.audio = { sources: { ...next.audio?.sources, [plan.sourceId]: moved.audio } };
+                        }
+                    }
+                );
+                result.sound = sound;
+
+                if (joinedFile) {
+                    result.joinedFile = joinedFile.path;
+                }
             }
 
-            const plan = planOf(record);
-            const joinedFile = await buildJoinedSourceFile(plan, { ...encode, now: at });
-            const moved = applyJoinSound(plan, {
-                backup,
-                keptId: record.id,
-                ...(joinedFile ? { joined: joinedFile } : {}),
-            });
-            const sound = joinSoundSummary(plan);
-            await update(
-                record.id,
-                {
-                    command: "join",
-                    change: `repair: the later recordings' sound moved into this folder (${sound.pieces} recorder files, ${sound.recordings.length} source recordings); backup ${backup}`,
-                },
-                (next) => {
-                    if (!next.join) {
-                        return;
-                    }
+            if (transcript) {
+                const lines = linesOf(joinedLineAddresses(record, transcript));
+                await update(
+                    record.id,
+                    {
+                        command: "join",
+                        change: `repair: ${lines.moved} line addresses of the later recordings moved onto the joined transcript's lines (${lines.unplaced} name no line and stay); backup ${backup}`,
+                    },
+                    (next) => {
+                        const moved = joinedLineAddresses(next, transcript);
+                        next.items = moved.items;
 
-                    next.join = {
-                        ...next.join,
-                        version: JOIN_SOUND_MERGED,
-                        parts: withMovedRecordings(next.join.parts, moved.moved),
-                    };
-
-                    if (moved.audio && plan.sourceId) {
-                        next.audio = { sources: { ...next.audio?.sources, [plan.sourceId]: moved.audio } };
+                        if (next.join) {
+                            next.join = {
+                                ...next.join,
+                                parts: next.join.parts.map((part, index) => ({
+                                    ...part,
+                                    firstLine: moved.parts[index]?.firstLine ?? 0,
+                                })),
+                            };
+                        }
                     }
-                }
-            );
-            return {
-                meeting: record.id,
-                dryRun,
-                repaired: true,
-                sound,
-                ...(joinedFile ? { joinedFile: joinedFile.path } : {}),
-                backup,
-            };
+                );
+                result.lines = lines;
+            }
+
+            return result;
         },
     });
 }

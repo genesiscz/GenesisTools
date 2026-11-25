@@ -919,9 +919,9 @@ export const joinRepair = defineMethod({
     }),
     result: z.unknown(),
     resultName:
-        "{ meeting, dryRun, repaired, reason?, sound?: { pieces, rows, levels, recordings: [{ record, offsetMs }] }, joinedFile?, backup? }",
+        "{ meeting, dryRun, repaired, reason?, slot?, sound?: { pieces, rows, levels, recordings: [{ record, offsetMs }] }, joinedFile?, lines?: { moved, unplaced }, backup? }",
     effect: "reversible",
-    doc: `Move the later recording's sound of a meeting joined before 2026-11-25 into the joined record's folder, as join does now: its recorder files and rows, its measured clock as its own entry, its source recording as a piece of one source file of the whole meeting (the gap silence). Every folder it touches is cloned into a backup first; a second run changes nothing (repaired: false). CLI twin: ${toolCommand("meetings", "join")} <meeting> --repair [--dry-run] --json.`,
+    doc: `Move the later recording's sound of a meeting joined before 2026-11-25 into the joined record's folder, as join does now: its recorder files and rows, its measured clock as its own entry, its source recording as a piece of one source file of the whole meeting (the gap silence). It also moves the line addresses (an item's transcriptLine) that such a join left on the later recording's own lines onto the joined transcript's lines, each checked against the line it names, and writes each recording's firstLine (lines: { moved, unplaced }). Every folder it touches is cloned into a backup first; a second run changes nothing (repaired: false). CLI twin: ${toolCommand("meetings", "join")} <meeting> --repair [--dry-run] --json.`,
 });
 
 export const confirmRelayed = defineMethod({
