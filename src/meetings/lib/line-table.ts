@@ -79,7 +79,12 @@ function initials(name: string): string {
     return code || "X";
 }
 
-function seatOf(seats: MeetingSeats | undefined, name: string): string | undefined {
+/**
+ * The person's seats as the legend prints them. A seat saved with no end stops at the person's recorded leave (a stay
+ * with a leave source: a goodbye, the attendance list, a hand edit), so the legend never says "remote 00:01–end" of a
+ * person whose stays end at 49:36 (2026-11-25, the P6 pack of the 25.11 call).
+ */
+function seatOf(seats: MeetingSeats | undefined, name: string, leftAtSec: number | undefined): string | undefined {
     const held: string[] = [];
     for (const side of ["room", "remote"] as const) {
         for (const row of seats?.[side] ?? []) {
@@ -88,9 +93,10 @@ function seatOf(seats: MeetingSeats | undefined, name: string): string | undefin
                 continue;
             }
 
+            const toSec = seat.toSec ?? leftAtSec;
             const bounds =
-                seat.fromSec !== undefined || seat.toSec !== undefined
-                    ? ` ${formatClock(seat.fromSec ?? 0)}–${seat.toSec === undefined ? "end" : formatClock(seat.toSec)}`
+                seat.fromSec !== undefined || toSec !== undefined
+                    ? ` ${formatClock(seat.fromSec ?? 0)}–${toSec === undefined ? "end" : formatClock(toSec)}`
                     : "";
             held.push(`${side}${bounds}`);
         }
@@ -139,7 +145,9 @@ class Legend {
     }
 
     private add(name: string, code: string): void {
-        const seat = seatOf(this.raw.meeting.seats, name);
+        const stays = this.raw.people.find((person) => sameName(person.name, name))?.stays ?? [];
+        const last = stays.at(-1);
+        const seat = seatOf(this.raw.meeting.seats, name, last?.leaveSource ? last.toSec : undefined);
         const self = this.raw.people.some((person) => person.self && sameName(person.name, name));
         const named = this.labels[name];
         this.entries.push({
