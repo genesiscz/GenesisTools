@@ -910,8 +910,13 @@ extension MomentPlayer.Engine {
                     return try await service.call(MeetingsAPI.MomentPlan.self, params)
                 } catch is MeetingsService.Unavailable {}
             }
-            let moment = try await MeetingsCLI.json(Moment.self, command(params) + ["--no-start"])
-            return MeetingsAPI.MomentPlan.Result(moment: moment, cannot: nil)
+            do {
+                let moment = try await MeetingsCLI.json(Moment.self, command(params) + ["--no-start"])
+                return MeetingsAPI.MomentPlan.Result(moment: moment, cannot: nil)
+            } catch let failure as MeetingsCLI.Failure {
+                guard let reason = cannot(of: failure) else { throw failure }
+                return MeetingsAPI.MomentPlan.Result(moment: nil, cannot: reason)
+            }
         },
         audio: { meeting in
             guard let service = MeetingsService.shared else {
@@ -919,6 +924,12 @@ extension MomentPlayer.Engine {
             }
             return try await service.call(MeetingsAPI.MeetingAudio.self, .init(meeting: meeting))
         })
+
+    /// Why a Moment cannot play, from `play --no-start`'s refusal: it exits 1 with the plan's code as its lead
+    /// (`✗ [no-audio] …`), the way `moment.plan` answers `cannot`. Nil for a failure that names no code.
+    static func cannot(of failure: MeetingsCLI.Failure) -> MomentCannot? {
+        failure.code.map { MomentCannot(code: $0, message: failure.sentence) }
+    }
 
     static func command(_ params: MeetingsAPI.MomentParams) -> [String] {
         var args = ["play", params.meeting, "--target", targetJSON(params.target), "--json"]

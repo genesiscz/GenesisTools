@@ -1725,6 +1725,45 @@ test("--clip --no-start plans once without cutting, saving or starting a player"
     }
 });
 
+test("--no-start refuses a Moment that cannot play here with its code as the lead, so the request window dims Play", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "No ffmpeg", start: "2026-11-09T10:00:00Z", end: "2026-11-09T10:02:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const planned = planMoment({
+        record,
+        transcript: [],
+        listen: meetingsConfigSchema.parse({}).global.playback.listen,
+        target: { kind: "range", fromSec: 2, toSec: 4 },
+    });
+    const message = "ffmpeg is not installed (brew install ffmpeg); it cuts the clip to listen to.";
+    const plan = spyOn(momentHandlers, "planMomentCall").mockResolvedValue({
+        moment: planned,
+        cannot: { code: "no-ffmpeg", message },
+    });
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const error = spyOn(ui, "err").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(["play", record.id, "--at", "2", "--to", "4", "--no-start", "--json"], {
+            from: "user",
+        });
+        expect(plan).toHaveBeenCalledTimes(1);
+        expect(printed).not.toHaveBeenCalled();
+        expect(error).toHaveBeenCalledWith(`[no-ffmpeg] ${message}`);
+        expect(process.exitCode).toBe(1);
+    } finally {
+        plan.mockRestore();
+        printed.mockRestore();
+        raw.mockRestore();
+        error.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("evidence refuses the voice flags for an output that cannot show them, before it opens the recording", async () => {
     const store = new MeetingStore();
     const record = await store.create(

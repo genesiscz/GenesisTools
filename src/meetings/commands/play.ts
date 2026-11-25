@@ -223,7 +223,9 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
             })
         );
 
-        if (!planned.moment) {
+        // A Moment that cannot play here (no sound, no ffmpeg, still recording) is refused with its code as the lead,
+        // as a cut is: the request window dims its Play button, and the Meetings window reads the reason.
+        if (!planned.moment || planned.cannot) {
             fail(`[${planned.cannot?.code}] ${planned.cannot?.message}`);
             return;
         }
