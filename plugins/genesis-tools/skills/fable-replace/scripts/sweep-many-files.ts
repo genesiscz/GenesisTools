@@ -514,6 +514,12 @@ const closestRunKey = (typo: string): string | undefined => {
 };
 
 export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunReport> => {
+    // Every WARNING line also lands in the report: a --json caller prints nothing else and still reads them.
+    const warnings: string[] = [];
+    const warn = (message: string): void => {
+        warnings.push(message);
+        console.error(paint(COLORS.skip, `WARNING: ${message}`));
+    };
     // A move is two ordinary edits (cut here, paste there) that must land together, so it is
     // expanded up front and then carried by the same transaction as everything else.
     // A move's paste and an ordinary edit on the SAME target is the normal case: move a function
@@ -529,7 +535,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 [
                     ...expandMoves(moves, {
                         ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
-                        onWarning: (message) => console.error(`WARNING: ${message}`),
+                        onWarning: warn,
                     }),
                     ...allEdits,
                 ],
@@ -659,7 +665,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         if (refusal !== undefined) {
             preflightErrors.push(refusal);
         } else if (warning !== undefined) {
-            console.error(paint(COLORS.skip, `WARNING: ${warning}`));
+            warn(warning);
         }
     }
 
@@ -962,6 +968,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     missCount,
                     backupDir: opts.backupDir,
                     verify,
+                    warnings,
                 }
             );
         }
@@ -1036,9 +1043,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     const refusal = gitMoveRefusal({ from: plan.abs, to: target });
                     gitMoved = refusal === null;
                     if (refusal !== null) {
-                        console.error(
-                            paint(COLORS.skip, `WARNING: ${plan.edit.file}: renamed without git mv (${refusal}).`)
-                        );
+                        warn(`${plan.edit.file}: renamed without git mv (${refusal}).`);
                     }
                 }
 
@@ -1155,6 +1160,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                             missCount,
                             backupDir: opts.backupDir,
                             verify: result,
+                            warnings,
                         }
                     );
                 }
@@ -1202,6 +1208,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         missCount,
         backupDir: opts.backupDir,
         verify,
+        warnings,
     };
 
     if (failed || leftoverProse > 0) {

@@ -21,7 +21,7 @@
  *        --cwd <dir> · --partial (write the files that fully passed) · --quiet (MISS/SKIP only, a stat line per file)
  *        --no-backup · --spec <file> · --api (print the typed library API) · --help
  * Code mode: --edits <file|-> (FileEdit[] as JSON) · --rename-module <file|-> · --find <pattern> · --json (one JSON
- *        object on stdout, every other line on stderr)
+ *        object on stdout, and nothing else on either stream)
  */
 
 import { createHash } from "node:crypto";
@@ -58,8 +58,11 @@ usage: bun cli.ts [--dry] [--diff [none|stat|full]] [--verify "<cmd>"] [--verify
 
 code mode (a REPL or a tool call reads the answer as data):
        --json            stdout holds exactly one JSON object, written last: the run report (v 1, ok, exitCode,
-                         files with their ops, diffStat and diff, verify), or the recon report of --find. Every
-                         other line goes to stderr. A refusal is a run report with ok false and error. Not with
+                         files with their ops, diffStat and diff, verify, warnings), or the recon report of --find.
+                         Nothing else is printed on stdout or stderr (a crash stack is the only exception), so a
+                         shell that merges the two parses it whole. A refusal is a run report with ok false and
+                         error. A rewrite op without expectSha256 runs only with --dry; each file entry carries
+                         sha256Before for the real run. Not with
                          --rollback, --prune, --history, --stats or --api.
        --diff <level>    none: each file's header line; stat: the header with +N -M; full: the diff too. Unset:
                          full on a dry run, none on a real run; --quiet alone: stat; bare --diff: full on a real run.
@@ -180,7 +183,11 @@ const finish = async (code: number, report: RunReportJson | ReconReport): Promis
 
 /** A refusal before anything ran: exit 2, and in --json mode a run report with ok false that says why. */
 const refuse = async (message: string): Promise<never> => {
-    console.error(message);
+    // Under --json the message is the report's error, and nothing else is printed.
+    if (!jsonMode) {
+        console.error(message);
+    }
+
     return finish(2, reportToJson({ error: new FableReplaceError(message, 2), dryRun: argv.includes("--dry") }));
 };
 
@@ -258,11 +265,16 @@ if (flag("--help") || flag("-h")) {
 // Everything the CLI prints is what a model reads back, so count it for the journal. Bun's
 // console writes natively and never passes through process.stdout.write, so the console
 // methods themselves are wrapped; each still calls the original, nothing else changes. Under
-// --json, log and info go to stderr as well, so stdout carries the JSON object alone.
-const toStderr = console.error.bind(console);
+// --json they print nothing: a code-mode shell merges stdout and stderr, so one human line breaks
+// its parse, and the report already carries the ops, their reasons, the warnings and the verify.
+// An uncaught crash still prints its stack, because Bun writes that past these wrappers.
 for (const name of ["log", "error", "warn", "info"] as const) {
-    const original = jsonMode && (name === "log" || name === "info") ? toStderr : console[name].bind(console);
+    const original = console[name].bind(console);
     console[name] = (...args: unknown[]): void => {
+        if (jsonMode) {
+            return;
+        }
+
         printedChars += format(...args).length + 1;
         original(...args);
     };
@@ -462,8 +474,10 @@ const runDoor = async (): Promise<void> => {
     // "-" is stdin for the JSON doors; a spec reads stdin when no --spec file is given.
     const inputPath = source === undefined || (door !== "spec" && source === "-") ? undefined : source;
     const dryRun = flag("--dry");
+    // A spec warns while it is parsed, before run(), so the report takes its warnings from here.
+    const specWarnings: string[] = [];
     const refusal = (message: string): RunReportJson =>
-        reportToJson({ error: new FableReplaceError(message, 2), dryRun });
+        reportToJson({ error: new FableReplaceError(message, 2), dryRun, warnings: specWarnings });
 
     // Journal from here on: input that cannot be read, or an empty one, is a failed run too,
     // and used to leave no trace in --history.
@@ -515,7 +529,14 @@ const runDoor = async (): Promise<void> => {
             edits = renameModuleSymbol({ ...params, cwd: runCwd });
         } else {
             // A move marker reads its files while the spec is parsed.
-            edits = parseSpec({ text, cwd, onWarning: (message) => console.error(`WARNING: ${message}`) });
+            edits = parseSpec({
+                text,
+                cwd,
+                onWarning: (message) => {
+                    specWarnings.push(message);
+                    console.error(`WARNING: ${message}`);
+                },
+            });
         }
     } catch (err) {
         entry.outcome = "spec-error";
@@ -602,12 +623,12 @@ const runDoor = async (): Promise<void> => {
                 entry.outcome = "miss";
             }
 
-            return finish(err.code, reportToJson({ error: err, dryRun }));
+            return finish(err.code, reportToJson({ error: err, dryRun, warnings: specWarnings }));
         }
 
         entry.message = errorText(err);
         console.error(`ERROR: ${entry.message}`);
-        return finish(1, reportToJson({ error: err, dryRun }));
+        return finish(1, reportToJson({ error: err, dryRun, warnings: specWarnings }));
     }
 
     entry.outcome = dryRun ? "dry-ok" : "ok";
@@ -615,7 +636,7 @@ const runDoor = async (): Promise<void> => {
     entry.backupDir = report.backupDir;
     entry.verify = journalVerify(report.verify);
     if (jsonMode) {
-        await writeJson(reportToJson({ report, dryRun }));
+        await writeJson(reportToJson({ report, dryRun, warnings: specWarnings }));
     }
 };
 

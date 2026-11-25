@@ -4,8 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ReconReport, RunReportJson } from "./types";
 
-// The CLI's JSON doors through the real CLI: --edits - with --json answers one JSON object on stdout (the human lines
-// go to stderr), a MISS is ok false with its reason, --quiet alone gives the stat level, --find answers a ReconReport,
+// The CLI's JSON doors through the real CLI: --edits - with --json answers one JSON object on stdout (and nothing else
+// on either stream), a MISS is ok false with its reason, --quiet alone gives the stat level, --find answers a ReconReport,
 // and --rename-module - renames a symbol, its file and every import in a git fixture as one staged git rename, which
 // --rollback undoes. The gitMove cases live here and not in runner-output.test.ts, so git runs in the CLI child and
 // never through spawnSync in this test worker (oven-sh/bun#34069). Six bun spawns and one git fixture repo; every
@@ -91,7 +91,7 @@ describe("--edits - --json", () => {
         expect(report).toMatchObject({ v: 1, ok: true, exitCode: 0, dryRun: true, missCount: 0, written: [] });
         expect(report.files[0].ops[0].status).toBe("OK");
         expect(report.files[1].diff?.length).toBeGreaterThan(140_000);
-        expect(child.stderr).toContain("edits: 2 file(s), 2 op(s) — DRY RUN");
+        expect(child.stderr).toBe("");
         expect(read("edits/a.ts")).toBe("const x = 1;\n");
     });
 
@@ -114,7 +114,20 @@ describe("--edits - --json", () => {
         expect(missed.ops[0].reason).toContain("needle not found");
         expect(kept.diffStat).toEqual({ added: 1, removed: 1 });
         expect(kept.diff).toBeUndefined();
-        expect(child.stderr).toContain("b.ts (edited) +1 -1");
+        expect(child.stderr).toBe("");
+    });
+
+    test("a refusal (input that is not JSON) is a report with exit 2, and nothing else is printed", async () => {
+        const child = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: "{not json",
+        });
+
+        expect(child.status).toBe(2);
+        expect(child.stderr).toBe("");
+        const report = reportOf(child);
+        expect(report).toMatchObject({ ok: false, exitCode: 2 });
+        expect(report.error).toContain("the input is not JSON");
     });
 });
 
@@ -208,16 +221,18 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
         expect(fs.existsSync(path.join(repo, "Bar.ts"))).toBe(false);
     });
 
-    test("an untracked file with gitMove is renamed as before, with one WARNING line on stderr", async () => {
+    test("an untracked file with gitMove is renamed as before, and its WARNING is in the report, not on stderr", async () => {
         put("repo/loose.ts", "export const loose = 1;\n");
         const edits = [{ file: "loose.ts", renameTo: "kept.ts", gitMove: true }];
         const child = await cli(["--edits", "-", "--json", "--cwd", repo], { cwd: base, stdin: JSON.stringify(edits) });
 
         expect(child.status).toBe(0);
-        expect(reportOf(child)).toMatchObject({ ok: true, written: ["loose.ts → kept.ts"] });
-        expect(child.stderr.split("\n").filter((line) => line.startsWith("WARNING"))).toEqual([
-            "WARNING: loose.ts: renamed without git mv (git does not track it).",
-        ]);
+        expect(reportOf(child)).toMatchObject({
+            ok: true,
+            written: ["loose.ts → kept.ts"],
+            warnings: ["loose.ts: renamed without git mv (git does not track it)."],
+        });
+        expect(child.stderr).toBe("");
         expect(await git("status", "--porcelain")).toBe("?? kept.ts");
     });
 });

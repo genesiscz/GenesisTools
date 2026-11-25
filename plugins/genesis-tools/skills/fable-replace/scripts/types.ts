@@ -290,6 +290,8 @@ export interface RunReport {
     backupDir?: string;
     /** The captured verify verdict, when a verifyCommand ran. */
     verify?: VerifyResult;
+    /** Every WARNING the run printed, so a caller that prints nothing (--json) still reads them. */
+    warnings?: string[];
 }
 
 /** One file of a recon: how often the pattern occurs there, and whether the file declares it. */
@@ -347,6 +349,8 @@ export interface RunReportJson {
         shown: string[];
         outputFile?: string;
     };
+    /** The WARNING lines of the run (a spec's, a verify command's, a git move that fell back). */
+    warnings?: string[];
     /**
      * The thrown message: a refusal before any report exists (code 2), or the reason beside a report
      * run() threw (a stale prose mention after a green sweep, exit 3, has no other trace here).
