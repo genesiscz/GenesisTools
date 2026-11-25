@@ -394,11 +394,12 @@ async function spawnAndCaptureStderr(
             // via process.cwd() keep working. Bunfig's preload is forwarded
             // via the explicit --preload flag in executeTool(), and its
             // --config= keeps this folder's bunfig.toml out.
-            // execPath is a gt-<tool> hardlink of this already-running
-            // interpreter (namedBunExecPath), never PATH "bun": a signed
-            // parent (Genesis.app, cmux) + `/usr/bin/env bun` is SIGKILL'd by
-            // Taskgated (Code Signature Invalid, ~5ms). The hardlink is the
-            // same signed binary, and names the process in Activity Monitor.
+            // execPath is a gt-<tool> copy of this already-running
+            // interpreter (namedBunExecPath: an APFS clone on macOS, a hard
+            // link elsewhere), never PATH "bun": a signed parent (Genesis.app,
+            // cmux) + `/usr/bin/env bun` is SIGKILL'd by Taskgated (Code
+            // Signature Invalid, ~5ms). The copy is the same signed binary,
+            // and names the process in Activity Monitor.
             cwd: process.cwd(),
             env: childEnv,
             shell: process.platform === "win32",
