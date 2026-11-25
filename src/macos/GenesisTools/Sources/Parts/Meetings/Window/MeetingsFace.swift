@@ -242,7 +242,9 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
         case .front:
-            window.orderFrontRegardless()
+            // After the launch has finished: ordered in while a fresh face was still launching, the window made this
+            // app the active one for about 0.9 s (lsappinfo front, 2026-11-25), long enough for a typed key to land here.
+            DispatchQueue.main.async { window.orderFrontRegardless() }
         case .back:
             window.orderBack(nil)
         }
