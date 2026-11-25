@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { parseByteSize } from "@genesiscz/utils/cli/parse";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     defaultRmConfig,
     identityOf,
@@ -45,6 +46,7 @@ import {
     videoKbpsForTarget,
 } from "@genesiscz/utils/video/reencode";
 import {
+    besideInstructions,
     collectInputs,
     type EncodeOptions,
     type EncodeRow,
@@ -559,6 +561,15 @@ describe("exitCodeFor", () => {
             seconds: 0,
         };
     }
+
+    test("an original kept beside its result tells the agent who finishes it, in the FOR AGENTS block", () => {
+        expect(besideInstructions([row("kept"), row("skipped")])).toBeNull();
+        expect(besideInstructions([row("kept"), { ...row("kept-beside"), input: "/clips/b.mp4" }])).toEqual({
+            severity: "info",
+            stop: false,
+            text: `1 original(s) stay because an agent may not remove them. A person finishes at a terminal: ${toolCommand("rm", "/clips/b.mp4")}`,
+        });
+    });
 
     test("a failed file fails the run; skips and discards do not", () => {
         expect(exitCodeFor([row("skipped"), row("discarded"), row("kept"), row("kept-beside")])).toBe(0);

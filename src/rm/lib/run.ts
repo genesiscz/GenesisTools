@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { bashWriteLookup } from "@genesiscz/utils/agents/change-log";
+import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
@@ -629,18 +630,21 @@ function summary(item: RmPlanItem): Record<string, string | undefined> {
     };
 }
 
+/**
+ * The FOR AGENTS block after a run opened a request (docs/adr/0049-agent-instructions.md). It is no stop, so the
+ * block ends with the hint line itself: agents often keep only `| tail -1` of this output, and that line stands alone.
+ */
 export function printRequestHint(id: string, count: number): void {
     const rm = toolCommand("rm");
-    out.println(
-        pc.yellow(
-            `${formatCount(count, "path")} ${count === 1 ? "needs" : "need"} the user's confirmation (request ${id}).`
-        )
-    );
-    out.println(
-        pc.dim(`  In Claude Code the user types: ! ${rm} approve ${id}. It lists the paths and asks them to confirm.`)
-    );
-    // The last line stands alone: agents often keep only `| tail -1` of this output.
-    out.println(rmRequestHintLine(id, count));
+    outputAgentInstructions({
+        severity: "info",
+        stop: false,
+        text: [
+            `${formatCount(count, "path")} ${count === 1 ? "needs" : "need"} the user's confirmation (request ${id}).`,
+            `In Claude Code the user types: ! ${rm} approve ${id}. It lists the paths and asks them to confirm.`,
+            rmRequestHintLine(id, count),
+        ].join("\n"),
+    });
 }
 
 /** For a verb only a person may run (approve, roots add, config set): ask, and log how it was answered. */

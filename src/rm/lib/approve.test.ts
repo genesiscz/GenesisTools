@@ -12,7 +12,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { agentInstructionsHeader } from "@genesiscz/utils/ai/agent-instructions";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -1426,6 +1428,9 @@ describe("the requests listing", () => {
 
     test("an agent reads the agent's footer", () => {
         const text = renderRequestList(views, { now: NOW, caller: ASKER }).map(stripAnsi).join("\n");
+        // As the FOR AGENTS block every instruction for an agent uses (ADR 0049); a person's footer has none.
+        expect(text).toContain(`${agentInstructionsHeader({ severity: "info", stop: false })}\nThe user approves:`);
+        expect(renderRequestList(views, { now: NOW, caller: PERSON }).join("\n")).not.toContain("FOR AGENTS");
         expect(text).toContain(`The user approves: ! ${toolCommand("rm")} approve <id>`);
         expect(text).toContain(`Open their window: ${toolCommand("rm")} ask <id> (background)`);
         expect(text).toContain(`Cancel your own: ${toolCommand("rm")} deny <id>`);
@@ -2961,7 +2966,11 @@ describe("the request hint an agent reads", () => {
             println.mockRestore();
         }
 
-        const last = stripAnsi(lines.at(-1) ?? "");
+        // One FOR AGENTS block (ADR 0049) that is no stop, so its last line is the hint line itself.
+        const printed = stripAnsi(lines.join("\n")).split("\n");
+        const last = printed.at(-1) ?? "";
+        expect(printed[0]).toBe(agentInstructionsHeader({ severity: "info", stop: false }));
+        expect(last).toBe(rmRequestHintLine("k7m2qd", 2));
         expect(last).toContain("rm request k7m2qd: 2 paths wait for the user.");
         expect(last).toContain("Do not run approve yourself.");
         expect(last).toContain(`! ${toolCommand("rm")} approve k7m2qd`);

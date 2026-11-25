@@ -1,5 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { type AgentInstructions, outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -888,6 +889,26 @@ export function trashLine({ row, encoder }: { row: EncodeRow; encoder: VideoEnco
     return `undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`;
 }
 
+/**
+ * What an agent does about the originals `--replace` kept beside their results (an "ask" file), as the FOR AGENTS
+ * block every instruction for an agent uses (docs/adr/0049-agent-instructions.md); null when none stayed.
+ */
+export function besideInstructions(rows: readonly EncodeRow[]): AgentInstructions | null {
+    const beside = rows.filter((row) => row.status === "kept-beside");
+
+    if (beside.length === 0) {
+        return null;
+    }
+
+    return {
+        severity: "info",
+        stop: false,
+        text:
+            `${beside.length} original(s) stay because an agent may not remove them. A person finishes at a terminal: ` +
+            toolCommand("rm", ...beside.map((row) => row.input)),
+    };
+}
+
 export function renderRows({
     rows,
     summary,
@@ -921,13 +942,10 @@ export function renderRows({
         }
     }
 
-    const beside = rows.filter((row) => row.status === "kept-beside");
+    const beside = besideInstructions(rows);
 
-    if (beside.length > 0) {
-        out.println(
-            `${beside.length} original(s) stay because an agent may not remove them. A person finishes at a terminal: ` +
-                toolCommand("rm", ...beside.map((row) => row.input))
-        );
+    if (beside) {
+        outputAgentInstructions(beside);
     }
 
     const wording = dryRun ? "dry run, nothing written. " : "";
