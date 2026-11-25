@@ -904,9 +904,9 @@ export const join = defineMethod({
     }),
     result: z.unknown(),
     resultName:
-        "{ into, dryRun, parts: [{ record, title, source, offsetMs, lines, items, renumbered, endSec }], gaps, rounded, backup?, withdrawn? }",
+        "{ into, dryRun, parts: [{ record, title, source, offsetMs, lines, items, renumbered, relabeled?, endSec }], gaps, rounded, backup?, withdrawn? }",
     effect: "reversible",
-    doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
+    doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). A speaker label both recordings use reads as "Speaker 1 (2)" on the later recording's lines, items, journal and seats (relabeled: own label to joined label). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
 });
 
 export const joinRepair = defineMethod({

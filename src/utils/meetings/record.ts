@@ -544,6 +544,11 @@ export const joinPartSchema = z.object({
     channels: channelCalibrationSchema.optional(),
     /** The seats of the record it was, on its own clock: a reading of this recording alone sees them as they were. */
     seats: storedMeetingSeatsSchema.optional(),
+    /**
+     * The source speaker labels this part's lines carry under another label on the joined record, its own label to the
+     * joined one (`Speaker 1` to `Speaker 1 (2)`): the earlier recording used the same label, maybe for another person.
+     */
+    speakerLabels: z.record(z.string().min(1), z.string().min(1)).optional(),
 });
 export type JoinPart = z.infer<typeof joinPartSchema>;
 

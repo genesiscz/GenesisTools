@@ -119,6 +119,8 @@ export interface PartMove {
     meeting: { from: string; to: string };
     /** Seconds that were not microsecond-exact, so the move rounded them (counted, never silent). */
     rounded: { count: number };
+    /** A speaker label to the label it carries after the move (`JoinPart.speakerLabels`); a `label` field it names moves. */
+    labels?: ReadonlyMap<string, string>;
 }
 
 function movedId(value: string, move: PartMove): string {
@@ -143,8 +145,8 @@ function movedSec(value: number, move: PartMove): number {
 
 /**
  * A copy of `value` (a record field, an item, a journal entry, an answer-log or comment line) with its transcript seconds
- * on the joined clock, its line addresses on the joined transcript's lines and its ids renumbered. Voice prints and
- * known answers keep their own meeting's clock.
+ * on the joined clock, its line addresses on the joined transcript's lines, its ids renumbered and its speaker labels
+ * relabeled. Voice prints and known answers keep their own meeting's clock.
  */
 export function movedValue<T>(value: T, move: PartMove, key?: string, inFinding = false, inLines = false): T {
     if (Array.isArray(value)) {
@@ -177,6 +179,8 @@ export function movedValue<T>(value: T, move: PartMove, key?: string, inFinding 
             out[name] = movedSec(parseClock(field)!, move);
         } else if (typeof field === "string" && ID_KEYS.has(name)) {
             out[name] = movedId(field, move);
+        } else if (typeof field === "string" && name === "label" && move.labels?.has(field)) {
+            out[name] = move.labels.get(field);
         } else if (typeof field === "string" && name === "meeting" && field === move.meeting.from) {
             out[name] = move.meeting.to;
         } else {

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -31,7 +32,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { type cutClip, playClip } from "./audio";
-import { repairJoin } from "./join-recordings";
+import { joinMeetings, repairJoin } from "./join-recordings";
 import { questionClip, refineSplitClip, writeQuestionClips } from "./listen-clips";
 import {
     clipMoment,
@@ -1848,5 +1849,125 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         // The file of the whole meeting the slot lost is not left beside the new one.
         const lost = first.joinedFile!;
         expect(existsSync(lost) && lost !== done.joinedFile).toBe(false);
+    });
+});
+
+describe("joining two recordings that both have a Speaker 1", () => {
+    const at = (sec: number) => new Date(Date.parse(now) + sec * 1000).toISOString();
+    const sources: Record<string, SourceMeeting> = {
+        early: {
+            sourceMeetingId: "early",
+            title: "Planning",
+            start: at(0),
+            participants: [],
+            speakers: [{ name: "Speaker 1" }, { name: "Speaker 2" }],
+            transcript: [
+                { speaker: "Speaker 1", startSec: 5, text: "First." },
+                { speaker: "Speaker 2", startSec: 20, text: "Second." },
+            ],
+            folders: [],
+        },
+        late: {
+            sourceMeetingId: "late",
+            title: "Planning",
+            start: at(600),
+            participants: [],
+            speakers: [{ name: "Speaker 1" }, { name: "Speaker 3" }],
+            transcript: [
+                { speaker: "Speaker 1", startSec: 4, text: "Later." },
+                { speaker: "Speaker 3", startSec: 30, text: "Other." },
+            ],
+            folders: [],
+        },
+    };
+
+    test("the later one's lines, items and names read as Speaker 1 (2), and its own reading as Speaker 1 again", async () => {
+        const store = new MeetingStore(new Storage(`meetings-join-relabel-${process.pid}`));
+        const spies = [
+            spyOn(wisprflowSource, "load").mockImplementation(async (id) => sources[id]!),
+            spyOn(wisprflowSource, "recordingClock").mockImplementation(async (id) => ({
+                startedAt: sources[id]!.start,
+            })),
+            spyOn(wisprflowSource, "evidence").mockResolvedValue(null),
+            spyOn(wisprflowSource, "revision").mockResolvedValue(null),
+        ];
+        const range = (label: string, person: string, fromSec: number) => ({
+            id: "i1",
+            kind: "speaker-range" as const,
+            label,
+            fromSec,
+            toSec: fromSec + 5,
+            speaker: person,
+            status: "suggested" as const,
+            confidence: 0.8,
+            rules: ["presence"],
+            suggestedAt: now,
+        });
+        const recording = async (meetingId: string, person: string, fromSec: number) => {
+            const created = await store.create(
+                {
+                    title: "Planning",
+                    start: sources[meetingId]!.start,
+                    createdBy: "new",
+                    sources: { wisprflow: { meetingId } },
+                },
+                { command: "new", change: "test" }
+            );
+            return store.update(created.id, { command: "test", change: "names" }, (next) => {
+                next.speakers = {
+                    labels: { "Speaker 1": person },
+                    assignments: [{ id: "a1", label: "Speaker 1", fromSec, toSec: fromSec + 5, person, at: now }],
+                };
+                next.items = [range("Speaker 1", person, fromSec)];
+            });
+        };
+
+        try {
+            const early = await recording("early", "Alice Example", 5);
+            const late = await recording("late", "Bob Example", 4);
+            const result = await joinMeetings({
+                store,
+                ids: [late.id, early.id],
+                backupRoot: mkdtempSync(join(tmpdir(), "join-relabel-")),
+            });
+            const joined = store.read(early.id)!;
+
+            // The backup holds both recordings as they were, so the relabel undoes with the join.
+            expect(result.parts.map((part) => part.relabeled)).toEqual([undefined, { "Speaker 1": "Speaker 1 (2)" }]);
+            expect(existsSync(join(result.backup!, "before", late.id, "meeting.json"))).toBe(true);
+            expect(joined.join?.parts.map((part) => part.speakerLabels)).toEqual([
+                undefined,
+                { "Speaker 1": "Speaker 1 (2)" },
+            ]);
+            expect(joined.speakers.labels).toEqual({ "Speaker 1": "Alice Example", "Speaker 1 (2)": "Bob Example" });
+            expect(joined.speakers.assignments?.map((one) => [one.label, one.person, one.fromSec])).toEqual([
+                ["Speaker 1", "Alice Example", 5],
+                ["Speaker 1 (2)", "Bob Example", 604],
+            ]);
+            expect(joined.items.map((item) => ("label" in item ? [item.label, item.fromSec] : []))).toEqual([
+                ["Speaker 1", 5],
+                ["Speaker 1 (2)", 604],
+            ]);
+
+            const opened = OpenedMeeting.of(store, joined);
+            const transcript = (await opened.meeting()).transcript;
+            expect(transcript.map((line) => [line.speaker, line.startSec])).toEqual([
+                ["Speaker 1", 5],
+                ["Speaker 2", 20],
+                ["Speaker 1 (2)", 604],
+                ["Speaker 3", 630],
+            ]);
+
+            // The later recording read alone (a polished file) has its own label and its own person under it.
+            const own = opened.recordingReading(late.id)!.opened.record;
+            expect(own.speakers.labels["Speaker 1"]).toBe("Bob Example");
+            expect(own.items.map((item) => ("label" in item ? [item.label, item.fromSec] : []))).toEqual([
+                ["Speaker 1", 4],
+            ]);
+        } finally {
+            for (const spy of spies) {
+                spy.mockRestore();
+            }
+        }
     });
 });

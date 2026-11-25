@@ -146,6 +146,8 @@ export interface JoinedPartPlan {
     items: number;
     /** Its items took new ids after the other part's (the part with more items keeps its ids). */
     renumbered: boolean;
+    /** The later recording's own speaker labels its lines carry under another label on the joined record. */
+    relabeled?: Record<string, string>;
     /** The part's end on the joined clock (its last line or its sound, whichever is later). */
     endSec: number;
 }
@@ -214,6 +216,40 @@ async function loadPart(record: MeetingRecord): Promise<LoadedPart> {
     };
 }
 
+/**
+ * The later recording's own speaker labels to the labels its lines carry on the joined record: a label both recordings
+ * use may name two people (a source numbers its speakers per recording), so the later one's reads `Speaker 1 (2)`. A
+ * label that both records list as a participant's name is one person and keeps its name.
+ */
+function laterSpeakerLabels(kept: LoadedPart, later: LoadedPart): Map<string, string> {
+    const named = (part: LoadedPart) => new Set(part.record.participants.map((person) => nameKey(person.name)));
+    const taken = new Set([...kept.labels, ...later.labels]);
+    const relabeled = new Map<string, string>();
+
+    for (const label of [...later.labels].sort()) {
+        if (!kept.labels.has(label) || (named(kept).has(nameKey(label)) && named(later).has(nameKey(label)))) {
+            continue;
+        }
+
+        let number = 2;
+
+        while (taken.has(`${label} (${number})`)) {
+            number++;
+        }
+
+        const joined = `${label} (${number})`;
+        taken.add(joined);
+        relabeled.set(label, joined);
+    }
+
+    return relabeled;
+}
+
+/** The keys of a label-to-name map under the labels the join gave them. */
+function relabeledNames(names: Readonly<Record<string, string>>, labels: ReadonlyMap<string, string>) {
+    return Object.fromEntries(Object.entries(names).map(([label, name]) => [labels.get(label) ?? label, name]));
+}
+
 /** Why these records cannot be joined; each a sentence for the user. */
 function joinRefusal(parts: LoadedPart[], store: MeetingStore): string | undefined {
     const [first, second] = parts as [LoadedPart, LoadedPart];
@@ -240,15 +276,6 @@ function joinRefusal(parts: LoadedPart[], store: MeetingStore): string | undefin
 
     if (overlap) {
         return `${second.record.id} starts before ${first.record.id} ends; two recordings of the same time do not join.`;
-    }
-
-    const named = (part: LoadedPart) => new Set(part.record.participants.map((person) => nameKey(person.name)));
-    const shared = [...first.labels].filter(
-        (label) => second.labels.has(label) && !(named(first).has(nameKey(label)) && named(second).has(nameKey(label)))
-    );
-
-    if (shared.length > 0) {
-        return `The speaker label "${shared[0]}" is in both recordings (${shared.length} shared) and may name two people; rename it in one of them first.`;
     }
 
     const recorder = readRecorderState(store);
@@ -459,6 +486,7 @@ async function joinLocked({
     }
 
     const [kept, later] = loaded as [LoadedPart, LoadedPart];
+    const relabel = laterSpeakerLabels(kept, later);
     const zeroMs = kept.zeroMs;
     const offsets = loaded.map((part) => part.zeroMs - zeroMs);
     // The part with the most items keeps its ids (and its question numbers, so its items come first).
@@ -481,6 +509,7 @@ async function joinLocked({
                 questionBase: part === renumbered ? questions(keepsIds) : 0,
                 meeting: { from: part.record.id, to: kept.record.id },
                 rounded,
+                ...(part === later && relabel.size > 0 ? { labels: relabel } : {}),
             },
         ])
     );
@@ -493,6 +522,7 @@ async function joinLocked({
         lines: part.lines,
         items: part.record.items.length,
         renumbered: part === renumbered && part.record.items.length > 0,
+        ...(part === later && relabel.size > 0 ? { relabeled: Object.fromEntries(relabel) } : {}),
         endSec: endSec(part, index),
     }));
     // The moved values, computed before anything is written: a value that cannot move refuses the join untouched.
@@ -560,6 +590,7 @@ async function joinLocked({
             ...(audio ? { audio } : {}),
             ...(channels ? { channels } : {}),
             ...(part.record.seats ? { seats: part.record.seats } : {}),
+            ...(part === later && relabel.size > 0 ? { speakerLabels: Object.fromEntries(relabel) } : {}),
         };
     });
     const keptSource = sourceRefOf(kept.record);
@@ -729,7 +760,7 @@ async function joinLocked({
                 ...movedValue(later.record.speakers.assignments ?? [], laterMove),
             ];
             current.speakers = {
-                labels: { ...later.record.speakers.labels, ...kept.record.speakers.labels },
+                labels: { ...relabeledNames(later.record.speakers.labels, relabel), ...kept.record.speakers.labels },
                 ...(assignments.length > 0 ? { assignments } : {}),
             };
 
@@ -815,7 +846,10 @@ async function joinLocked({
         }
     }
 
-    log.info({ into: kept.record.id, parts: ids2, backup, rounded: rounded.count }, "join done");
+    log.info(
+        { into: kept.record.id, parts: ids2, backup, rounded: rounded.count, relabeled: Object.fromEntries(relabel) },
+        "join done"
+    );
     return { ...result, backup };
 }
 
