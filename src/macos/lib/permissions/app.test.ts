@@ -53,6 +53,7 @@ import {
     sourceRootsFor,
     stampAppToolsPath,
     waitForSwift,
+    withAppBuildSlot,
 } from "./app";
 import {
     type BuildOfferDeps,
@@ -1716,7 +1717,7 @@ describe.skipIf(skip.unlessMac)("retiredBundlesSummary", () => {
             // The promise rides in an object: withFileLock awaits what its callback returns, and the summary waits for
             // this very lock.
             const { pending } = await withFileLock(
-                join(appDir, "build.lock"),
+                join(genesisApp.genesisAppInstallDir(), "build.lock"),
                 async () => {
                     const started = retiredBundlesSummary({ apply: true });
                     rmSync(join(retiredRoot, "100"), { recursive: true, force: true });
@@ -1773,5 +1774,18 @@ describe("a GENESIS_TOOLS_HOME sandbox and the installed app", () => {
         });
         expect(readdirSync(sandbox)).toEqual([]);
         expect(readdirSync(appHome)).toEqual([]);
+    });
+
+    it("takes the build lock beside the installed bundle, so an app test on a sandbox home waits for real builds", async () => {
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-app-lock-sandbox-"));
+        const appHome = mkdtempSync(join(tmpdir(), "gt-app-lock-home-"));
+        const lock = genesisToolsDirIn(appHome, "app", "build.lock");
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: appHome }, async () => {
+            // Before, the slot took <sandbox>/.genesis-tools/app/build.lock, which no build on the real home waits on.
+            expect(await withAppBuildSlot(async () => existsSync(lock))).toBe(true);
+        });
+        expect(existsSync(lock)).toBe(false);
+        expect(existsSync(genesisToolsDirIn(sandbox, "app"))).toBe(false);
     });
 });
