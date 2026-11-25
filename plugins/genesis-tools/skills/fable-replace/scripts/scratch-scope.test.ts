@@ -383,6 +383,29 @@ describe("fable-replace scratch follows a harness session into its session folde
         expect(scratchHarnessSession({ harness: "claude" })).toEqual({ harness: "claude", sessionId: "claude-1" });
     });
 
+    test("a cwd inside the session's own scratch folder keeps that folder's project, git repository or not", async () => {
+        const session = `scratch-around-${unique}`;
+        const own = path.join("/tmp", "cc", project, session);
+        const plain = path.join(own, "fixture-plain");
+        const nested = path.join(own, "deep", "fixture-repo");
+        fs.mkdirSync(plain, { recursive: true });
+        fs.mkdirSync(nested, { recursive: true });
+        await new Promise<void>((resolve, reject) => {
+            const child = Bun.spawn(["git", "-C", nested, "init", "-q"], { stdout: "ignore", stderr: "ignore" });
+            child.exited.then((code) => (code === 0 ? resolve() : reject(new Error(`git init exited ${code}`))));
+        });
+        asSession(undefined);
+        setEnv("CLAUDE_CODE_SESSION_ID", session);
+
+        expect(sessionScratchRoot({ cwd: plain })).toBe(path.join(own, "fable-replace"));
+        expect(sessionScratchRoot({ cwd: nested })).toBe(path.join(own, "fable-replace"));
+        // Another session's folder is not this session's: the fixture's own name is the project there, as before.
+        setEnv("CLAUDE_CODE_SESSION_ID", `${session}-other`);
+        expect(sessionScratchRoot({ cwd: plain })).toBe(
+            path.join("/tmp", "cc", "fixture-plain", `${session}-other`, "fable-replace")
+        );
+    });
+
     test("FABLE_REPLACE_SCRATCH_ROOT wins over a harness session and over TMPDIR", () => {
         const root = path.join(base, "explicit-root");
         asSession(undefined);

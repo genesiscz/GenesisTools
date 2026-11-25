@@ -416,9 +416,29 @@ const projectFor = (cwd: string): string => {
 };
 
 /**
+ * The project of this session's scratch folder when `cwd` already lies in it (`/tmp/cc/<project>/<session>/...`), so a
+ * run on a fixture or a worktree under the session's own folder keeps its backups there, where `tools rm` cleans them
+ * with the session, instead of a folder named after the fixture; undefined anywhere else.
+ */
+const scratchProjectAround = (cwd: string, session: { harness: Harness; sessionId: string }): string | undefined => {
+    const own = sessionScratchPath({ ...session, project: "unknown-project" });
+    const agentDir = path.dirname(path.dirname(own));
+    if (!fs.existsSync(agentDir)) {
+        return undefined;
+    }
+
+    // macOS reaches /tmp through /private/tmp, so both sides are compared as real paths.
+    const [project, sessionDir] = path.relative(fs.realpathSync(agentDir), fs.realpathSync(cwd)).split(path.sep);
+    return project && project !== ".." && !path.isAbsolute(project) && sessionDir === path.basename(own)
+        ? project
+        : undefined;
+};
+
+/**
  * This session's own folder: the only place an ordinary run writes or prunes. With `FABLE_REPLACE_SCRATCH_ROOT` set,
  * `<that root>/<key>`. Else, with a harness session known, `/tmp/<agent dir>/<project>/<session>/fable-replace`, inside
- * the session's scratch folder that `tools rm` cleans with the session (`hooks/session-scratch.ts`). Else
+ * the session's scratch folder that `tools rm` cleans with the session (`hooks/session-scratch.ts`); `<project>` is the
+ * one of that folder when the cwd already lies in it, else the main checkout folder of the cwd. Else
  * `<tmp>/fable-replace/<key>`.
  */
 export const sessionScratchRoot = (ctx: ScratchContext = {}): string => {
@@ -427,7 +447,8 @@ export const sessionScratchRoot = (ctx: ScratchContext = {}): string => {
         return path.join(scratchRoot(ctx), scratchSessionKey(ctx));
     }
 
-    const project = projectFor(ctx.cwd ?? process.cwd());
+    const cwd = ctx.cwd ?? process.cwd();
+    const project = scratchProjectAround(cwd, session) ?? projectFor(cwd);
     return path.join(sessionScratchPath({ ...session, project }), "fable-replace");
 };
 
