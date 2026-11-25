@@ -429,6 +429,26 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(WidgetFeedRunHeader(run: otherRun, model: model).subtitle, named.title)
     }
 
+    /// A session's inbox row and the inbox of every session draw one head: for one decision both values name the same
+    /// title, kind, waiting state and time, and each keeps its own identifier.
+    func testACardAndItsItemDrawTheSameHead() {
+        let card = WidgetCard(id: "decision:d1", kind: "decision", sessionKey: alpha.key, sourceId: "d1", at: 5000,
+                              title: "Pick a basket", body: "", status: "open", number: 1,
+                              choices: [.init(id: "a", title: "Wicker", recommended: true)], attachments: [], refs: [],
+                              read: false)
+        let fromItem = WidgetRowHeadValue(item: WidgetModel.inboxItem(card), source: nil)
+        let fromCard = WidgetRowHeadValue(card: card, staged: false)
+        XCTAssertEqual(fromItem.title, "Decision 1: Pick a basket")
+        XCTAssertEqual(fromCard.title, fromItem.title)
+        XCTAssertEqual(fromCard.kind, fromItem.kind)
+        XCTAssertTrue(fromCard.needsAnswer)
+        XCTAssertEqual(fromCard.needsAnswer, fromItem.needsAnswer)
+        XCTAssertEqual(fromCard.at, fromItem.at)
+        XCTAssertEqual(fromCard.dotLit, fromItem.dotLit, "an unread waiting decision has its dot in both")
+        XCTAssertEqual(fromItem.identifierPrefix, "widget.overview.row.")
+        XCTAssertEqual(fromCard.identifierPrefix, "widget.inbox.row.")
+    }
+
     /// The screenshot bug of 2026-11-25: a one-letter pick staged from the hover list's Items tab had no Send and no
     /// Unstage there, only "Open in its session". The open entry sends and unstages it in place.
     func testAStagedPickInTheHoverItemsHasItsOwnSendAndUnstage() throws {

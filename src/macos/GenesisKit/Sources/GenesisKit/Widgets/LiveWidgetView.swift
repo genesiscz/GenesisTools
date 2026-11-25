@@ -660,8 +660,9 @@ public struct LiveWidgetView: View {
         let _ = RenderProbe.hit("widget.inbox.row")
         return VStack(alignment: .leading, spacing: 0) {
             // The card's head is a value row; the open card's detail below keeps every control it has (one card).
-            WidgetInboxCardRow(
-                card: card, open: open, selected: card.id == model.card?.id, staged: staged,
+            WidgetInboxRowHead(
+                value: .init(card: card, staged: staged), open: open, selected: card.id == model.card?.id,
+                focused: false,
                 stage: staged ? WidgetStageLine(phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
                     pick: model.shownStagedLine(WidgetModel.inboxItem(card))) : nil,
                 toggle: { toggle(card) })
@@ -1606,99 +1607,20 @@ public struct LiveWidgetView: View {
     }
 }
 
-/// The head of one inbox card, from values: the dot, kind, title, preview, kind or staged line, age and chevron. It is
-/// a button (open or fold the card) only while live (`liveRow`: hovered, or the selected card); at rest it draws the
-/// same labels with no control, so a model publish re-renders only the cards whose values changed and an
-/// accessibility client walks no buttons of the cards at rest (swift skill, "Dense lists and accessibility clients").
-/// VoiceOver still presses it (`rowButton` at rest). The card's frame, flash and open detail stay with
-/// `LiveWidgetView.inboxRow`, so the open card's controls do not depend on the head's liveness.
-struct WidgetInboxCardRow: View, Equatable {
-    let card: WidgetCard
-    let open: Bool
-    let selected: Bool
-    /// A decision whose pick or note is staged, being sent or sent.
-    let staged: Bool
-    /// Its state line ("Staged: … · just now", "Sending: …", "Sent: …"), read from the model by the parent.
-    let stage: WidgetStageLine?
-    let toggle: () -> Void
-
-    static func == (a: WidgetInboxCardRow, b: WidgetInboxCardRow) -> Bool {
-        a.card == b.card && a.open == b.open && a.selected == b.selected && a.staged == b.staged && a.stage == b.stage
-    }
-
-    var body: some View {
-        let _ = RenderProbe.hit("widget.inbox.card.body")
-        labels
-            .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel((stage?.phase.label ?? LiveWidgetView.kindLabel(card)) + ": "
-                + WidgetWords.numbered(card.title, number: card.number) + spokenFacts)
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
-            .accessibilityIdentifier("widget.inbox.row." + card.id)
-            .liveRow(selected: selected)
-    }
-
-    /// The chips an open decision shows under its title, as VoiceOver reads them: ", blocking, high confidence".
-    private var spokenFacts: String {
-        guard open, let details = card.decision else { return "" }
-        var facts: [String] = []
-        if details.blocking == true { facts.append("blocking") }
-        if let confidence = details.confidence { facts.append(confidence + " confidence") }
-        return facts.map { ", " + $0 }.joined()
-    }
-
-    private var labels: some View {
-        let waiting = card.needsAnswer && !staged
-        return HStack(alignment: .top, spacing: 9) {
-            Circle()
-                .fill(waiting ? Color.orange : (staged || !card.read ? SessionPalette.blue : Color.clear))
-                .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(card.kind.rawValue)).font(.system(size: 11))
-                .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                // A one-question form's title is its prompt, which the open card does not repeat: open, it
-                // shows whole and as Markdown, the way the form drew it.
-                let isPrompt = LiveWidgetView.asksOneQuestion(card)
-                (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
-                    .font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
-                // A sub-agent's decision names its thread and lead: each session numbers its own (DECISION 46 b).
-                if let askedIn = card.decision?.askedIn, !askedIn.isEmpty {
-                    WidgetAskedInLine(askedIn)
-                }
-                // Open, the facts the hub's card shows beside its title: blocking, and how sure the agent is.
-                if open, let details = card.decision, details.blocking == true || details.confidence != nil {
-                    HStack(spacing: 6) {
-                        if details.blocking == true {
-                            Badge("Blocking", color: KitPalette.removed, look: .filled)
-                        }
-                        if let confidence = details.confidence {
-                            DecisionConfidenceBadge(confidence)
-                        }
-                    }
-                }
-                if !open, let preview = LiveWidgetView.previewLine(card.fullText) {
-                    Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                // A staged decision's age is its stage's, not the ask's; the line says where its send is.
-                if let stage {
-                    stage
-                } else {
-                    HStack(spacing: 4) {
-                        Text(LiveWidgetView.kindLabel(card)).lineLimit(1)
-                        Text("·")
-                        LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
-                    }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
-                }
-            }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .rotationEffect(.degrees(open ? 90 : 0))
-                .padding(.top, 4)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+/// A session's inbox row: the card's head, with the open card's facts and the closed card's first line.
+extension WidgetRowHeadValue {
+    init(card: WidgetCard, staged: Bool) {
+        // A one-question form's title is its prompt, which the open card does not repeat: open, it shows whole and as
+        // Markdown, the way the form drew it.
+        let isPrompt = LiveWidgetView.asksOneQuestion(card)
+        let numbered = WidgetWords.numbered(card.title, number: card.number)
+        self.init(surface: .card, id: card.id, identifierPrefix: "widget.inbox.row.", kind: card.kind.rawValue,
+                  title: isPrompt ? card.title : numbered, titleIsMarkdown: isPrompt, openLineLimit: isPrompt ? nil : 4,
+                  askedIn: card.decision?.askedIn, needsAnswer: card.needsAnswer, waitsWhileStaged: false,
+                  dotLit: card.needsAnswer || staged || !card.read, dimmed: false,
+                  kindLabel: LiveWidgetView.kindLabel(card), spokenTitle: numbered, source: nil, count: nil, at: card.at,
+                  previewLine: LiveWidgetView.previewLine(card.fullText), blocking: card.decision?.blocking == true,
+                  confidence: card.decision?.confidence)
     }
 }
 
