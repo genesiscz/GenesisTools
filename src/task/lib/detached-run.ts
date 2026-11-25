@@ -25,14 +25,15 @@ function findExitRecord(records: Awaited<ReturnType<typeof readJsonlFile>>): Jso
     );
 }
 
-export async function pollSessionExitCode(session: string, pollMs = 50): Promise<number> {
+/** Waits for the session's exit record, which carries the same code and duration `get` reads. */
+export async function pollSessionExit(session: string, pollMs = 50): Promise<JsonlExitRecord> {
     const path = jsonlPath(session);
 
     for (;;) {
         const records = await readJsonlFile(path);
         const exit = findExitRecord(records);
         if (exit) {
-            return exit.code;
+            return exit;
         }
 
         await Bun.sleep(pollMs);

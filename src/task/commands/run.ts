@@ -1,6 +1,6 @@
 import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
 import { loadTaskToolConfig } from "@app/task/lib/config";
-import { pollSessionExitCode, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
+import { pollSessionExit, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
 import { runSessionGc } from "@app/task/lib/gc";
 import { resolveRunSession } from "@app/task/lib/resolve-run-session";
 import { resolveRunMode } from "@app/task/lib/run-mode";
@@ -129,13 +129,13 @@ export function registerRunCommand(program: Command): void {
                 });
                 worker.unref();
 
-                const exitCode = await pollSessionExitCode(resolved.session);
+                const exit = await pollSessionExit(resolved.session);
                 printRunExitSummary({
                     session: resolved.session,
-                    exitCode,
-                    durationMs: 0,
+                    exitCode: exit.code,
+                    durationMs: exit.durationMs,
                 });
-                process.exit(exitCode);
+                process.exit(exit.code);
             }
 
             const result = await runTask({
