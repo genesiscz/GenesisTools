@@ -168,8 +168,9 @@ sum(weights that apply)` when `net > 0`. A candidate with `net <= 0` is excluded
 Example: E1 is mixed and gives nothing; E3 shows Petr speaking (+5); R6 says Petr spoke three turns ago (+3); R8
 markers lean to Pavel (-2 for Petr). For Petr, `net = 5 + 3 - 2 = 6` over weights `5 + 3 + 2 = 10`, so 80 %.
 
-`tools meetings transcript --with-suggested` applies a stored range at 70 % or more by default (`global.suggest.applyAbove`) and
-shows a lower named guess as `[<name>: NN %]`. Under 60 % (`listenBelow`) a range that matters is a
+`tools meetings transcript --with-suggested` applies a rule's stored range at 70 % or more by default (`global.suggest.applyAbove`) and
+shows a lower named guess as `[<name>: NN %]`. A range you or the user stated (`items add`, an answer) names its line at any
+confidence: your confidence stays on the line as a note, so give an honest one rather than raising it to get the name shown. Under 60 % (`listenBelow`) a range that matters is a
 question candidate (below).
 
 | Rule | Weight | Statement | Status |

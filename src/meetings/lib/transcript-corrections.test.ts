@@ -626,6 +626,36 @@ test("a range a person or an agent stated names its line over a newer rule's ran
     });
 });
 
+test("a range an agent stated names its line at any confidence, kept on the line as a note; a rule's low range stays a guess", () => {
+    const stated = item({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Speaker 2",
+        fromSec: 30,
+        toSec: 30,
+        speaker: "Alice Example",
+        confidence: 0.4,
+    });
+    const automatic = item({
+        ...stated,
+        id: "i2",
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: { labeler: "voice", reason: "named" },
+    });
+    const shown = (one: ReturnType<typeof item>) =>
+        correctTranscript({
+            record: { ...base, items: [one] },
+            transcript,
+            config,
+            format: "json",
+            withSuggested: true,
+        }).entries[3];
+
+    expect(shown(stated)).toMatchObject({ speaker: "Alice Example", band: "applied", guess: false, confidence: 0.4 });
+    expect(shown(automatic)).toMatchObject({ speaker: "[Alice Example: 40 %]", band: "guess", guess: true });
+});
+
 test("later ranges shadow earlier outcomes", () => {
     const result = applyCorrections([line("Voice", 5, "Hello")], {
         ranges: [
@@ -720,8 +750,9 @@ describe("question-owned transcript uncertainty", () => {
         }
     );
 
-    test.each([0.5, 0.6])("unasked speaker suggestions use the configured threshold of %s", (applyAbove) => {
+    test.each([0.5, 0.6])("unasked speaker suggestions of a rule use the configured threshold of %s", (applyAbove) => {
         const source = [line("Voice", 5, "Raw words.")];
+        // A rule's range: one a person or an agent stated names its line at any confidence.
         const range = item({
             id: "i1",
             kind: "speaker-range",
@@ -730,6 +761,7 @@ describe("question-owned transcript uncertainty", () => {
             fromSec: 5,
             toSec: 5,
             speaker: "B Example",
+            rules: [MeetingRule.VoiceEmbedding],
         });
         const thresholdConfig = meetingsConfigSchema.parse({ global: { suggest: { applyAbove } } });
         const render = (status: "suggested" | "confirmed", confidence: number, withSuggested: boolean) =>
@@ -1019,6 +1051,8 @@ test("speaker metadata uses each source line's own range when two lines start in
                 toSec: 10,
                 speaker: "Alice Example",
                 confidence: 0.6,
+                // A rule's range under the threshold is a guess; a stated one would name its line.
+                rules: [MeetingRule.VoiceEmbedding],
             }),
             item({
                 id: "i2",
