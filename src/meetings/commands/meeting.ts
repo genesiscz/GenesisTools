@@ -717,7 +717,7 @@ export function registerMeetingCommands(program: Command): void {
         )
         .option(
             "--repair",
-            "on a meeting joined before 2026-11-25: move the later recording's sound and line addresses onto the joined record, and judge again the ranges a naming pass set aside by a stale address, once"
+            "on a meeting joined before 2026-11-25: move the later recording's sound and line addresses onto the joined record, keep the joined transcript as its own copy, and judge again the ranges a naming pass set aside by a stale address, once"
         )
         .option("--dry-run", "say what would join or move, change nothing")
         .option("--json", "print the result as JSON")

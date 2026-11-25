@@ -993,8 +993,9 @@ export interface JoinRepairResult {
 export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepairResult> {
     const { store } = request;
     const dryRun = Boolean(request.dryRun);
-    const open = request.open ?? ((recording: RecordingRef) => recordingSource(store, recording));
     const found = store.resolve(request.ref);
+    // A recording's own copy in the joined record answers when its provider lost the meeting.
+    const open = request.open ?? ((recording: RecordingRef) => recordingSource(store, recording, found?.id));
 
     if (!found) {
         throw new Error(`No meeting "${request.ref}".`);

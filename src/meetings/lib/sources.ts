@@ -17,6 +17,7 @@ import {
     hasSourceCopy,
     ownedCopySource,
     readSourceCopy,
+    recordingCopyFolder,
     type SourceCopyRef,
 } from "./source-copy";
 
@@ -168,12 +169,25 @@ async function backedSource(ref: SourceRef, folder: string, options: { save?: bo
 }
 
 /**
- * One recording of a joined record as its own source: its source meeting, with the copy that recording kept in the
- * folder of the record it was behind it. The copy answers when the provider lost the meeting and is never written,
- * so reading one recording (the join, its repair, a polished file's part) never changes the joined record's folder.
+ * One recording of a joined record as its own source: its source meeting, with that recording's own copy behind it.
+ * The copy answers when the provider lost the meeting and is never written, so reading one recording (the join, its
+ * repair, a polished file's part) never changes a folder.
  */
-export function recordingSource(store: MeetingStore, recording: RecordingRef): Promise<TranscriptSource> {
-    return backedSource(recording, store.folder(recording.record), { save: false });
+export function recordingSource(
+    store: MeetingStore,
+    recording: RecordingRef,
+    joinedId?: string
+): Promise<TranscriptSource> {
+    return backedSource(recording, recordingCopyHolder(store, recording, joinedId), { save: false });
+}
+
+/**
+ * The folder that keeps one recording's own copy: the joined record's copy of it (`recordingCopyFolder`, written by the
+ * join and its repair), else the folder of the record it was (before the join, or a join made before that copy).
+ */
+export function recordingCopyHolder(store: MeetingStore, recording: RecordingRef, joinedId?: string): string {
+    const kept = joinedId ? recordingCopyFolder(store.folder(joinedId), recording.sourceMeetingId) : undefined;
+    return kept && hasSourceCopy(kept, recording) ? kept : store.folder(recording.record);
 }
 
 /**
