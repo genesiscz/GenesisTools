@@ -3249,6 +3249,68 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         }
     });
 
+    test("meetings: Meeting.lineTable and Meeting.pack are evidence --format tsv and pack, through the same functions", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.Meeting.lineTable")).toContain("meetings evidence");
+        expect(describeMethod([api], "meetings.Meeting.lineTable")).toContain("--format tsv");
+        expect(describeMethod([api], "meetings.Meeting.pack")).toContain("meetings pack");
+        const record = await new MeetingStore().create(
+            { title: "Line table", start: "2026-11-02T12:45:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const raw = {
+            meeting: { id: record.id, title: record.title, start: record.start },
+            people: [],
+            lines: [
+                {
+                    index: 0,
+                    fromSec: 12,
+                    toSec: 14,
+                    label: "Alice Example",
+                    text: "Hello.",
+                    channel: { micShare: 0.904 },
+                    speaking: ["Alice Example"],
+                    muted: [],
+                    present: [],
+                },
+            ],
+        } as unknown as Awaited<ReturnType<typeof channelOperation.channelEvidence>>;
+        const measured = spyOn(channelOperation, "channelEvidence").mockResolvedValue(raw);
+        const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(null);
+        const out = join(mkdtempSync(join(tmpdir(), "meetings-pack-")), "pack");
+        try {
+            const meeting = (await loadMeetings()).open(record.id) as unknown as {
+                lineTable(input: unknown): Promise<{ legend: unknown[]; rows: unknown[]; voices: boolean }>;
+                pack(input: unknown): Promise<{ rows: number; chunks: Array<{ file: string; rows: number }> }>;
+            };
+            expect(await meeting.lineTable({ from: 10, to: 20 })).toEqual({
+                legend: [{ code: "AE", name: "Alice Example" }],
+                rows: [
+                    {
+                        idx: 0,
+                        t: "00:12",
+                        label: "AE",
+                        mic: "90",
+                        spk: "AE",
+                        voice: "-",
+                        next: "",
+                        text: "Hello.",
+                    },
+                ],
+                voices: false,
+            });
+            expect(measured.mock.calls.map((call) => call[1])).toEqual([{ fromSec: 10, toSec: 20 }]);
+            const packed = await meeting.pack({ out, voices: false });
+            expect(packed).toMatchObject({ rows: 1, chunks: [{ file: "lines-1.tsv", rows: 1 }] });
+            expect(readFileSync(join(out, "lines-1.tsv"), "utf8").split("\n")[0]).toBe("# legend AE=Alice Example");
+            expect(readFileSync(join(out, "facts.md"), "utf8")).toContain("- AE (Alice Example): 1");
+            await expect(meeting.pack({ out, voices: false })).rejects.toThrow("is not empty");
+        } finally {
+            measured.mockRestore();
+            evidence.mockRestore();
+        }
+    });
+
     // R2-MC12: confirm and reject shared one schema, so a reject took speaker and proposed and kept nothing of them.
     test("meetings: items.reject refuses the values only a confirm takes, and rejects by id", async () => {
         const record = await new MeetingStore().create(

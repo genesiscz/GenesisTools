@@ -84,6 +84,7 @@ import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
+import { decisionPeople } from "./lib/from-decisions";
 import { indicatorGapSummary } from "./lib/indicator-facts";
 import { appliedLine, itemWhat } from "./lib/item-text";
 import {
@@ -106,9 +107,11 @@ import {
     withRetirementsUndone,
 } from "./lib/join-retirements";
 import { joinedTranscript } from "./lib/joined-source";
+import { chunkLineTable, type LineTableRow, lineTable, lineTableTsv } from "./lib/line-table";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { askProjectAtEnd } from "./lib/meeting-end";
 import { OpenedMeeting } from "./lib/opened-meeting";
+import { personInitials } from "./lib/person-initials";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { answerQuestion, propagateAnswer, skipQuestion, splitQuestion } from "./lib/question-answers";
@@ -8438,6 +8441,87 @@ test("indicator gaps are one warning line: one gap keeps its own line, more give
     ).toBe(
         "3 speaking indicator gaps, longest 03:00 at 1:06:07; --verbose or evidence --raw (meeting.indicatorGaps) lists them"
     );
+});
+
+test("the line table keeps two lines of one second in transcript order, each with its own voice verdict", () => {
+    const transcript = [
+        line("Alice Example", 0, "First\tline.", 1),
+        line("Speaker 2", 61, "Same second, one.", 2),
+        line("Speaker 2", 61, "Same second, two.", 2),
+        line("Bob Example", 70, "Last.", 3),
+    ];
+    const seated = meetingRecordSchema.parse({
+        ...record,
+        participants: [{ name: "Alice Example", self: true, from: [] }],
+        seats: { room: ["Alice Example"], remote: [{ name: "Bob Example", fromSec: 0, toSec: 600 }] },
+        speakers: { labels: { "Speaker 2": "Bob Example" } },
+    });
+    const raw = rawMeeting({
+        record: seated,
+        meeting: { ...meeting, transcript },
+        evidence: { segments: [], speaking: [{ tSec: 61, speaking: ["Bob Example"] }], files: [] },
+        points: [],
+    });
+    // The verdicts come in another order than the lines: the table joins them by index, never by time or position.
+    // The people get the initials items from-decisions reads back, so a decision that names "B" lands on Bob.
+    const table = lineTable({
+        raw,
+        people: decisionPeople(seated),
+        labels: seated.speakers.labels,
+        verdicts: [
+            { index: 2, person: "Bob Example", score: 0.71 },
+            { index: 1, person: "Alice Example", score: 0.812, next: { person: "Bob Example", score: 0.5 } },
+            { index: 3 },
+        ],
+    });
+    expect(lineTableTsv(table).split("\n")).toEqual([
+        "# legend A=Alice Example (room, self); B=Bob Example (remote 00:00–10:00); S2=Speaker 2 (named Bob Example)",
+        "idx\tt\tlabel\tmic\tspk\tvoice\tnext\ttext",
+        "0\t00:00\tA\t\t?\t-\t\tFirst line.",
+        "1\t01:01\tS2\t\tB\tA81\tB50\tSame second, one.",
+        "2\t01:01\tS2\t\tB\tB71\t\tSame second, two.",
+        "3\t01:10\tB\t\tB\t?\t\tLast.",
+    ]);
+    expect(table.legend.filter((entry) => entry.code !== "S2").map((entry) => [entry.name, entry.code])).toEqual([
+        ...personInitials(decisionPeople(seated)),
+    ]);
+});
+
+test("pack chunks end at the last change of label within the size, a monologue at the size, and each repeats the legend", () => {
+    const row = (idx: number, label: string): LineTableRow => ({
+        idx,
+        t: "00:00",
+        label,
+        mic: "",
+        spk: "",
+        voice: "-",
+        next: "",
+        text: "x".repeat(90),
+    });
+    const legend = [
+        { code: "AE", name: "Alice Example" },
+        { code: "BE", name: "Bob Example" },
+    ];
+    // A turn every six lines: the last turn within 1500 characters is the one before line 12.
+    const turns = {
+        legend,
+        rows: Array.from({ length: 40 }, (_, idx) => row(idx, Math.floor(idx / 6) % 2 ? "BE" : "AE")),
+    };
+    const chunks = chunkLineTable(turns, 1500);
+    expect(chunks.map((rows) => rows.length)).toEqual([12, 12, 12, 4]);
+    for (const [index, rows] of chunks.entries()) {
+        expect(lineTableTsv(turns, rows).split("\n")[0]).toBe("# legend AE=Alice Example; BE=Bob Example");
+        if (index > 0) {
+            expect(rows[0]?.label).not.toBe(chunks[index - 1]?.at(-1)?.label);
+        }
+    }
+    // One speaker talking on is cut at the size.
+    const monologue = { legend, rows: Array.from({ length: 40 }, (_, idx) => row(idx, "AE")) };
+    const long = chunkLineTable(monologue, 1500);
+    expect(long.flat().map((one) => one.idx)).toEqual(monologue.rows.map((one) => one.idx));
+    for (const rows of long) {
+        expect(lineTableTsv(monologue, rows).length).toBeLessThanOrEqual(1500);
+    }
 });
 
 test("unknown failed or gapped indicator observations award no E3 evidence", () => {

@@ -212,6 +212,40 @@ export const evidence = defineMethod({
     effect: "read",
     doc: `Read screen --at before attributing an idea shown on screen. Channel evidence; table (or raw with from/to) returns the per-line evidence of that window. raw without from/to is ${toolCommand("meetings", "evidence")} <meeting> --raw: seats, project roles, the terms (each unknown word, vocabulary run and spoken identifier with the screen OCR lines near it that sound like it: atSec, frame, form, text, score) and screen, the screen record they come from (or recorded false). wordCheck and screenLines are its --word-check and --screen-lines.`,
 });
+export const lineTable = defineMethod({
+    name: "lineTable",
+    params: z
+        .object({
+            from: z.number().nonnegative().optional(),
+            to: z.number().nonnegative().optional(),
+            /** Fill voice and next with the voice labeler's verdicts, as voices preview measures them (slow). */
+            withVoices: z.boolean().optional(),
+        })
+        .strict()
+        .refine((options) => options.to === undefined || options.to >= (options.from ?? 0), {
+            message: "to must be at or after from",
+        }),
+    result: z.unknown(),
+    resultName:
+        "{ legend: { code, name, seat?, self? }[], rows: { idx, t, label, mic, spk, voice, next, text }[], voices }",
+    effect: "read",
+    doc: `The line table for the speaker pass: one row per transcript line (or per line that starts between from and to, in seconds), keyed by its transcript index idx, with the label, the microphone share 0..100, who the speaking indicator showed ("+" joined, "?" unknown), the best voice with its score ("?" named nobody, "-" not read), the runner-up and the full text; every person is a legend code. withVoices measures the voices first. CLI twin: ${toolCommand("meetings", "evidence")} <meeting> --format tsv [--with-voices] [--from <t>] [--to <t>].`,
+});
+export const pack = defineMethod({
+    name: "pack",
+    params: z
+        .object({
+            out: z.string().min(1),
+            chunkChars: z.number().int().min(1000).optional(),
+            /** false skips the voice measurement, as --no-voices. */
+            voices: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ out, facts, chunks: { file, fromIdx, toIdx, rows, chars }[], rows, voices }",
+    effect: "reversible",
+    doc: `Write the line table into the new or empty folder out: lines-<n>.tsv chunks of about chunkChars characters (default 25000), cut at a change of label, each with the legend line and the header, and facts.md (seats, stays with their join and leave sources, devices, absent people, the legend, the lines per label). Reads the voices unless voices is false. Writes nothing into the meeting. CLI twin: ${toolCommand("meetings", "pack")} <meeting> --out <dir> [--chunk-chars <n>] [--no-voices].`,
+});
 export const transcript = defineMethod({
     name: "transcript",
     params: z.object({}),
@@ -1118,6 +1152,8 @@ export const meetingsToolsetApi = defineApi({
                 lines,
                 transcript,
                 evidence,
+                lineTable,
+                pack,
                 voice,
                 acousticInspect,
                 acousticCollect,
