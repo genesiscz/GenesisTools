@@ -36,6 +36,8 @@ import {
     writeNativeInboxStateFile,
 } from "./native-inbox";
 
+// Which need refuses first is the windows area's order (areas/windows.ts `openNeeds`, pinned in engine.test.ts);
+// here only the in-test refusal counts, so the result is the same with or without an installed app or a display.
 it("opening the permissions window in a test returns the engine refusal without starting the app", async () => {
     const platform = spyOn(LIVE_FACTS, "platform").mockReturnValue("darwin");
     const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
@@ -49,7 +51,7 @@ it("opening the permissions window in a test returns the engine refusal without 
                 {
                     way: "native",
                     code: "in-test",
-                    reason: "app.bundle: a test process never reaches GenesisTools.app",
+                    reason: expect.stringMatching(/^[a-z.]+: a test process never reaches /),
                     fix: null,
                 },
             ],
