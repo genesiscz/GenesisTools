@@ -66,6 +66,12 @@ const check = (name: string, cond: boolean, detail = ""): void => {
 const hermeticRoot = scratchDir("selftest-home");
 process.env.GENESIS_TOOLS_HOME = hermeticRoot;
 process.env.TMPDIR = hermeticRoot;
+// Inside a harness session the scratch folder follows the session to /tmp/<agent dir>/<project>/<session>/, which
+// ignores TMPDIR; the explicit root keeps every scratchDir of this file and of its CLIs under the hermetic one.
+process.env.FABLE_REPLACE_SCRATCH_ROOT = path.join(hermeticRoot, "fable-replace");
+// The CLIs this file spawns are its children: with no session named, their folder would be keyed by this pid while
+// ours is keyed by our parent's, and the --prune check would look in a folder the child never sweeps.
+process.env.FABLE_REPLACE_SESSION ||= scratchSessionKey();
 // Bun does not forward process.env mutations to spawned children (measured: a child of a
 // process that set X after startup sees X empty), so every CLI this file spawns gets the
 // hermetic env explicitly. Three standalone runs once wrote 48 lines into the real journal.
@@ -2268,6 +2274,11 @@ console.log("scratchDir() root + pruneScratch()");
     const ownRoot = sessionScratchRoot();
     const fresh = scratchDir("probe");
     check(
+        "FABLE_REPLACE_SCRATCH_ROOT is the shared root, ahead of a harness session",
+        root === process.env.FABLE_REPLACE_SCRATCH_ROOT && root === path.join(os.tmpdir(), "fable-replace"),
+        root
+    );
+    check(
         "scratchDir lands in this session's folder, <tmp>/fable-replace/<session>/",
         ownRoot === path.join(root, scratchSessionKey()) &&
             path.dirname(fresh) === ownRoot &&
@@ -2615,7 +2626,7 @@ console.log("review round 1 regressions");
         cwd: spaceDir,
         input: "@@ s.ts\n<<<\nconst s = 1;\n===\nconst s = 2;\n>>>\n",
         encoding: "utf8",
-        env: { ...hermeticEnv, TMPDIR: spaceTmp },
+        env: { ...hermeticEnv, TMPDIR: spaceTmp, FABLE_REPLACE_SCRATCH_ROOT: path.join(spaceTmp, "fable-replace") },
     });
     const quoted = `${red.stdout}\n${red.stderr}`.match(/--rollback "([^"]+)"/)?.[1];
     const undone =
@@ -2690,12 +2701,17 @@ check(
 }
 {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const spaced = f("dir with space/scripts");
+    // The plugin's layout, because the scripts import the plugin's hooks/ and lib/ (the scratch folder of a session).
+    const spacedPlugin = f("dir with space/plugin");
+    const spaced = path.join(spacedPlugin, "skills", "fable-replace", "scripts");
     fs.mkdirSync(spaced, { recursive: true });
     for (const name of fs.readdirSync(here)) {
         if (name.endsWith(".ts")) {
             fs.copyFileSync(path.join(here, name), path.join(spaced, name));
         }
+    }
+    for (const shared of ["hooks", "lib"]) {
+        fs.symlinkSync(path.resolve(here, "..", "..", "..", shared), path.join(spacedPlugin, shared));
     }
     const api = spawnSync("bun", [path.join(spaced, "cli.ts"), "--api", "run"], { encoding: "utf8", env: hermeticEnv });
     const count = Number(api.stdout.match(/fable-replace API — (\d+) entr/)?.[1] ?? -1);

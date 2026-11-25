@@ -1,8 +1,17 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { pruneScratch, scratchDir, scratchRoot } from "./backup-and-rollback";
+import {
+    pruneScratch,
+    recordGitMove,
+    recordPostWriteHashes,
+    scratchDir,
+    scratchHarnessSession,
+    scratchRoot,
+    sessionScratchRoot,
+    writeBackup,
+} from "./backup-and-rollback";
 import { journalHome } from "./journal";
 
 // Every session on a machine shares one scratch root, because a worker inherits its lead's TMPDIR. These tests pin
@@ -10,7 +19,15 @@ import { journalHome } from "./journal";
 // a sweep across sessions takes an explicit `all-sessions`. Every fixture lives under a private TMPDIR made per test.
 // They use only names the layout before sessions also exported, so the file runs against that code as well.
 
-const ENV_KEYS = ["TMPDIR", "FABLE_REPLACE_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "FABLE_REPLACE_HOME"];
+const ENV_KEYS = [
+    "TMPDIR",
+    "FABLE_REPLACE_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "FABLE_REPLACE_HOME",
+    "FABLE_REPLACE_HARNESS",
+    "FABLE_REPLACE_SCRATCH_ROOT",
+];
 const SESSION_KEYS = ["FABLE_REPLACE_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"];
 /** Past the 12 h prune TTL. */
 const OLD_MS = 25 * 60 * 60 * 1000;
@@ -76,6 +93,9 @@ beforeEach(() => {
     fs.mkdirSync(temp);
     setEnv("TMPDIR", temp);
     setEnv("FABLE_REPLACE_HOME", undefined);
+    // Set by a caller that knows better than the environment; no case here inherits them.
+    setEnv("FABLE_REPLACE_HARNESS", undefined);
+    setEnv("FABLE_REPLACE_SCRATCH_ROOT", undefined);
 });
 
 afterEach(() => {
@@ -187,6 +207,9 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
 
     test("FABLE_REPLACE_SESSION wins over the harness ids, and an unsafe key stays one folder name", () => {
         const folder = (): string => path.relative(scratchRoot(), path.dirname(scratchDir("cli")));
+        // A harness id with a session names a harness session, whose folder follows it to /tmp/<agent dir>. An
+        // explicit root keeps the folder under the shared root, so this case stays about the key alone.
+        setEnv("FABLE_REPLACE_SCRATCH_ROOT", path.join(temp, "fable-replace"));
         setEnv("CODEX_THREAD_ID", "codex-thread-1");
         setEnv("CLAUDE_CODE_SESSION_ID", "claude-session-1");
         setEnv("FABLE_REPLACE_SESSION", "lead/worker 2");
@@ -264,5 +287,160 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         expect(fs.existsSync(foreignOld)).toBe(true);
         expect(fs.existsSync(legacy)).toBe(true);
         expect(child.stdout).toContain("pruned 1 stale scratch dir(s)");
+    }, 30_000);
+});
+
+// The harness session layout: with a harness and its session id known, the folder is the session's own scratch folder
+// that `tools rm` cleans, `/tmp/<agent dir>/<project>/<session>/fable-replace` (hooks/session-scratch.ts). One git
+// fixture checkout serves the CLI case and the git-move case; every git and CLI child is awaited, never spawnSync.
+describe("fable-replace scratch follows a harness session into its session folder", () => {
+    const unique = `${process.pid}-${Date.now().toString(36)}`;
+    const project = `demo-${unique}`;
+    let holder = "";
+    let repo = "";
+
+    const run = async (
+        argv: string[],
+        { cwd, stdin, env }: { cwd: string; stdin?: string; env?: NodeJS.ProcessEnv }
+    ): Promise<{ status: number; out: string }> => {
+        const proc = Bun.spawn(argv, {
+            cwd,
+            stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+            env: env ?? process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 30_000,
+        });
+        const [stdout, stderr, status] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        return { status, out: `${stdout}\n${stderr}` };
+    };
+
+    const git = async (...args: string[]): Promise<string> => {
+        const quiet = [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ];
+        const result = await run(["git", ...quiet, "-c", "commit.gpgsign=false", ...args], { cwd: repo });
+        if (result.status !== 0) {
+            throw new Error(`git ${args.join(" ")}: ${result.out}`);
+        }
+
+        return result.out.trim();
+    };
+
+    /** The CLI with a clean environment: only what a case passes names a session, a harness or a root. */
+    const cliEnv = (extra: Record<string, string>): NodeJS.ProcessEnv => {
+        const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: temp, FABLE_REPLACE_HOME: path.join(base, "home") };
+        for (const name of [...SESSION_KEYS, "FABLE_REPLACE_HARNESS", "FABLE_REPLACE_SCRATCH_ROOT"]) {
+            delete env[name];
+        }
+
+        return { ...env, ...extra };
+    };
+
+    beforeAll(async () => {
+        holder = fs.mkdtempSync(path.join(os.tmpdir(), "scratch-scope-repo-"));
+        repo = path.join(holder, project);
+        fs.mkdirSync(repo);
+        fs.writeFileSync(path.join(repo, "demo.ts"), "export const demo = 1;\n");
+        fs.writeFileSync(path.join(repo, "old-name.ts"), "export const named = 1;\n");
+        await git("init", "-q");
+        await git("add", "demo.ts", "old-name.ts");
+        await git("commit", "-q", "-m", "fixture");
+    });
+
+    afterAll(() => {
+        fs.rmSync(holder, { recursive: true, force: true });
+        fs.rmSync(path.join("/tmp", "cc", project), { recursive: true, force: true });
+    });
+
+    test("the harness and the session come from the context, then FABLE_REPLACE_*, then the harness's own variable", () => {
+        asSession(undefined);
+        expect(scratchHarnessSession()).toBeNull();
+        // FABLE_REPLACE_SESSION alone names no harness: the folder stays under the shared root, as before.
+        asSession("named-only");
+        expect(scratchHarnessSession()).toBeNull();
+        setEnv("CODEX_THREAD_ID", "thread-1");
+        expect(scratchHarnessSession()).toEqual({ harness: "codex", sessionId: "named-only" });
+        setEnv("FABLE_REPLACE_SESSION", undefined);
+        expect(scratchHarnessSession()).toEqual({ harness: "codex", sessionId: "thread-1" });
+        setEnv("CLAUDE_CODE_SESSION_ID", "claude-1");
+        expect(scratchHarnessSession()).toEqual({ harness: "claude", sessionId: "claude-1" });
+        setEnv("FABLE_REPLACE_HARNESS", "codex");
+        expect(scratchHarnessSession()).toEqual({ harness: "codex", sessionId: "thread-1" });
+        // Grok sets no session variable, so it needs a session named for it.
+        setEnv("FABLE_REPLACE_HARNESS", "grok");
+        expect(scratchHarnessSession()).toBeNull();
+        expect(scratchHarnessSession({ sessionId: "grok-1" })).toEqual({ harness: "grok", sessionId: "grok-1" });
+        expect(scratchHarnessSession({ harness: "claude" })).toEqual({ harness: "claude", sessionId: "claude-1" });
+    });
+
+    test("FABLE_REPLACE_SCRATCH_ROOT wins over a harness session and over TMPDIR", () => {
+        const root = path.join(base, "explicit-root");
+        asSession(undefined);
+        setEnv("CLAUDE_CODE_SESSION_ID", "claude-1");
+        setEnv("FABLE_REPLACE_SCRATCH_ROOT", root);
+
+        const dir = scratchDir("cli", { cwd: repo });
+
+        expect(scratchRoot()).toBe(root);
+        expect(sessionScratchRoot({ cwd: repo })).toBe(path.join(root, "claude-1"));
+        expect(path.dirname(dir)).toBe(path.join(root, "claude-1"));
+        aged(finished(dir));
+        const report = pruneScratch({ scratch: { cwd: repo } });
+        expect(report.roots).toEqual([path.join(root, "claude-1")]);
+        expect(fs.existsSync(dir)).toBe(false);
+        expect(fs.existsSync(path.join(temp, "fable-replace"))).toBe(false);
+    });
+
+    test("a CLI run in a Claude session backs up into /tmp/cc/<project>/<session>/fable-replace, and --rollback restores", async () => {
+        const session = `scratch-scope-${unique}`;
+        const env = cliEnv({ CLAUDE_CODE_SESSION_ID: session });
+        const demo = path.join(repo, "demo.ts");
+        const spec = "@@ demo.ts\n<<<\nexport const demo = 1;\n===\nexport const demo = 2;\n>>>\n";
+
+        // The child starts outside the checkout: only --cwd can name the project.
+        const swept = await run([process.execPath, CLI, "--cwd", repo], { cwd: base, stdin: spec, env });
+        const folder = path.join("/tmp", "cc", project, session, "fable-replace");
+        const backupDir = swept.out.match(/Backed up 1 path\(s\) to (\S+)/)?.[1];
+
+        expect(swept.status).toBe(0);
+        expect(swept.out).toContain(`Backed up 1 path(s) to ${folder}${path.sep}cli-`);
+        expect(fs.readFileSync(demo, "utf8")).toBe("export const demo = 2;\n");
+        expect(fs.existsSync(path.join(temp, "fable-replace"))).toBe(false);
+        const undone = await run([process.execPath, CLI, "--rollback", backupDir ?? "missing"], { cwd: repo, env });
+        expect(undone.status).toBe(0);
+        expect(fs.readFileSync(demo, "utf8")).toBe("export const demo = 1;\n");
+        expect(await git("status", "--porcelain")).toBe("");
+    }, 30_000);
+
+    test("a manifest with a git move rolls back to an empty git status", async () => {
+        const from = path.join(repo, "old-name.ts");
+        const to = path.join(repo, "new-name.ts");
+        const backupDir = path.join(base, "backup");
+        writeBackup({ dir: backupDir, files: [from, to] });
+        await git("mv", "old-name.ts", "new-name.ts");
+        recordGitMove(backupDir, { from, to });
+        fs.writeFileSync(to, "export const renamed = 2;\n");
+        recordPostWriteHashes(backupDir);
+        // The positive control: the sweep left a staged rename with a changed target.
+        expect(await git("status", "--porcelain")).toBe("RM old-name.ts -> new-name.ts");
+
+        // Through the CLI, so the git reset runs in a child and never in this test worker.
+        const undone = await run([process.execPath, CLI, "--rollback", backupDir], { cwd: repo, env: cliEnv({}) });
+
+        expect(undone.status).toBe(0);
+        expect(undone.out).toContain("unstaged the git move");
+        expect(await git("status", "--porcelain")).toBe("");
+        expect(fs.readFileSync(from, "utf8")).toBe("export const named = 1;\n");
+        expect(fs.existsSync(to)).toBe(false);
     }, 30_000);
 });

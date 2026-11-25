@@ -13,12 +13,18 @@
  *
  * Never point two sweeps at one backupDir — the second overwrites the first
  * snapshot. The runner refuses this in pre-flight.
+ *
+ * A rename the sweep staged with `git mv` is recorded in the manifest too
+ * (`recordGitMove`), and `rollback()` unstages it before it restores the files.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { projectOf, sessionScratchPath } from "../../../hooks/session-scratch";
+import { HARNESS_IDS, type Harness } from "../../../lib/Generated/harness-facts";
 import { FableReplaceError } from "./internal";
 import { parseJson, stringifyJson } from "./json";
 import type { PruneParams, PruneReport, RollbackParams, RollbackReport, WriteBackupParams } from "./types";
@@ -34,6 +40,19 @@ interface BackupManifestEntry {
      * edit made by hand after the sweep is never silently overwritten.
      */
     hashAfter?: string | null;
+}
+
+/** A rename the sweep staged with `git mv`, both paths absolute. */
+interface GitMove {
+    from: string;
+    to: string;
+}
+
+interface BackupManifest {
+    createdAt: string;
+    entries: BackupManifestEntry[];
+    /** Absent in a manifest written before git moves existed, which reads the same as an empty list. */
+    gitMoves?: GitMove[];
 }
 
 const MANIFEST_NAME = "fable-replace-manifest.json";
@@ -123,22 +142,82 @@ export const recordPostWriteHashes = (dir: string): void => {
 };
 
 /**
+ * Record a rename staged with `git mv` in the backup's manifest, so `rollback()` can unstage it: restoring the files
+ * alone would leave the index holding the rename, and `git status` would show a deleted source and an added target.
+ * Call it after `writeBackup` (the manifest must exist).
+ */
+export const recordGitMove = (backupDir: string, move: { from: string; to: string }): void => {
+    const manifestPath = path.join(backupDir, MANIFEST_NAME);
+    if (!fs.existsSync(manifestPath)) {
+        throw new Error(`No ${MANIFEST_NAME} in ${backupDir}: write the backup before recording a git move`);
+    }
+
+    const manifest = parseJson(fs.readFileSync(manifestPath, "utf8")) as BackupManifest;
+    manifest.gitMoves = [...(manifest.gitMoves ?? []), { from: path.resolve(move.from), to: path.resolve(move.to) }];
+    fs.writeFileSync(manifestPath, stringifyJson(manifest, 2));
+};
+
+/** The nearest folder of `dir` that exists: a move can empty its source folder, and git removes it then. */
+const existingDir = (dir: string): string => {
+    let current = dir;
+    while (!fs.existsSync(current) && path.dirname(current) !== current) {
+        current = path.dirname(current);
+    }
+
+    return current;
+};
+
+/**
+ * Reset the index entries of every recorded `git mv` (`git reset -q -- <from> <to>`), so the rollback leaves
+ * `git status` as it was before the sweep. Only the index changes; the files are the restore's job. A move that fails
+ * to reset is reported in `failed`, and the restore goes on.
+ */
+const unstageGitMoves = ({
+    moves,
+    wanted,
+    report,
+}: {
+    moves: GitMove[];
+    wanted: Set<string> | null;
+    report: RollbackReport;
+}): void => {
+    for (const move of moves) {
+        if (wanted !== null && !wanted.has(path.resolve(move.from)) && !wanted.has(path.resolve(move.to))) {
+            continue;
+        }
+
+        const cwd = existingDir(path.dirname(move.from));
+        const result = spawnSync("git", ["-C", cwd, "reset", "-q", "--", move.from, move.to], { encoding: "utf8" });
+        if (result.status === 0) {
+            console.log(`↩ unstaged the git move: ${move.from} -> ${move.to}`);
+            continue;
+        }
+
+        const error = result.stderr?.trim() || String(result.error ?? `git exited ${result.status}`);
+        report.failed.push({ file: move.from, error: `git reset of the move to ${move.to}: ${error}` });
+        console.error(`✗ COULD NOT UNSTAGE the git move ${move.from} -> ${move.to}: ${error}`);
+    }
+};
+
+/**
  * Restore every file recorded in a backup dir's manifest byte-for-byte.
  * Files that did not exist at backup time are deleted if they exist now.
  *
  * A file that changed AFTER the sweep wrote it (someone edited it by hand, a
  * formatter ran, a later sweep touched it) is reported as drifted and SKIPPED —
  * restoring it would destroy work the backup never saw. Pass `force: true`
- * to restore those too.
+ * to restore those too. A recorded `git mv` is unstaged first (`recordGitMove`).
  */
 export const rollback = ({ backupDir, force = false, only }: RollbackParams): RollbackReport => {
     const manifestPath = path.join(backupDir, MANIFEST_NAME);
     if (!fs.existsSync(manifestPath)) {
         throw new Error(`No ${MANIFEST_NAME} in ${backupDir} — not a fable-replace backup dir`);
     }
-    const manifest = parseJson(fs.readFileSync(manifestPath, "utf8")) as { entries: BackupManifestEntry[] };
+    const manifest = parseJson(fs.readFileSync(manifestPath, "utf8")) as BackupManifest;
     const report: RollbackReport = { restored: [], drifted: [], failed: [] };
     const wanted = only === undefined ? null : new Set(only.map((file) => path.resolve(file)));
+    // The index first: a rename staged with `git mv` would outlive the restored files as a staged rename.
+    unstageGitMoves({ moves: manifest.gitMoves ?? [], wanted, report });
     for (const entry of manifest.entries) {
         if (wanted !== null && !wanted.has(path.resolve(entry.original))) {
             continue;
@@ -228,8 +307,71 @@ export const rollback = ({ backupDir, force = false, only }: RollbackParams): Ro
     return report;
 };
 
-/** One root for every session's scratch and backup dirs, so a listing and a sweep stay cheap and scoped. */
-export const scratchRoot = (): string => path.join(os.tmpdir(), "fable-replace");
+/**
+ * Who a scratch folder is for. Each field wins over the environment: `harness` over `FABLE_REPLACE_HARNESS` and the
+ * harness variables, `sessionId` over `FABLE_REPLACE_SESSION`, and `cwd` (default: this process's) names the project
+ * of a harness session's folder.
+ */
+export interface ScratchContext {
+    cwd?: string;
+    sessionId?: string;
+    harness?: Harness;
+}
+
+/** The variable each harness sets to its session id, or null when it sets none. */
+const HARNESS_SESSION_VARIABLE = {
+    claude: "CLAUDE_CODE_SESSION_ID",
+    codex: "CODEX_THREAD_ID",
+    grok: null,
+} as const satisfies Record<Harness, string | null>;
+
+/** A variable's trimmed value, or undefined when it is unset or blank. */
+const envValue = (name: string | null): string | undefined => {
+    const value = name === null ? undefined : process.env[name]?.trim();
+    return value ? value : undefined;
+};
+
+let warnedHarness: string | undefined;
+
+/** `FABLE_REPLACE_HARNESS` when it names a harness. Any other value is ignored, with one warning per value. */
+const namedHarness = (): Harness | undefined => {
+    const named = envValue("FABLE_REPLACE_HARNESS");
+    const harness = HARNESS_IDS.find((id) => id === named);
+    if (named !== undefined && harness === undefined && warnedHarness !== named) {
+        warnedHarness = named;
+        console.error(`⚠ FABLE_REPLACE_HARNESS=${named} is not one of ${HARNESS_IDS.join(", ")}; it is ignored`);
+    }
+
+    return harness;
+};
+
+/**
+ * The harness session this process edits for, or null when its harness or its session id is unknown. The harness:
+ * `ctx.harness`, else `FABLE_REPLACE_HARNESS`, else the first harness whose session variable is set. The session:
+ * `ctx.sessionId`, else `FABLE_REPLACE_SESSION`, else that harness's variable. `FABLE_REPLACE_SESSION` alone names no
+ * harness, so it keeps the folder under the shared root.
+ */
+export const scratchHarnessSession = (ctx: ScratchContext = {}): { harness: Harness; sessionId: string } | null => {
+    const harness =
+        ctx.harness ?? namedHarness() ?? HARNESS_IDS.find((id) => envValue(HARNESS_SESSION_VARIABLE[id]) !== undefined);
+    if (harness === undefined) {
+        return null;
+    }
+
+    const sessionId =
+        ctx.sessionId?.trim() || envValue("FABLE_REPLACE_SESSION") || envValue(HARNESS_SESSION_VARIABLE[harness]);
+    return sessionId ? { harness, sessionId } : null;
+};
+
+/**
+ * The shared root: it holds a session's folder when no harness session is known, and `all-sessions` sweeps it.
+ * `FABLE_REPLACE_SCRATCH_ROOT` replaces it. The context does not change it; it is accepted so every scratch function
+ * takes the same one.
+ */
+export const scratchRoot = (_ctx?: ScratchContext): string => {
+    const named = envValue("FABLE_REPLACE_SCRATCH_ROOT");
+    return named === undefined ? path.join(os.tmpdir(), "fable-replace") : path.resolve(named);
+};
 
 const SESSION_KEY_UNSAFE = /[^A-Za-z0-9._-]/g;
 const SESSION_KEY_MAX = 80;
@@ -238,14 +380,18 @@ const SESSION_KEY_VERBATIM = new RegExp(`^(?!\\.)[A-Za-z0-9._-]{1,${SESSION_KEY_
 const SESSION_KEY_PREFIX_MAX = 48;
 
 /**
- * The session this process edits for. A worker inherits its lead's TMPDIR, so every session on the machine shares
- * one root; the per-session folder keeps one session's prune away from another session's undo trail (2026-10-27: a
- * worker's ordinary edit pruned 50 directories under the shared root). `FABLE_REPLACE_SESSION` names it outright;
- * else the harness session id; else the parent process, which is the agent for a CLI run.
+ * The session this process edits for, as a folder name under the shared root. A worker inherits its lead's TMPDIR,
+ * so every session on the machine shares one root; the per-session folder keeps one session's prune away from another
+ * session's undo trail (2026-10-27: a worker's ordinary edit pruned 50 directories under the shared root).
+ * `ctx.sessionId` or `FABLE_REPLACE_SESSION` names it outright; else the harness session id; else the parent process,
+ * which is the agent for a CLI run.
  */
-export const scratchSessionKey = (): string => {
+export const scratchSessionKey = (ctx: ScratchContext = {}): string => {
     const named =
-        process.env.FABLE_REPLACE_SESSION || process.env.CLAUDE_CODE_SESSION_ID || process.env.CODEX_THREAD_ID;
+        ctx.sessionId?.trim() ||
+        process.env.FABLE_REPLACE_SESSION ||
+        process.env.CLAUDE_CODE_SESSION_ID ||
+        process.env.CODEX_THREAD_ID;
     const key = named && named.trim().length > 0 ? named.trim() : `ppid-${process.ppid}`;
     if (SESSION_KEY_VERBATIM.test(key)) {
         return key;
@@ -259,19 +405,47 @@ export const scratchSessionKey = (): string => {
     return `${prefix}~${digest}`;
 };
 
-/** This session's own folder under the root: the only place an ordinary run writes or prunes. */
-export const sessionScratchRoot = (): string => path.join(scratchRoot(), scratchSessionKey());
+const projects = new Map<string, string>();
+
+/** The project a harness session's folder is named after: one `git rev-parse` per folder per process. */
+const projectFor = (cwd: string): string => {
+    const dir = path.resolve(cwd);
+    const known = projects.get(dir);
+    if (known !== undefined) {
+        return known;
+    }
+
+    const project = projectOf(dir);
+    projects.set(dir, project);
+    return project;
+};
 
 /**
- * A collision-proof scratch directory under `<tmp>/fable-replace/<session>/`.
+ * This session's own folder: the only place an ordinary run writes or prunes. With `FABLE_REPLACE_SCRATCH_ROOT` set,
+ * `<that root>/<key>`. Else, with a harness session known, `/tmp/<agent dir>/<project>/<session>/fable-replace`, inside
+ * the session's scratch folder that `tools rm` cleans with the session (`hooks/session-scratch.ts`). Else
+ * `<tmp>/fable-replace/<key>`.
+ */
+export const sessionScratchRoot = (ctx: ScratchContext = {}): string => {
+    const session = envValue("FABLE_REPLACE_SCRATCH_ROOT") === undefined ? scratchHarnessSession(ctx) : null;
+    if (session === null) {
+        return path.join(scratchRoot(ctx), scratchSessionKey(ctx));
+    }
+
+    const project = projectFor(ctx.cwd ?? process.cwd());
+    return path.join(sessionScratchPath({ ...session, project }), "fable-replace");
+};
+
+/**
+ * A collision-proof scratch directory in this session's folder (`sessionScratchRoot`).
  *
  * /tmp is shared machine-wide. Two agents running similar sweeps in parallel both
  * reached for `/tmp/sweep-dry.log` and one silently overwrote the other's evidence,
  * so a log read back from disk described a different sweep entirely. Never hard-code
  * a generic /tmp path for a backupDir or a log.
  */
-export const scratchDir = (label: string): string => {
-    const root = sessionScratchRoot();
+export const scratchDir = (label: string, ctx: ScratchContext = {}): string => {
+    const root = sessionScratchRoot(ctx);
     fs.mkdirSync(root, { recursive: true });
     // mkdtemp, not a timestamp: two calls in the same millisecond must not collide.
     return fs.mkdtempSync(path.join(root, `${label}-${process.pid}-`));
@@ -334,6 +508,12 @@ const realpathOrNull = (dir: string): string | null => {
     }
 };
 
+/** `target` lies strictly inside `boundary`, both read as written. */
+const isStrictlyInside = (boundary: string, target: string): boolean => {
+    const rel = path.relative(boundary, target);
+    return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+};
+
 /** The resolved `dir` lies strictly inside the resolved `boundary`, so no link on its path leads out of it. */
 const staysInside = (dir: string, boundary: string | null): boolean => {
     const real = realpathOrNull(dir);
@@ -341,8 +521,7 @@ const staysInside = (dir: string, boundary: string | null): boolean => {
         return false;
     }
 
-    const rel = path.relative(boundary, real);
-    return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+    return isStrictlyInside(boundary, real);
 };
 
 /** Real directories only: a symlink is never listed, so a prune never descends through one or deletes behind it. */
@@ -364,9 +543,12 @@ const listDirs = (dir: string, filter: (name: string) => boolean): string[] => {
 /**
  * Remove stale scratch dirs. Age-only (never count- or size-based, so a live run's young
  * dir is safe and two prunes at once are benign), manifest-gated, capped per run, and the
- * dirs in `keep` are never touched. Only the temp dir this process writes to is swept
- * (`os.tmpdir()`, so TMPDIR decides), never another root. Legacy `fable-replace-*`
- * entries directly under it fall under the same gate.
+ * dirs in `keep` are never touched. An ordinary run sweeps this session's own folder
+ * (`sessionScratchRoot(scratch)`), never through a link. `all-sessions` sweeps the shared
+ * root (`scratchRoot`: `FABLE_REPLACE_SCRATCH_ROOT`, else `os.tmpdir()`, so TMPDIR decides),
+ * the legacy `fable-replace-*` entries directly under the temp dir, and this session's own
+ * folder when it lies outside that root. Another harness session's folder under
+ * /tmp/<agent dir> is never swept: `tools rm` cleans it with its session.
  *
  * On a machine that reboots often this rarely fires: a reboot empties the temp folder
  * first. It pays off on machines that stay up for weeks.
@@ -377,28 +559,35 @@ export const pruneScratch = ({
     keep = [],
     now = Date.now(),
     scope = "session",
-}: PruneParams = {}): PruneReport => {
-    // One root only: the temp dir THIS process writes to. A launchd job with no TMPDIR has
+    scratch = {},
+}: PruneParams & { scratch?: ScratchContext } = {}): PruneReport => {
+    // One shared root only: the one THIS process writes to. A launchd job with no TMPDIR has
     // os.tmpdir() === /tmp and prunes /tmp itself. Sweeping /tmp from every process as well
     // made a TMPDIR-redirected run (the selftest, a sandbox) delete backups it never wrote.
-    // Within that root, an ordinary run sweeps only its own session's folder; the whole root
-    // (every session's folder, plus the layouts before sessions) needs `all-sessions`.
+    // An ordinary run sweeps only its own session's folder; the whole shared root (every
+    // session's folder, plus the layouts before sessions) needs `all-sessions`.
     const temp = os.tmpdir();
-    const root = path.join(temp, "fable-replace");
-    const sessionRoot = sessionScratchRoot();
-    // Each candidate carries the folder it must resolve inside. A symlinked session folder is never descended
-    // into, and a candidate whose real path leaves its root (a link anywhere above it) is refused, so a sweep
-    // cannot reach a link's target and delete what lives there.
+    const root = scratchRoot(scratch);
+    const sessionRoot = sessionScratchRoot(scratch);
+    // Each candidate carries the folder it must resolve inside. A symlinked session folder is never listed, and a
+    // candidate whose real path leaves its boundary (a link anywhere above it) is refused, so a sweep cannot reach
+    // a link's target and delete what lives there.
     const realRoot = realpathOrNull(root);
     const inRoot = (dir: string) => ({ dir, boundary: realRoot });
+    const realSession = isRealDir(sessionRoot) ? realpathOrNull(sessionRoot) : null;
+    const ownSession = () =>
+        realSession === null ? [] : listDirs(sessionRoot, () => true).map((dir) => ({ dir, boundary: realSession }));
+    // A harness session's folder lies under /tmp/<agent dir>, outside the shared root.
+    const sessionOutsideRoot = !isStrictlyInside(root, sessionRoot);
     const candidates =
         scope === "session"
-            ? listDirs(sessionRoot, () => true).map(inRoot)
+            ? ownSession()
             : [
                   ...listDirs(root, () => true)
                       .filter(isRealDir)
                       .flatMap((dir) => [dir, ...listDirs(dir, () => true)])
                       .map(inRoot),
+                  ...(sessionOutsideRoot ? ownSession() : []),
                   ...listDirs(temp, (name) => name.startsWith(LEGACY_PREFIX)).map((dir) => ({
                       dir,
                       boundary: realpathOrNull(temp),
@@ -410,7 +599,7 @@ export const pruneScratch = ({
         scanned: candidates.length,
         removed: 0,
         bytes: 0,
-        roots: [scope === "session" ? sessionRoot : root],
+        roots: scope === "session" ? [sessionRoot] : sessionOutsideRoot ? [root, sessionRoot] : [root],
     };
     for (const { dir, boundary } of candidates) {
         if (report.removed >= maxRemovals) {
