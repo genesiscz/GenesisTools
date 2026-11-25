@@ -831,36 +831,25 @@ public struct LiveWidgetView: View {
                 } else if card.kind == "decision" && card.needsAnswer {
                     // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
-                    if staged(card) {
-                        let sending = model.sendingDecisionIDs.contains(card.sourceId)
-                        let phase = model.stagePhase(card.sourceId, draftedAt: card.draftedAt)
-                        // A set's Send names the ticked letters: "Send a + b + c".
-                        let letters = model.shownStagedOption(card.sourceId, stored: card.draftOption)
-                        let namesSet = card.takesSeveral && letters != nil
-                        Button(phase.sendTitle(letters, multiple: card.takesSeveral)) {
-                            model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
-                        }
-                        .buttonStyle(.genPrimary())
-                        .disabled(sending || phase.onItsWay)
-                        .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
-                                                 : "Sends this staged decision alone, without the others.")
-                        Button("Unstage") { model.unstage(card) }
-                            .disabled(sending)
-                            .instantTooltip(card.draft == nil ? "Clears the staged pick."
-                                : "Clears the staged pick and puts the note back into the answer field.")
-                        // Every staged decision at once, this one included, from the card being read (Martin,
-                        // 2026-10-28). Only while another one is staged too: alone it is the same as Send now.
-                        let others = model.stagedForLeave.filter { $0.sourceId != card.sourceId }
-                        if !others.isEmpty {
+                    // Every staged decision at once, this one included, from the card being read (Martin,
+                    // 2026-10-28), while another one is staged too.
+                    let others = model.stagedForLeave.filter { $0.sourceId != card.sourceId }
+                    WidgetStagedActions(
+                        letters: model.shownStagedOption(card.sourceId, stored: card.draftOption),
+                        takesSeveral: card.takesSeveral, recommendedSet: nil,
+                        phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
+                        staged: staged(card), busy: model.sendingDecisionIDs.contains(card.sourceId),
+                        othersStaged: others.count, placement: .footer,
+                        identifier: "widget.card.send." + card.sourceId,
+                        sendAllIdentifier: "widget.card.sendAll." + card.sourceId,
+                        unstageTooltip: card.draft == nil ? "Clears the staged pick."
+                            : "Clears the staged pick and puts the note back into the answer field.",
+                        send: { model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)]) },
+                        unstage: { model.unstage(card) },
+                        sendAll: {
                             let all = [WidgetModel.inboxItem(card)] + others
-                            Button("Send now (all \(all.count))") {
-                                model.sendStaged(all.map(\.sourceId), known: all)
-                            }
-                            .disabled(sending)
-                            .accessibilityIdentifier("widget.card.sendAll." + card.sourceId)
-                            .instantTooltip("Sends this decision and the \(Plural.count(others.count, "other staged decision")) now, one message per session.")
-                        }
-                    }
+                            model.sendStaged(all.map(\.sourceId), known: all)
+                        })
                 } else if card.kind == "decision" && card.status == "answered" {
                     // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
                     let sending = model.sendingDecisionIDs.contains(card.sourceId)

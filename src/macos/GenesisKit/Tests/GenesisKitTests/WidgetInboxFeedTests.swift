@@ -450,7 +450,7 @@ final class WidgetInboxFeedTests: XCTestCase {
         WidgetInboxRender.settle()
         let drawn = Self.recognized(host)
         XCTAssertTrue(drawn.contains { $0.text.contains("Crate") }, "the entry is open: \(drawn.map(\.text))")
-        XCTExpectFailure("P1: the open hover entry has no Send and no Unstage for a one-letter pick") {
+        do {
             guard let unstage = drawn.first(where: { $0.text == "Unstage" }) else {
                 return XCTFail("no Unstage in \(drawn.map(\.text))")
             }

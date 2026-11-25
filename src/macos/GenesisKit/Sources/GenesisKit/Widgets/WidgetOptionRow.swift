@@ -264,39 +264,126 @@ public struct WidgetRecommendedPickButton: View {
     }
 }
 
-/// The Send of a decision that takes any set of its options, where its options are listed with no Send of their own
-/// (the inbox of every session, a staged decision opened in the review list): "Send a + c" once a letter is ticked,
-/// and the recommended set in one click while it is not the ticked one. Values in, actions out, so the row that draws
-/// it does not observe the model for it.
-struct WidgetSetSendBar: View {
-    /// The ticked letters ("ac"), nil while none is.
-    let letters: String?
-    /// The set the agent recommends (`DecisionAnswering.recommendedSet`), nil when it names one option or none.
-    let recommended: String?
-    /// Where the set's send is (`WidgetModel.stagePhase`): while a send took it, Send says so and cannot send again.
-    let phase: WidgetStagePhase
-    let identifier: String
-    let pick: (String) -> Void
-    let send: () -> Void
+/// The staged state's own actions of one decision, on every surface that draws one: Send (its title says where the send
+/// is), Unstage, "Send now (all N)" while another decision is staged too, and for a decision that takes any set of its
+/// options the recommended set in one click. Send and Unstage show while a pick or a note is staged, for a set and for
+/// one letter. Values in, actions out, so a row that draws them observes no model for them; a nil closure hides its
+/// button.
+public struct WidgetStagedActions: View {
+    /// `row`: its own line under the options, which wraps at a narrow width, the recommended pick first and Send last.
+    /// `footer`: Send, Unstage and Send now (all N) for a footer's row, which gives them its own style and font.
+    public enum Placement: Sendable { case row, footer }
 
-    var body: some View {
-        let offersRecommended = recommended.map { $0 != letters } ?? false
-        if letters != nil || offersRecommended {
-            HStack(spacing: 8) {
-                if offersRecommended, let recommended {
-                    WidgetRecommendedPickButton(letters: recommended) { pick(recommended) }
+    let letters: String?
+    let takesSeveral: Bool
+    let recommendedSet: String?
+    let phase: WidgetStagePhase
+    let staged: Bool
+    let busy: Bool
+    let othersStaged: Int
+    let placement: Placement
+    let sendSymbol: String?
+    let identifier: String
+    let sendAllIdentifier: String?
+    let unstageIdentifier: String?
+    let unstageTooltip: String
+    let send: () -> Void
+    let unstage: (() -> Void)?
+    let sendAll: (() -> Void)?
+    let pickRecommended: ((String) -> Void)?
+
+    /// `letters`: the staged pick ("ac"), nil while none is. `staged`: a pick or a note waits. `busy`: this decision's
+    /// send runs. `othersStaged`: the other decisions staged now, for Send now (all N).
+    public init(letters: String?, takesSeveral: Bool, recommendedSet: String?, phase: WidgetStagePhase,
+                staged: Bool, busy: Bool, othersStaged: Int = 0, placement: Placement,
+                sendSymbol: String? = nil, identifier: String, sendAllIdentifier: String? = nil,
+                unstageIdentifier: String? = nil, unstageTooltip: String = "Clears the staged pick.",
+                send: @escaping () -> Void, unstage: (() -> Void)? = nil, sendAll: (() -> Void)? = nil,
+                pickRecommended: ((String) -> Void)? = nil) {
+        self.letters = letters
+        self.takesSeveral = takesSeveral
+        self.recommendedSet = recommendedSet
+        self.phase = phase
+        self.staged = staged
+        self.busy = busy
+        self.othersStaged = othersStaged
+        self.placement = placement
+        self.sendSymbol = sendSymbol
+        self.identifier = identifier
+        self.sendAllIdentifier = sendAllIdentifier
+        self.unstageIdentifier = unstageIdentifier
+        self.unstageTooltip = unstageTooltip
+        self.send = send
+        self.unstage = unstage
+        self.sendAll = sendAll
+        self.pickRecommended = pickRecommended
+    }
+
+    public var body: some View {
+        switch placement {
+        case .row:
+            if staged || offersRecommended {
+                WrapLayout(spacing: 8, lineSpacing: 6) {
+                    if offersRecommended, let recommendedSet, let pickRecommended {
+                        WidgetRecommendedPickButton(letters: recommendedSet) { pickRecommended(recommendedSet) }
+                    }
+                    if staged {
+                        unstageButton
+                        sendAllButton
+                        sendButton
+                    }
                 }
-                Spacer(minLength: 0)
-                if let letters {
-                    Button(phase.sendTitle(letters, multiple: true), action: send)
-                        .buttonStyle(.genPrimary())
-                        .font(.system(size: 11.5))
-                        .disabled(phase.onItsWay)
-                        .instantTooltip(DecisionAnswering.setSendTooltip(letters))
-                        .accessibilityIdentifier(identifier)
-                }
+                .buttonStyle(.genHover()).font(.system(size: 11.5))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .footer:
+            if staged {
+                sendButton
+                unstageButton
+                sendAllButton
             }
         }
+    }
+
+    private var offersRecommended: Bool {
+        pickRecommended != nil && (recommendedSet.map { $0 != letters } ?? false)
+    }
+
+    private var sendButton: some View {
+        let title = phase.sendTitle(letters, multiple: takesSeveral)
+        return Button(action: send) {
+            if let sendSymbol { Label(title, systemImage: sendSymbol) } else { Text(title) }
+        }
+        .buttonStyle(.genPrimary())
+        .disabled(busy || phase.onItsWay)
+        .instantTooltip(takesSeveral && letters != nil ? DecisionAnswering.setSendTooltip(letters)
+                                                       : "Sends this staged decision alone, without the others.")
+        .accessibilityIdentifier(identifier)
+    }
+
+    @ViewBuilder private var unstageButton: some View {
+        if let unstage {
+            Button("Unstage", action: unstage)
+                .disabled(busy)
+                .instantTooltip(unstageTooltip)
+                .identifier(unstageIdentifier)
+        }
+    }
+
+    @ViewBuilder private var sendAllButton: some View {
+        // Only while another decision is staged too: alone it is the same as Send.
+        if othersStaged > 0, let sendAll {
+            Button("Send now (all \(othersStaged + 1))", action: sendAll)
+                .disabled(busy)
+                .identifier(sendAllIdentifier)
+                .instantTooltip("Sends this decision and the \(Plural.count(othersStaged, "other staged decision")) now, one message per session.")
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder func identifier(_ identifier: String?) -> some View {
+        if let identifier { accessibilityIdentifier(identifier) } else { self }
     }
 }
 
