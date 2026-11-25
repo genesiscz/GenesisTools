@@ -307,8 +307,9 @@
                 "answeredVia": "agent",
                 "answeredBy": {
                     "harness": "codex",
-                    "session": "0a1b2c3d4e5f",
-                    "model": "gpt-6.1-sol"
+                    "session": "fixture-personal",
+                    "model": "gpt-6.1-sol",
+                    "sessionKey": "local:codex:fixture-personal:"
                 }
             }
         ]
@@ -465,8 +466,9 @@
             "answeredVia": "agent",
             "answeredBy": {
                 "harness": "codex",
-                "session": "0a1b2c3d4e5f",
-                "model": "gpt-6.1-sol"
+                "session": "fixture-personal",
+                "model": "gpt-6.1-sol",
+                "sessionKey": "local:codex:fixture-personal:"
             }
         },
         {

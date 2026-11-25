@@ -165,6 +165,11 @@ public final class WidgetModel: ObservableObject {
     public var stagedLeftInPopup: (([WidgetInboxItem]) -> Void)?
     private var stagedStartChecked = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
+    /// The session of the agent that stored a decision's answer, when the widget lists it (`WidgetAnsweredBy.sessionKey`):
+    /// the link on that agent's name opens it.
+    public func answererSession(_ agent: WidgetAnsweredBy?) -> WidgetSession? {
+        agent?.sessionKey.flatMap(session(forKey:))
+    }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
     @Published public var draggingSide = false

@@ -805,7 +805,8 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// What `item`'s card draws of this model, as values: the card compares them and skips a publish that changed none.
-    func cardState(for item: InboxItem, in session: InboxSession, hubSession: HubSession?) -> InboxCardState {
+    func cardState(for item: InboxItem, in session: InboxSession, hubSession: HubSession?,
+                   answerer: HubSession? = nil) -> InboxCardState {
         InboxCardState(
             letters: letters(item),
             heldDismiss: staging.held.contains(item.id),
@@ -817,6 +818,7 @@ final class HubInboxModel: ObservableObject {
             noteAcknowledgement: noteAcknowledgements[item.id, default: 0],
             noteFocusRequest: noteFocusTarget == item.id ? noteFocusCount : nil,
             hubSession: hubSession,
+            answerer: answerer,
             keyCard: keyCardID == item.id
         )
     }
@@ -1916,7 +1918,8 @@ struct InboxMain: View {
                 } else {
                     InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
                                       keyed: keysFocused && inbox.keyCardID == item.id,
-                                      state: inbox.cardState(for: item, in: session, hubSession: hubSession(session)))
+                                      state: inbox.cardState(for: item, in: session, hubSession: hubSession(session),
+                                                             answerer: answererSession(item, in: model)))
                         .equatable()
                         .liveRow()
                 }
@@ -2300,6 +2303,9 @@ struct InboxCardState: Equatable {
     var noteFocusRequest: Int?
     /// The hub's row of the card's session, for "Open in transcript"; nil when the hub's list does not hold it.
     var hubSession: HubSession?
+    /// The hub's row of the agent that stored a closed decision's answer, for the link on its name
+    /// (`answererSession`); nil when the hub's list does not hold it.
+    var answerer: HubSession?
     /// The card the main list's keys act on, whether or not the list has the keyboard now: its controls stay live,
     /// so the keyboard can reach them (F1).
     var keyCard = false
@@ -2332,7 +2338,8 @@ struct InboxDecisionCard: View, Equatable {
         self.item = item
         self.keyed = keyed
         self.state = state ?? inbox.cardState(for: item, in: session,
-                                              hubSession: session.sessionId.flatMap(model.session(id:)))
+                                              hubSession: session.sessionId.flatMap(model.session(id:)),
+                                              answerer: answererSession(item, in: model))
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -2536,7 +2543,9 @@ struct InboxDecisionCard: View, Equatable {
     /// A closed decision's answer in its own words, under the picked options: who recorded it, then the text (F7).
     private func answerBlock(_ answer: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(WidgetAlerts.answeredViaText(item.answeredVia, by: item.answeredBy))
+            // The agent's name opens its session in the hub, as "Open in transcript" opens the card's own.
+            WidgetAnsweredByLine(via: item.answeredVia, agent: item.answeredBy,
+                                 open: state.answerer.map { found in { model.openSession(found) } })
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(ReviewPalette.dim)
             Text(inlineMarkdown(answer))
@@ -2959,6 +2968,12 @@ extension HubModel {
     func session(id: String) -> HubSession? {
         sessions.first { $0.sessionId == id }
     }
+}
+
+/// The hub's row of the agent that stored a closed decision's answer (`InboxItem.answeredBy`), for the link on its name.
+func answererSession(_ item: InboxItem, in model: HubModel) -> HubSession? {
+    guard !item.isOpen, let id = item.answeredBy?.session else { return nil }
+    return model.session(id: id)
 }
 
 /// A HubSession for the terminal and resume actions: the row from the hub's list when it has one,

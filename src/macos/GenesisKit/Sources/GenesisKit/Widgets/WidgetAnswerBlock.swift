@@ -37,6 +37,8 @@ struct WidgetAnswerBlock: View, Equatable {
     let clampLines: Int
     var label = "Answer"
     var earlier = false
+    /// A decision's who-line in place of `label`: the agent's words open its session (`WidgetAnsweredByLine`).
+    var answerer: WidgetAnsweredByLine? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -50,7 +52,10 @@ struct WidgetAnswerBlock: View, Equatable {
             }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text(label).font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
+                    Group {
+                        if let answerer { answerer } else { Text(label) }
+                    }
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
                     if more {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel(label == "Message" ? "Loading the full message" : "Loading the full answer")
