@@ -306,9 +306,13 @@ process.on("exit", () => {
         scratch: { cwd: value("--cwd") },
     });
     if (pruned.removed > 0) {
-        console.log(
-            `pruned ${pruned.removed} stale scratch dir(s) older than 12 h under ${pruned.roots.join(" and ")}`
-        );
+        // In --json mode the report must stay the last line a caller reads, also where stdout and stderr merge
+        // (a code-mode script's shell): the journal keeps the prune, so the line is printed only for a person.
+        if (!jsonMode) {
+            console.log(
+                `pruned ${pruned.removed} stale scratch dir(s) older than 12 h under ${pruned.roots.join(" and ")}`
+            );
+        }
         appendJournal({
             ...entry,
             kind: "prune",
