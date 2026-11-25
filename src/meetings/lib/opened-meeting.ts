@@ -33,7 +33,7 @@ import { personStays, presenceOf, rosterPresence, speechAfter } from "./person-s
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { missingProjectWarning } from "./project";
 import { loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
-import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
+import { recordSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
@@ -285,7 +285,7 @@ export class OpenedMeeting {
             withPreservedSourceAudio(
                 this.current,
                 await source.evidence(sourceMeetingId).catch((error: unknown) => {
-                    if (!preservedSourceAudio(this.current)) {
+                    if (!recordSourceAudio(this.current)) {
                         throw error;
                     }
                     log.debug({ error, meeting: this.current.id }, "source evidence unavailable; using owned audio");
@@ -612,7 +612,7 @@ export class OpenedMeeting {
             throw unmerged;
         }
 
-        const owned = preservedSourceAudio(this.current);
+        const owned = recordSourceAudio(this.current);
         if (owned) {
             return owned.path;
         }
@@ -631,7 +631,7 @@ export class OpenedMeeting {
      * the sample; else (a span over the time between recordings, or one recording) the record's one file.
      */
     async audioAt(fromSec: number, toSec = fromSec): Promise<AudioSpan> {
-        if (!preservedSourceAudio(this.current)?.pieces) {
+        if (!recordSourceAudio(this.current)?.pieces) {
             return { path: await this.audioPath(), offsetMs: 0 };
         }
 

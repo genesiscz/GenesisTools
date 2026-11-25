@@ -25,7 +25,7 @@ import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
 import type { SuggestionReads } from "../project-suggestions";
 import { missingMeetingMessage } from "../shared";
-import { preservedSourceAudio } from "../source-audio";
+import { recordSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
 import { LineSpeakers } from "../speaker-evidence";
@@ -583,7 +583,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                         });
                         // The owned copy first, as playback reads it: the provider may have removed its file.
                         const audioPath =
-                            preservedSourceAudio(current)?.path ??
+                            recordSourceAudio(current)?.path ??
                             (await linked.source.evidence(linked.sourceMeetingId))?.audioPath;
                         if (!audioPath) {
                             throw new Error("This meeting has no source audio for word timing generation");

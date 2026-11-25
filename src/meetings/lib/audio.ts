@@ -10,7 +10,7 @@ import type { MeetingEvidence } from "@genesiscz/utils/meetings/sources";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
 import { PLAYERS, pickPlayer } from "./players";
-import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
+import { recordSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { meetingSource, sourceRefOf } from "./sources";
 import type { ToneSound } from "./tone-sound";
 
@@ -25,7 +25,7 @@ export interface MeetingAudio {
 
 /** The recording of the first linked source that keeps one on this Mac. Throws a message ready to print. */
 export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
-    const owned = preservedSourceAudio(record);
+    const owned = recordSourceAudio(record);
     if (owned) {
         return owned.path;
     }
@@ -45,7 +45,7 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
         throw new MeetingsStateError("no-transcript-source", `${record.id} has no linked source with audio.`);
     }
 
-    const owned = preservedSourceAudio(record, ref) !== undefined;
+    const owned = recordSourceAudio(record) !== undefined;
     const evidence = withPreservedSourceAudio(record, await sourceEvidence({ record, ref, owned }));
 
     if (!evidence?.audioPath) {

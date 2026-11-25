@@ -13,7 +13,7 @@ import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
 import type { OpenedMeeting } from "./opened-meeting";
 import { ALIGN_MATCH_SEC, ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
-import { preservedSourceAudio } from "./source-audio";
+import { recordSourceAudio } from "./source-audio";
 import { isMeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-sound");
@@ -254,7 +254,10 @@ function sourceChannels(layout: ChannelLayout): Record<Seat, 0 | 1> {
 /** The measured correction of one recorder piece: its recording's entry of the clock, undefined when not measured. */
 function correctionOf(clock: SoundClock | undefined, row: AudioRow): number | undefined {
     const zeroMs = audioRowZeroMs(row);
-    const recording = (clock?.later ?? []).filter((entry) => Date.parse(entry.from) <= zeroMs).at(-1);
+    const recording = (clock?.later ?? [])
+        .filter((entry) => Date.parse(entry.from) <= zeroMs)
+        .sort((a, b) => Date.parse(a.from) - Date.parse(b.from))
+        .at(-1);
     const measured = (recording ?? clock)?.sources[row.source];
     return measured && measured.clear > 0 ? measured.correctionSec : undefined;
 }
@@ -503,7 +506,7 @@ async function soundSource(opened: OpenedMeeting): Promise<SoundInputs["source"]
         return undefined;
     }
 
-    const pieces = preservedSourceAudio(opened.record)?.pieces;
+    const pieces = recordSourceAudio(opened.record)?.pieces;
     return {
         ...file,
         layout: opened.record.evidence?.channels?.layout ?? "unknown",
@@ -540,7 +543,7 @@ export async function listSoundTracks(opened: OpenedMeeting): Promise<ListedSoun
     const file = await sourceSoundFile(opened);
     const tracks: ListedSoundTrack[] = [];
     if (file) {
-        const holder = preservedSourceAudio(opened.record)?.path === file.path ? "record" : file.source;
+        const holder = recordSourceAudio(opened.record)?.path === file.path ? "record" : file.source;
         for (const kind of SOURCE_TRACK_KINDS) {
             tracks.push({ kind, holder, clock: "source" });
         }
