@@ -30,7 +30,10 @@ struct DisplayRowsView: View {
                 }
             }
             ForEach(plan.switches, id: \.self) { atUs in
-                SwitchLineHandle(model: model, scale: scale, atUs: atUs, height: CGFloat(rows.count) * Self.rowHeight)
+                if let outputUs = TimelineMap.outputTime(ofSource: atUs, in: model.project) {
+                    SwitchLineHandle(model: model, scale: scale, atUs: atUs, outputUs: outputUs,
+                                     height: CGFloat(rows.count) * Self.rowHeight)
+                }
             }
         }
         .frame(height: CGFloat(rows.count) * Self.rowHeight, alignment: .topLeading)
@@ -221,6 +224,7 @@ private struct SwitchLineHandle: View {
     @Bindable var model: EditorModel
     let scale: TimelineScale
     let atUs: Int64
+    let outputUs: Int64
     let height: CGFloat
     @State private var dx: CGFloat = 0
     @State private var dragging = false
@@ -229,7 +233,7 @@ private struct SwitchLineHandle: View {
     @State private var pending: CGFloat?
 
     var body: some View {
-        let baseX = scale.x(TimelineMap.outputTime(ofSource: atUs, in: model.project) ?? 0)
+        let baseX = scale.x(outputUs)
         let shift = dragging ? dx : pending ?? 0
         let target = TimelineMap.sourceTime(atOutput: scale.us(baseX + dx), in: model.project)
         ZStack(alignment: .top) {

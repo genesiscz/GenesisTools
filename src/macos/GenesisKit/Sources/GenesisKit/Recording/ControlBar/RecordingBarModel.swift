@@ -198,6 +198,8 @@ public final class RecordingBarModel: ObservableObject {
             report(reason, control: change.controlID)
             return false
         }
+        let previousDisplay = liveDisplay
+        if case .target = change { liveDisplay = nil }
         do {
             try await engine.apply(change)
             guard activeTake == take else { return false }
@@ -208,7 +210,10 @@ public final class RecordingBarModel: ObservableObject {
             if activeTake == take {
                 if case let RecordingEngineError.partialTargetSwitch(target, _) = error {
                     setup.target = target
+                    liveDisplay = nil
                     phase = .recording(take: take)
+                } else if case .target = change {
+                    liveDisplay = previousDisplay
                 }
                 report(error.localizedDescription, control: change.controlID)
             }

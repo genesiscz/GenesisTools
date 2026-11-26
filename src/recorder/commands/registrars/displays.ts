@@ -5,7 +5,12 @@ import type { Command } from "commander";
 
 const { log } = logger.scoped("recorder");
 
-const clock = (sec: number) => `${Math.floor(sec / 60)}:${(sec % 60).toFixed(1).padStart(4, "0")}`;
+export function displayClock(sec: number): string {
+    const tenths = Math.round(sec * 10);
+    const minutes = Math.floor(tenths / 600);
+    const seconds = ((tenths % 600) / 10).toFixed(1).padStart(4, "0");
+    return `${minutes}:${seconds}`;
+}
 
 export function register(program: Command): void {
     program
@@ -33,7 +38,7 @@ export function register(program: Command): void {
 
                 for (const display of timeline.displays) {
                     out.println(
-                        `display ${display.id}  ${display.name}: shown ${clock(display.shownSec)} in ${display.segments} segment(s), first frame at ${clock(display.firstSec)}`
+                        `display ${display.id}  ${display.name}: shown ${displayClock(display.shownSec)} in ${display.segments} segment(s), first frame at ${displayClock(display.firstSec)}`
                     );
                 }
 
@@ -41,7 +46,7 @@ export function register(program: Command): void {
 
                 for (const segment of timeline.segments) {
                     out.println(
-                        `${clock(segment.from)} to ${clock(segment.to)}  display ${segment.display}  ${segment.name}`
+                        `${displayClock(segment.from)} to ${displayClock(segment.to)}  display ${segment.display}  ${segment.name}`
                     );
                 }
             } catch (error) {

@@ -49,9 +49,15 @@ final class RecordingPickerTests: XCTestCase {
             row(3, pid: 20, app: "Dimmer", title: nil, frame: display, alpha: 0.63),
             row(4, pid: 30, app: "Notes", title: "Dimmed", frame: CGRect(x: 20, y: 20, width: 500, height: 400)),
             row(5, pid: 40, app: "GenesisTools", title: "Pick", frame: display, sharing: 0),
+            row(6, pid: 50, app: "Hidden", title: "Invisible", frame: display, alpha: 0),
         ]
         let kinds: [Int32: RecordableWindow.OwnerKind] = [10: .regular, 20: .accessory, 30: .regular, 40: .accessory]
-        let offered = RecordableWindow.offered(rows: rows, displays: [display]) { kinds[$0] ?? .none }
+        var lookups: [Int32] = []
+        let offered = RecordableWindow.offered(rows: rows, displays: [display]) {
+            lookups.append($0)
+            return kinds[$0] ?? .none
+        }
+        XCTAssertEqual(lookups, [10, 20, 30], "unselectable rows are rejected before an owner-app lookup")
         XCTAssertEqual(offered.map(\.id), [1, 4])
         XCTAssertEqual(WindowClickPicker.window(at: CGPoint(x: 100, y: 100), in: offered, excluding: [])?.title, "Dimmed")
         XCTAssertNil(WindowClickPicker.window(at: CGPoint(x: 1400, y: 880), in: offered, excluding: []),

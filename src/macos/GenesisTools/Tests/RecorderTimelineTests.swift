@@ -915,6 +915,17 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(layout.clipTop, before + DisplayRowsView.height(rows: 3), "one row per display sits over the frames")
     }
 
+    func testADisplayPlanSkipsManifestTimesOutsideTheInt64Range() throws {
+        let recording = folder.appendingPathComponent("bad-display-times")
+        try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+        try Data(#"{"version":1,"policy":"most-change","windowSec":10,"ranges":[{"fromUs":0,"toUs":4000000,"displayId":1}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("proxy.json"))
+        try Data(#"{"frames":[{"displayId":1,"atMs":1e20},{"displayId":1,"atMs":-1e20},{"displayId":1,"atMs":1250}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("recording.json"))
+        let plan = try XCTUnwrap(DisplayPlan.read(video: recording.appendingPathComponent("proxy.mp4").path))
+        XCTAssertEqual(plan.firstFrameUs, [1: 1_250_000])
+    }
+
     /// A recording of two displays: each display is its own row (a third that recording.json names but never captured
     /// is not), the switch points are the lines between them, and hiding a display or moving a switch runs the op of
     /// the same name in `tools recorder apply` (the REPL's hideDisplay / moveDisplaySwitch) as one undo step each.

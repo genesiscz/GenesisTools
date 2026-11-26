@@ -42,6 +42,37 @@ final class WidgetSessionEngineTests: XCTestCase {
         WidgetSessionEngine(makeController: pipe.makeController, showsBorder: { border })
     }
 
+    func testFollowReportsClearWhenTheTargetChangesOrTheNewSegmentHasNoDisplay() async throws {
+        let pipe = WidgetSessionPipe()
+        let engine = WidgetSessionEngine(makeController: pipe.makeController, showsBorder: { true },
+                                         connectedDisplay: { id, name in
+            guard id == 51 else { return nil }
+            return RecordingDisplay(index: 0, name: name, isPrimary: true, width: 1000, height: 800)
+        })
+        try await engine.start(.init(target: .followDisplay), excludeWindowIDs: [])
+        pipe.receive?([#"{"event":"state","state":"recording","target":{"kind":"display","follow":true},"display":{"id":51,"name":"Main"}}"#])
+        pipe.receive?([#"{"event":"state","state":"starting","target":{"kind":"display","screenIndex":1}}"#])
+        pipe.receive?([#"{"event":"state","state":"starting","target":{"kind":"display","follow":true}}"#])
+        pipe.receive?([#"{"event":"discarded"}"#])
+        var reports: [RecordingDisplay?] = []
+        let finished = expectation(description: "events through discard")
+        let reader = Task {
+            for await event in engine.events {
+                if case let .liveDisplay(display) = event.value { reports.append(display) }
+                if event.value == .discarded {
+                    finished.fulfill()
+                    return
+                }
+            }
+        }
+        await fulfillment(of: [finished], timeout: 2)
+        reader.cancel()
+        XCTAssertEqual(reports.count, 3)
+        XCTAssertEqual(reports[0]?.name, "Main")
+        XCTAssertNil(reports[1])
+        XCTAssertNil(reports[2])
+    }
+
     func testStartUsesTheDraftRatesBorderAndExcludedWindows() async throws {
         let pipe = WidgetSessionPipe()
         let engine = makeEngine(pipe, border: false)

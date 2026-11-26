@@ -71,9 +71,9 @@
             "reason": null
         },
         {
-            "name": "a see-through Dock app window over a whole display",
-            "window": { "app": "Tinter", "title": "Tint", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 0.9, "sharingState": 1, "ownerKind": "regular" },
-            "reason": "overlay"
+            "name": "a titled Dock app window in full screen with reduced opacity",
+            "window": { "app": "Browser", "title": "Docs", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 0.98, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
         },
         {
             "name": "a see-through window that leaves the display visible",

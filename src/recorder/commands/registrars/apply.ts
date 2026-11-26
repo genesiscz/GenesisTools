@@ -42,6 +42,7 @@ export function register(program: Command): void {
                 const list: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
                 const displayOps = list.filter(isDisplayOp).map((op) => displayOpSchema.parse(op));
                 const rest = list.filter((op) => !isDisplayOp(op));
+                const ops = rest.length > 0 ? parseEditOps(rest) : [];
                 const displays =
                     displayOps.length > 0
                         ? (await applyDisplayOps(await displayFramesFolder(value, "change"), displayOps)).displays
@@ -53,7 +54,6 @@ export function register(program: Command): void {
                     return;
                 }
 
-                const ops = parseEditOps(rest);
                 const edited = await applyEdit(value, ops);
                 // A normalize op also answers the loudness it measured, which the editor shows beside its button.
                 out.result({
