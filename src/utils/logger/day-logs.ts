@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { env } from "@genesiscz/utils/env";
 import { storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -39,7 +40,7 @@ export const DAY_LOG_FILE = new RegExp(
 );
 
 export function dayLogsDir(): string {
-    return genesisToolsDir("logs");
+    return env.log.getDirectory() ?? genesisToolsDir("logs");
 }
 
 /**

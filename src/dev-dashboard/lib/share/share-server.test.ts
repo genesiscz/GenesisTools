@@ -25,6 +25,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { HealthSchema, PUBLISH_API } from "@genesiscz/utils/publish/api";
+import { clientAuditDir, readAudit } from "@genesiscz/utils/publish/audit";
 import { startPublishServer } from "@genesiscz/utils/publish/server";
 import { createSystemdInstaller } from "@genesiscz/utils/publish/service/systemd";
 import { installSnapshot } from "@genesiscz/utils/publish/snapshot-store";
@@ -518,6 +519,24 @@ describe("published note snapshots", () => {
                 `dev-dashboard share-server devices --revoke ${previous.transport.deviceId}`
             );
             expect((await server.context.devices.list()).map(({ id }) => id)).toContain(previous.transport.deviceId);
+            const audit = await readAudit(clientAuditDir());
+            expect(audit.map(({ action, target, status }) => [action, target, status])).toEqual([
+                ["pair", "remote", 200],
+                ["token-read", "remote", 200],
+                ["re-pair", "remote", 200],
+                ["token-read", "remote", 200],
+                ["token-check", "remote", 200],
+            ]);
+            expect(audit[0].deviceId).toBe(previous.transport.deviceId);
+            expect(audit[2].deviceId).toBe(target.transport.deviceId);
+            await server.context.devices.revoke(target.transport.deviceId);
+            const rows = await collectShareServerStatus();
+            expect(
+                rows.find((row) => row.label === "Last pairing attempt" && row.target === "remote")?.detail
+            ).toContain("HTTP 200");
+            expect(
+                rows.find((row) => row.label === "Last failed token check" && row.target === "remote")?.detail
+            ).toContain("HTTP 401");
         } finally {
             printed.mockRestore();
             process.exitCode = exitCode;

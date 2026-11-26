@@ -53,10 +53,10 @@ describe("publish targets", () => {
     });
 
     test("allows plaintext pairing only on a private address", () => {
-        const make = (url: string) =>
+        const make = (url: string, publicBase = "https://share.example.com") =>
             PublishTargetSchema.safeParse({
                 name: "remote",
-                publicBase: "https://share.example.com",
+                publicBase,
                 transport: {
                     kind: "paired",
                     url,
@@ -66,6 +66,7 @@ describe("publish targets", () => {
             });
         expect(make("http://10.0.0.5").success).toBe(true);
         expect(make("http://share.example.com").success).toBe(false);
+        expect(make("https://share.example.com", "http://share.example.com").success).toBe(false);
         expect(make("not an origin").success).toBe(false);
         expect(make("https://share.example.com").success).toBe(true);
     });

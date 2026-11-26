@@ -14,6 +14,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { ADMIN_API, PUBLISH_API, PUBLISH_SERVER_HEADER, PUBLISH_SERVER_ID } from "./api";
+import { type AuditRecord, clientAddress, recordAudit } from "./audit";
 import { API_SEGMENT, isSnapshotId, KIND_ID_RE, originOf } from "./ids";
 import type { KindServer } from "./kind";
 import { installSnapshot, listSnapshotIds, migrateFlatDataDir, removeSnapshot } from "./snapshot-store";
@@ -25,6 +26,49 @@ export const DEVICES_FILE = "devices.json";
 export const DEVICE_TOKEN_PREFIX = "gtshare_";
 export const DEFAULT_MIN_FREE_BYTES = 2 * 1024 ** 3;
 const PAIR_BODY_BYTES = 4096;
+const PAIR_WINDOW_MS = 10 * 60_000;
+const PAIR_ATTEMPTS = 5;
+const PAIR_ADDRESS_LIMIT = 10_000;
+
+interface RequestTrace {
+    address?: string;
+    device?: { id: string; name: string };
+    token?: string;
+    sensitive: string[];
+}
+
+class PairRateLimit {
+    private readonly entries = new Map<string, number[]>();
+    private reapAt = 0;
+
+    allow(address: string | undefined): boolean {
+        const key = address ?? "unknown";
+        const now = Date.now();
+        const cutoff = now - PAIR_WINDOW_MS;
+        if (now >= this.reapAt) {
+            for (const [entry, times] of this.entries) {
+                if ((times.at(-1) ?? 0) <= cutoff) {
+                    this.entries.delete(entry);
+                }
+            }
+
+            this.reapAt = now + PAIR_WINDOW_MS;
+        }
+
+        const previous = this.entries.get(key);
+        if (!previous && this.entries.size >= PAIR_ADDRESS_LIMIT) {
+            return false;
+        }
+
+        const recent = previous?.filter((at) => at > cutoff) ?? [];
+        if (recent.length >= PAIR_ATTEMPTS) {
+            return false;
+        }
+
+        this.entries.set(key, [...recent, now]);
+        return true;
+    }
+}
 const ADMIN_DEVICE_RE = /^\/admin\/devices\/([^/]+)$/;
 
 export interface PublishServerOptions {
@@ -44,6 +88,8 @@ export interface PublishServerContext {
     origin: string;
     devices: DeviceStore;
     minFreeBytes: number;
+    stateDir: string;
+    pairRateLimit: PairRateLimit;
 }
 
 export function parsePublicOrigin(publicBase: string, kindIds: readonly string[]): string {
@@ -111,16 +157,20 @@ export function createPublishServerContext(options: PublishServerOptions): Publi
         origin: parsePublicOrigin(options.publicBase, [...kinds.keys()]),
         devices: new DeviceStore({ file: join(options.stateDir, DEVICES_FILE), tokenPrefix: DEVICE_TOKEN_PREFIX }),
         minFreeBytes: options.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES,
+        stateDir: options.stateDir,
+        pairRateLimit: new PairRateLimit(),
     };
 }
 
 function respond(status: number, body: unknown): Response {
     const text = typeof body === "string";
-    return new Response(text ? body : SafeJSON.stringify(body), {
+    const content = text ? body : SafeJSON.stringify(body);
+    return new Response(content, {
         status,
         headers: {
             "Content-Type": text ? "text/plain; charset=utf-8" : "application/json",
             "Cache-Control": "no-store",
+            "Content-Length": String(Buffer.byteLength(content)),
         },
     });
 }
@@ -138,7 +188,7 @@ function decodedSegment(raw: string): string | null {
     }
 }
 
-async function pair(request: Request, devices: DeviceStore): Promise<Response> {
+async function pair(request: Request, devices: DeviceStore, trace: RequestTrace): Promise<Response> {
     const text = await readBoundedRequestText(request, PAIR_BODY_BYTES);
     let raw: unknown;
     try {
@@ -153,7 +203,14 @@ async function pair(request: Request, devices: DeviceStore): Promise<Response> {
         return respond(400, "code and deviceName required");
     }
 
+    const code = parsed.data.code;
+    trace.sensitive.push(code, code.replaceAll(/[^A-Za-z0-9]/g, ""));
     const result = await devices.pair(parsed.data.code, parsed.data.deviceName);
+    if (result) {
+        trace.device = { id: result.deviceId, name: parsed.data.deviceName };
+        trace.sensitive.push(result.token);
+    }
+
     return result ? respond(200, result) : respond(403, "wrong or expired pairing code");
 }
 
@@ -162,10 +219,10 @@ async function routeApi(input: {
     context: PublishServerContext;
     path: string;
     server: KindServer | undefined;
+    trace: RequestTrace;
 }): Promise<Response> {
-    const { request, context, path, server } = input;
-    const token = bearerToken(request);
-    const device = token ? await context.devices.identify(token) : null;
+    const { request, context, path, server, trace } = input;
+    const { device, token } = trace;
     if (!device || !token) {
         return respond(401, "a paired device token is required");
     }
@@ -210,7 +267,12 @@ async function routeApi(input: {
     return outcome.ok ? respond(200, { id, title: outcome.title }) : respond(outcome.status, outcome.error);
 }
 
-async function routePublic(request: Request, url: URL, context: PublishServerContext): Promise<Response> {
+async function routePublic(
+    request: Request,
+    url: URL,
+    context: PublishServerContext,
+    trace: RequestTrace
+): Promise<Response> {
     const { pathname: path } = url;
     if (path === PUBLISH_API.health) {
         return request.method === "GET"
@@ -219,13 +281,23 @@ async function routePublic(request: Request, url: URL, context: PublishServerCon
     }
 
     if (path === PUBLISH_API.pair) {
-        return request.method === "POST" ? pair(request, context.devices) : notFound();
+        if (request.method !== "POST") {
+            return notFound();
+        }
+
+        if (!context.pairRateLimit.allow(trace.address)) {
+            const limited = respond(429, "too many pairing attempts");
+            limited.headers.set("Retry-After", String(PAIR_WINDOW_MS / 1000));
+            return limited;
+        }
+
+        return pair(request, context.devices, trace);
     }
 
     const [, kindId = "", id = "", ...rest] = path.split("/");
     const server = context.kinds.get(kindId);
     if (kindId === API_SEGMENT || id === API_SEGMENT) {
-        return routeApi({ request, context, path, server });
+        return routeApi({ request, context, path, server, trace });
     }
 
     if (path === "/robots.txt" && request.method === "GET") {
@@ -248,16 +320,84 @@ async function routePublic(request: Request, url: URL, context: PublishServerCon
     return response ?? notFound();
 }
 
-async function handleRequest(request: Request, route: (url: URL) => Promise<Response>): Promise<Response> {
+async function auditedBody(
+    body: ReadableStream<Uint8Array> | null,
+    size: string | null,
+    finish: (bytes: number) => Promise<void>
+) {
+    if (!body) {
+        await finish(0);
+        return null;
+    }
+
+    if (size !== null && /^\d+$/.test(size)) {
+        await finish(Number(size));
+        return body;
+    }
+
+    const reader = body.getReader();
+    let bytes = 0;
+    let finished = false;
+    const close = async () => {
+        if (!finished) {
+            finished = true;
+            await finish(bytes);
+        }
+    };
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const item = await reader.read();
+                if (item.done) {
+                    await close();
+                    controller.close();
+                } else {
+                    bytes += item.value.byteLength;
+                    controller.enqueue(item.value);
+                }
+            } catch (err) {
+                await close();
+                controller.error(err);
+            }
+        },
+        async cancel(reason) {
+            try {
+                await reader.cancel(reason);
+            } finally {
+                await close();
+            }
+        },
+    });
+}
+
+async function handleRequest(input: {
+    request: Request;
+    context: PublishServerContext;
+    peer?: string;
+    admin?: boolean;
+    route: (url: URL, trace: RequestTrace) => Promise<Response>;
+}): Promise<Response> {
+    const { request, context } = input;
     const url = new URL(request.url);
+    const started = Date.now();
+    const clock = performance.now();
+    const token = bearerToken(request) ?? undefined;
+    const trace: RequestTrace = {
+        address: clientAddress(input.peer, request.headers.get("x-forwarded-for")),
+        sensitive: token ? [token] : [],
+        token,
+    };
     let response: Response;
     try {
-        response = await route(url);
+        if (!input.admin && token) {
+            trace.device = (await context.devices.identify(token)) ?? undefined;
+        }
+        response = await input.route(url, trace);
     } catch (err) {
         if (err instanceof RequestBodyTooLargeError) {
             response = respond(413, "too large");
         } else {
-            log.error({ err, path: url.pathname }, "publish server request failed");
+            log.error({ errorName: err instanceof Error ? err.name : undefined }, "publish server request failed");
             response = respond(500, "the request failed");
         }
     }
@@ -265,35 +405,75 @@ async function handleRequest(request: Request, route: (url: URL) => Promise<Resp
     const headers = new Headers(response.headers);
     headers.set(PUBLISH_SERVER_HEADER, PUBLISH_SERVER_ID);
     headers.set("X-Robots-Tag", "noindex, nofollow");
-    return new Response(request.method === "HEAD" ? null : response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-    });
+    headers.set("X-Content-Type-Options", "nosniff");
+    const [, segment, second, operation, snapshot] = url.pathname.split("/");
+    const kind = context.kinds.has(segment) ? segment : undefined;
+    const rawId = second === API_SEGMENT ? (operation === "snapshots" ? snapshot : undefined) : second;
+    const id = kind && rawId && isSnapshotId(rawId) ? rawId : undefined;
+    const action: AuditRecord["action"] = input.admin
+        ? "admin"
+        : url.pathname === PUBLISH_API.pair && request.method === "POST"
+          ? "pair"
+          : "request";
+    const body = await auditedBody(
+        request.method === "HEAD" ? null : response.body,
+        headers.get("content-length"),
+        (bytesOut) =>
+            recordAudit(
+                context.stateDir,
+                {
+                    time: new Date(started).toISOString(),
+                    side: "server",
+                    action,
+                    address: input.admin ? "local" : trace.address,
+                    method: request.method,
+                    path: url.pathname,
+                    kind,
+                    id,
+                    deviceId: trace.device?.id,
+                    deviceName: trace.device?.name,
+                    status: response.status,
+                    bytesOut,
+                    durationMs: performance.now() - clock,
+                    userAgent: request.headers.get("user-agent") ?? undefined,
+                },
+                { sensitive: trace.sensitive }
+            )
+    );
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
-export function handlePublishRequest(request: Request, context: PublishServerContext): Promise<Response> {
-    return handleRequest(request, (url) => routePublic(request, url, context));
+export function handlePublishRequest(
+    request: Request,
+    context: PublishServerContext,
+    peer?: string
+): Promise<Response> {
+    return handleRequest({ request, context, peer, route: (url, trace) => routePublic(request, url, context, trace) });
 }
 
 export function handleAdminRequest(request: Request, context: PublishServerContext): Promise<Response> {
-    return handleRequest(request, async ({ pathname }) => {
-        if (pathname === ADMIN_API.pairCode && request.method === "POST") {
-            return respond(200, context.devices.createPairingCode());
-        }
+    return handleRequest({
+        request,
+        context,
+        admin: true,
+        route: async ({ pathname }) => {
+            if (pathname === ADMIN_API.pairCode && request.method === "POST") {
+                return respond(200, context.devices.createPairingCode());
+            }
 
-        if (pathname === ADMIN_API.devices && request.method === "GET") {
-            const devices = await context.devices.list();
-            return respond(200, { devices: devices.map(({ tokenHash: _hash, ...device }) => device) });
-        }
+            if (pathname === ADMIN_API.devices && request.method === "GET") {
+                const devices = await context.devices.list();
+                return respond(200, { devices: devices.map(({ tokenHash: _hash, ...device }) => device) });
+            }
 
-        const match = ADMIN_DEVICE_RE.exec(pathname);
-        const id = match?.[1] && decodedSegment(match[1]);
-        if (id && request.method === "DELETE" && (await context.devices.revoke(id))) {
-            return respond(200, { revoked: id });
-        }
+            const match = ADMIN_DEVICE_RE.exec(pathname);
+            const id = match?.[1] && decodedSegment(match[1]);
+            if (id && request.method === "DELETE" && (await context.devices.revoke(id))) {
+                return respond(200, { revoked: id });
+            }
 
-        return notFound();
+            return notFound();
+        },
     });
 }
 
@@ -349,6 +529,7 @@ export async function startPublishServer(
     const context = createPublishServerContext(options);
     await mkdir(options.dataDir, { recursive: true });
     await mkdir(options.stateDir, { recursive: true, mode: 0o700 });
+    await chmod(options.stateDir, 0o700);
     const adminSocket = join(options.stateDir, ADMIN_SOCKET);
     await clearAbandonedSocket(adminSocket);
 
@@ -364,7 +545,7 @@ export async function startPublishServer(
         hostname: options.host,
         port: options.port,
         maxRequestBodySize: Math.max(...options.kinds.map(({ kind }) => kind.maxUploadBytes)),
-        fetch: (req) => handlePublishRequest(req, context),
+        fetch: (req, listener) => handlePublishRequest(req, context, listener.requestIP(req)?.address),
     });
 
     let admin: ReturnType<typeof Bun.serve> | undefined;

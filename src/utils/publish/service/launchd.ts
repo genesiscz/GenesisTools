@@ -1,14 +1,16 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@genesiscz/utils/logger";
-import type { ShareServerConfig } from "../../genesis-tools/publish/store";
 import {
-    runServiceCommand,
-    type ServiceInstaller,
-    type ServiceRunner,
-    type ServiceUnitInput,
-    writeServiceFile,
-} from "./types";
+    bootoutLaunchd,
+    installLaunchd,
+    kickstartLaunchd,
+    type LaunchdInstallOptions,
+    launchdStatus,
+    plistPath,
+    renderLaunchdPlist,
+    startLaunchd,
+} from "@genesiscz/utils/process/launchd-agent";
+import type { ShareServerConfig } from "../../genesis-tools/publish/store";
+import type { ServiceInstaller, ServiceUnitInput } from "./types";
 
 function labelFor(server: ShareServerConfig): string {
     if (server.service.manager !== "launchd") {
@@ -18,98 +20,52 @@ function labelFor(server: ShareServerConfig): string {
     return server.service.label;
 }
 
-function xml(value: string): string {
-    return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function string(value: string): string {
-    return `<string>${xml(value)}</string>`;
-}
-
-function render(input: ServiceUnitInput): string {
-    const { server, checkoutDir, bunPath, home } = input;
-    const program = [
-        bunPath,
-        join(checkoutDir, "src/dev-dashboard/index.ts"),
-        "share-server",
-        "serve",
-        "--server",
-        server.name,
-    ];
-    return [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-        '<plist version="1.0">',
-        "<dict>",
-        `  <key>Label</key>${string(labelFor(server))}`,
-        "  <key>ProgramArguments</key>",
-        "  <array>",
-        ...program.map((arg) => `    ${string(arg)}`),
-        "  </array>",
-        `  <key>WorkingDirectory</key>${string(checkoutDir)}`,
-        "  <key>EnvironmentVariables</key>",
-        "  <dict>",
-        `    <key>HOME</key>${string(home)}`,
-        `    <key>GENESIS_TOOLS_HOME</key>${string(home)}`,
-        "  </dict>",
-        "  <key>KeepAlive</key><true/>",
-        "</dict>",
-        "</plist>",
-        "",
-    ].join("\n");
-}
-
-export function createLaunchdInstaller(
-    deps: { root?: string; uid?: number; run?: ServiceRunner } = {}
-): ServiceInstaller & { readonly manager: "launchd" } {
-    const domain = `gui/${deps.uid ?? process.getuid?.() ?? 0}`;
-    const run = deps.run ?? runServiceCommand;
-    const serviceId = (server: ShareServerConfig) => `${domain}/${labelFor(server)}`;
-    const active = async (server: ShareServerConfig): Promise<boolean> => {
-        try {
-            await run(["launchctl", "print", serviceId(server)]);
-            return true;
-        } catch (err) {
-            logger.debug({ err, server: server.name }, "launchd publish service inactive");
-            return false;
-        }
+function options({ server, checkoutDir, bunPath, home }: ServiceUnitInput): LaunchdInstallOptions {
+    return {
+        label: labelFor(server),
+        command: [
+            bunPath,
+            join(checkoutDir, "src/dev-dashboard/index.ts"),
+            "share-server",
+            "serve",
+            "--server",
+            server.name,
+        ],
+        cwd: checkoutDir,
+        env: { HOME: home, GENESIS_TOOLS_HOME: home },
+        logFile: join(server.stateDir, "service.log"),
     };
+}
 
-    const installCommands: ServiceInstaller["installCommands"] = ({ unitFile }) => [
-        ["launchctl", "bootstrap", domain, unitFile],
-    ];
+const live = { bootoutLaunchd, installLaunchd, kickstartLaunchd, launchdStatus, plistPath, startLaunchd };
+
+export function createLaunchdInstaller(deps: typeof live = live): ServiceInstaller & { readonly manager: "launchd" } {
+    const active = async (server: ShareServerConfig) => (await deps.launchdStatus(labelFor(server))).loaded;
 
     return {
         manager: "launchd",
-        render,
-        installCommands,
+        render: (input) => renderLaunchdPlist(options(input)),
+        installCommands: () => [],
         async install(input) {
-            const { server } = input;
-            const unitFile = join(
-                deps.root ?? join(input.home, "Library", "LaunchAgents"),
-                `${labelFor(server)}.plist`
-            );
-            if (await active(server)) {
-                await run(["launchctl", "bootout", serviceId(server)]);
-            }
-
-            await writeServiceFile(unitFile, render(input));
-            for (const argv of installCommands({ ...input, unitFile })) {
-                await run(argv);
-            }
-
-            return { unitFile };
+            const spec = options(input);
+            await deps.installLaunchd(spec, { kickstart: false });
+            return { unitFile: deps.plistPath(spec.label) };
         },
         async restart(server) {
-            await run(["launchctl", "enable", serviceId(server)]);
+            const label = labelFor(server);
             if (!(await active(server))) {
-                const file = join(deps.root ?? join(homedir(), "Library", "LaunchAgents"), `${labelFor(server)}.plist`);
-                await run(["launchctl", "bootstrap", domain, file]);
+                await deps.startLaunchd(label);
+            } else if (!(await deps.kickstartLaunchd(label))) {
+                throw new Error(`Could not restart launchd service "${label}"`);
             }
-
-            await run(["launchctl", "kickstart", "-k", serviceId(server)]);
         },
-        stop: (server) => run(["launchctl", "bootout", serviceId(server)]),
+        async stop(server) {
+            const label = labelFor(server);
+            await deps.bootoutLaunchd(label);
+            if (await active(server)) {
+                throw new Error(`Could not stop launchd service "${label}"`);
+            }
+        },
         isActive: active,
     };
 }

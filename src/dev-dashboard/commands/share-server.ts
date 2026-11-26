@@ -20,9 +20,10 @@ import {
     tunnelSetupSteps,
 } from "@app/dev-dashboard/lib/share/server/tunnel";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { parseSince } from "@genesiscz/utils/date";
 import { PairCodeResponseSchema } from "@genesiscz/utils/device-pairing/types";
 import { env } from "@genesiscz/utils/env";
-import { formatBytes } from "@genesiscz/utils/format";
+import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
 import { PUBLISH_KIND_IDS } from "@genesiscz/utils/genesis-tools/publish/kinds";
 import { loadShareConfig, resolveServer, type ShareServerConfig } from "@genesiscz/utils/genesis-tools/publish/store";
@@ -38,6 +39,7 @@ import {
     PUBLISH_SERVER_HEADER,
     PUBLISH_SERVER_ID,
 } from "@genesiscz/utils/publish/api";
+import { type AuditRecord, clientAuditDir, readAudit } from "@genesiscz/utils/publish/audit";
 import { listenOrigin } from "@genesiscz/utils/publish/exposure";
 import {
     ADMIN_SOCKET,
@@ -334,6 +336,26 @@ async function serverStatusRows(
     return rows;
 }
 
+function auditStatusRow(label: string, entry?: AuditRecord): ShareServerStatusRow[] {
+    if (!entry) {
+        return [];
+    }
+
+    const device = entry.deviceName ?? entry.deviceId;
+    return [{ label, ok: true, detail: [entry.time, `HTTP ${entry.status}`, device].filter(Boolean).join(" · ") }];
+}
+
+const pairingAttempt = (entry: AuditRecord) => entry.action === "pair" || entry.action === "re-pair";
+const failedAuth = (entry: AuditRecord) => entry.status === 401 || entry.status === 403;
+
+async function serverAuditRows(stateDir: string): Promise<ShareServerStatusRow[]> {
+    const [[pairing], [failed]] = await Promise.all([
+        readAudit(stateDir, { limit: 1, accepts: pairingAttempt }),
+        readAudit(stateDir, { limit: 1, accepts: (entry) => entry.action === "request" && failedAuth(entry) }),
+    ]);
+    return [...auditStatusRow("Last pairing attempt", pairing), ...auditStatusRow("Last failed token check", failed)];
+}
+
 async function configuredRows(
     server: ShareServerConfig,
     opts: ShareServerStatusOptions = {}
@@ -341,7 +363,8 @@ async function configuredRows(
     const active = server.service.manager === "none" || (await serviceFor(server).isActive(server));
     const service = { label: "Service", ok: active, detail: server.service.manager };
     const rows = await serverStatusRows(opts, server);
-    return [service, ...rows].map((row) => ({ ...row, server: server.name }));
+    const audit = await serverAuditRows(opts.state ?? server.stateDir);
+    return [service, ...rows, ...audit].map((row) => ({ ...row, server: server.name }));
 }
 
 export async function collectShareServerStatus(opts: ShareServerStatusOptions = {}): Promise<ShareServerStatusRow[]> {
@@ -351,9 +374,27 @@ export async function collectShareServerStatus(opts: ShareServerStatusOptions = 
         ? (await Promise.all(selected.map((server) => configuredRows(server, opts)))).flat()
         : await serverStatusRows(opts);
     const targets = await Promise.all(
-        clients.targets.map(async (target) =>
-            (await transportFor(target).check(target)).map((row) => ({ ...row, target: target.name }))
-        )
+        clients.targets.map(async (target) => {
+            const checks = await transportFor(target).check(target);
+            const [[pairing], [failed]] = await Promise.all([
+                readAudit(clientAuditDir(), {
+                    limit: 1,
+                    accepts: (entry) => entry.target === target.name && pairingAttempt(entry),
+                }),
+                readAudit(clientAuditDir(), {
+                    limit: 1,
+                    accepts: (entry) =>
+                        entry.target === target.name &&
+                        (entry.action === "token-read" || entry.action === "token-check") &&
+                        entry.status >= 400,
+                }),
+            ]);
+            return [
+                ...checks,
+                ...auditStatusRow("Last pairing attempt", pairing),
+                ...auditStatusRow("Last failed token check", failed),
+            ].map((row) => ({ ...row, target: target.name }));
+        })
     );
     return [...servers, ...targets.flat()];
 }
@@ -375,6 +416,66 @@ function printStatus(rows: ShareServerStatusRow[], json = false): void {
             )
         );
     }
+}
+
+export async function runShareServerAudit(
+    opts: { server?: string; client?: boolean; since?: string; device?: string; json?: boolean } = {}
+): Promise<void> {
+    if (opts.client && opts.server) {
+        throw new Error("Choose either --client or --server.");
+    }
+
+    const relative = opts.since ? parseDuration(opts.since) : 0;
+    const since = opts.since ? (relative > 0 ? new Date(Date.now() - relative) : parseSince(opts.since)) : undefined;
+    if (opts.since !== undefined && (!since || !Number.isFinite(since.getTime()))) {
+        throw new Error("Invalid --since value. Use an ISO time or a duration such as 7d.");
+    }
+
+    const config = opts.client ? undefined : await commandShareConfig(opts.server);
+    const dir =
+        config && (opts.server || config.servers.length)
+            ? resolveServer(config, opts.server).stateDir
+            : clientAuditDir();
+    const records = await readAudit(dir, { since: since ?? undefined, device: opts.device });
+    if (opts.json) {
+        out.result(records);
+    } else {
+        out.println(
+            formatTable(
+                records.map((row) => [
+                    row.time,
+                    row.side,
+                    row.address ?? "",
+                    row.action,
+                    [row.method, row.path].filter(Boolean).join(" "),
+                    row.target ?? "",
+                    [row.kind, row.id].filter(Boolean).join("/"),
+                    row.deviceId ?? "",
+                    String(row.status),
+                    String(row.bytesOut ?? ""),
+                    String(row.durationMs),
+                    row.userAgent ?? "",
+                ]),
+                [
+                    "Time",
+                    "Side",
+                    "Address",
+                    "Action",
+                    "Request",
+                    "Target",
+                    "Snapshot",
+                    "Device",
+                    "Status",
+                    "Bytes",
+                    "ms",
+                    "User agent",
+                ],
+                { maxColWidth: 60 }
+            )
+        );
+    }
+
+    await out.flush();
 }
 
 export async function runShareServerStatus(opts: ShareServerStatusOptions): Promise<void> {
