@@ -46,13 +46,15 @@ export function toVaultRelativePath(input: string, vaultRoot: string): string {
 export async function shareNote(
     inputPath: string,
     targetNames: readonly string[] = []
-): Promise<{ slug: string; vaultPath: string; outcomes: TargetOutcome[] }> {
+): Promise<{ slug: string; vaultPath: string; outcomes: TargetOutcome[]; alreadyPublished: boolean }> {
     const vaultPath = await vaultPathFor(inputPath);
     const { obsidianVault } = await getConfig();
     await readNote(obsidianVault ?? "", vaultPath);
+    // A note shared again keeps its id and link; the run only sends it again.
+    const alreadyPublished = (await findPublishedByPath(vaultPath)) !== undefined;
     const { note, outcomes } = await shareToTargets({ vaultPath, targetNames });
 
-    return { slug: note.slug, vaultPath, outcomes };
+    return { slug: note.slug, vaultPath, outcomes, alreadyPublished };
 }
 
 async function vaultPathFor(inputPath: string): Promise<string> {

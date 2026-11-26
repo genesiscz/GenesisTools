@@ -316,7 +316,9 @@ export function shareRoutes(source: ShareSource = vaultShareSource(), options: S
                     });
 
                     const published = await source.listPublished();
-                    const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
+                    const publishedByPath = new Map(
+                        published.map((entry) => [entry.vaultPath.normalize("NFC"), entry.slug])
+                    );
                     let transclusionIndex = 0;
                     // In NFC: macOS keeps a file name's accents decomposed (NFD), a link typed in the note is NFC.
                     const selfPath = note.vaultPath.normalize("NFC");
@@ -373,7 +375,9 @@ export function shareRoutes(source: ShareSource = vaultShareSource(), options: S
                                               }),
                                       };
                             const publishedSlug =
-                                asset.kind === "markdown" ? publishedByPath.get(asset.vaultPath) : undefined;
+                                asset.kind === "markdown"
+                                    ? publishedByPath.get(asset.vaultPath.normalize("NFC"))
+                                    : undefined;
 
                             if (publishedSlug) {
                                 return {
