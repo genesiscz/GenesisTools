@@ -191,15 +191,22 @@ export class TaskSessionStore {
         }
     }
 
-    async prepareSessionReuseContinue(input: PrepareSessionInput): Promise<void> {
+    async clearSessionExit(name: string): Promise<void> {
         await this.getSessionsDir();
-        const path = jsonlPath(input.name);
+        const path = jsonlPath(name);
         const records = await readJsonlFile(path);
+        if (!records.some((record) => record.type === "exit")) {
+            return;
+        }
+
         const kept = records.filter((record) => record.type !== "exit");
         const body = kept.map((record) => SafeJSON.stringify(record)).join("\n");
 
         atomicWriteFileSync(path, body ? `${body}\n` : "");
+    }
 
+    async prepareSessionReuseContinue(input: PrepareSessionInput): Promise<void> {
+        await this.clearSessionExit(input.name);
         const now = Date.now();
         const existing = await this.getSessionMeta(input.name);
 

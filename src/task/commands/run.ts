@@ -118,6 +118,7 @@ export function registerRunCommand(program: Command): void {
             printRunBanner({ session: resolved.session, command, mode });
 
             if (shouldSuperviseDetachedRun()) {
+                await store.clearSessionExit(resolved.session);
                 const toolsEntry = process.argv[1] ?? "tools";
                 const worker = spawnDetachedRunWorker({
                     toolsEntry,

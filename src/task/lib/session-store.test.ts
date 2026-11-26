@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
+import { pollSessionExit } from "@app/task/lib/detached-run";
 import { jsonlPath, sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { JsonlExitRecord } from "@genesiscz/utils/log-session/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 describe("TaskSessionStore.resolveRunSessionName", () => {
@@ -235,6 +237,28 @@ describe("TaskSessionStore session reuse helpers", () => {
         expect(await Bun.file(paths.stdout).text()).toBe("");
         expect(await Bun.file(paths.stderr).text()).toBe("");
         expect(existsSync(paths.meta)).toBe(false);
+    });
+
+    it("removes the previous exit before a supervised run starts polling", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        await store.clearSessionExit("supervised-new");
+        expect(existsSync(jsonlPath("supervised-new"))).toBe(false);
+        const session = "supervised-reuse";
+        const file = jsonlPath(session);
+        writeFileSync(
+            file,
+            '{"type":"line","seq":1,"out":"stdout","ts":1,"text":"old output"}\n' +
+                '{"type":"exit","code":9,"durationMs":60000,"ts":"2026-01-01T00:00:00.000Z"}\n'
+        );
+        await store.clearSessionExit(session);
+        const persisted = readFileSync(file, "utf8");
+        expect(persisted).toContain("old output");
+        expect(persisted).not.toContain('"type":"exit"');
+        const waiting = pollSessionExit(session, 100);
+        const exit: JsonlExitRecord = { type: "exit", code: 0, durationMs: 123, ts: "2026-01-02T00:00:00.000Z" };
+        fs.appendFileSync(file, `${SafeJSON.stringify(exit)}\n`);
+        expect(await waiting).toEqual(exit);
     });
 
     it("prepareSessionReuseContinue strips exit records and clears exited meta", async () => {
