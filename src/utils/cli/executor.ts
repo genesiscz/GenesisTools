@@ -380,7 +380,26 @@ export function suggestCommand(
 
     // Quote args that contain spaces
     const quoted = args.map((a) => (a.includes(" ") ? `"${a}"` : a));
-    return `${toolName} ${quoted.join(" ")}`;
+    return `${withSubcommand(toolName, modifications.subcommand)} ${quoted.join(" ")}`;
+}
+
+/**
+ * `subcommand` names words that `toolName` already ends with (`toolCommand("github", "search")` with `["search"]`).
+ * A caller that passed the bare tool (`"tools github"` with `["notifications"]`) printed a command with no
+ * subcommand at all, which does not run; the words it is missing are added back.
+ */
+function withSubcommand(toolName: string, subcommand: readonly string[] | undefined): string {
+    if (!subcommand?.length) {
+        return toolName;
+    }
+
+    const words = toolName.trim().split(/\s+/);
+    const tail = words.slice(-subcommand.length);
+    if (tail.length === subcommand.length && tail.every((word, index) => word === subcommand[index])) {
+        return toolName;
+    }
+
+    return `${toolName} ${subcommand.join(" ")}`;
 }
 
 /**

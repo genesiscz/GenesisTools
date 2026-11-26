@@ -174,6 +174,19 @@ describe("suggestCommand", () => {
         setSuggestCommandProgram(undefined);
     });
 
+    test("a subcommand missing from the tool name is added back, and one already in it is not doubled", () => {
+        const saved = process.argv;
+        process.argv = ["bun", "script", "commits", "--group-by", "dya"];
+
+        try {
+            const modifications = { remove: ["--group-by"], add: ["--group-by", "day"], subcommand: ["commits"] };
+            expect(suggestCommand("tools git", modifications)).toBe("tools git commits --group-by day");
+            expect(suggestCommand("tools git commits", modifications)).toBe("tools git commits --group-by day");
+        } finally {
+            process.argv = saved;
+        }
+    });
+
     test("a boolean global flag does not swallow the subcommand", () => {
         setSuggestCommandProgram(programWithGlobals());
 
@@ -227,8 +240,9 @@ describe("suggestCommand", () => {
     test("the subcommand strip looks past a leading global flag", () => {
         setSuggestCommandProgram(programWithGlobals());
 
+        // "tools x" does not end with "fetch", so the stripped subcommand is put back after the tool name.
         expect(suggestWithArgv(["-v", "fetch", "mine"], { subcommand: ["fetch"], add: ["--raw"] })).toBe(
-            "tools x -v mine --raw"
+            "tools x fetch -v mine --raw"
         );
     });
 
