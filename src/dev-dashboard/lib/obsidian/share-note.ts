@@ -1,9 +1,10 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
-import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import { findPublishedByPath } from "@app/dev-dashboard/lib/obsidian/publish";
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
-import { sharePageUrl } from "@app/dev-dashboard/lib/public-base";
+import { SHARE_SLUG_RE } from "@app/dev-dashboard/lib/share/source";
+import { shareToTargets, type TargetOutcome } from "@app/dev-dashboard/lib/share/targets";
 import { normalizeVaultPath } from "@genesiscz/utils/obsidian/paths";
 
 /**
@@ -38,17 +39,43 @@ export function toVaultRelativePath(input: string, vaultRoot: string): string {
     return rel;
 }
 
-export async function shareNote(inputPath: string): Promise<{ url: string; slug: string; vaultPath: string }> {
+/**
+ * Publish a vault note and send it to the share targets `targetNames` picks (none: `share.defaults.target`;
+ * "all": every target). Each target answers with its link or its error.
+ */
+export async function shareNote(
+    inputPath: string,
+    targetNames: readonly string[] = []
+): Promise<{ slug: string; vaultPath: string; outcomes: TargetOutcome[] }> {
+    const vaultPath = await vaultPathFor(inputPath);
+    const { obsidianVault } = await getConfig();
+    await readNote(obsidianVault ?? "", vaultPath);
+    const { note, outcomes } = await shareToTargets({ vaultPath, targetNames });
+
+    return { slug: note.slug, vaultPath, outcomes };
+}
+
+async function vaultPathFor(inputPath: string): Promise<string> {
     const { obsidianVault } = await getConfig();
 
     if (!obsidianVault) {
         throw new Error("obsidian vault not configured");
     }
 
-    const vaultPath = toVaultRelativePath(inputPath, obsidianVault);
-    await readNote(obsidianVault, vaultPath);
-    const note = await publishNote(vaultPath);
-    const url = await sharePageUrl(note.slug);
+    return toVaultRelativePath(inputPath, obsidianVault);
+}
 
-    return { url, slug: note.slug, vaultPath };
+/** A slug, or the slug of the published note at a vault path (what `share unshare` and `share sync` accept). */
+export async function resolvePublishedSlug(input: string): Promise<string> {
+    if (SHARE_SLUG_RE.test(input) && !input.includes(".")) {
+        return input;
+    }
+
+    const note = await findPublishedByPath(await vaultPathFor(input));
+
+    if (!note) {
+        throw new Error(`not published: ${input}`);
+    }
+
+    return note.slug;
 }

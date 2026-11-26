@@ -64,12 +64,21 @@ describe("shareNote", () => {
         const first = await shareNote("Widgets/Design/Note.md");
 
         expect(first.vaultPath).toBe("Widgets/Design/Note.md");
-        expect(first.url).toBe(`https://mac.example.com/share/${first.slug}`);
+        expect(first.outcomes).toEqual([{ target: "mac", url: `https://mac.example.com/share/${first.slug}` }]);
         expect(first.slug.length).toBeGreaterThan(8);
 
         const second = await shareNote(join(vault, "Widgets", "Design", "Note.md"));
         expect(second.slug).toBe(first.slug);
-        expect(second.url).toBe(first.url);
+        expect(second.outcomes).toEqual(first.outcomes);
+    });
+
+    test("records the targets a note went to, and refuses a target that is not configured", async () => {
+        const shared = await shareNote("Widgets/Design/Note.md", ["mac"]);
+        const config = await getDevDashboardStorage().getConfig<{ publishedNotes: Array<{ targets?: string[] }> }>();
+
+        expect(config?.publishedNotes[0]?.targets).toEqual(["mac"]);
+        expect(shared.outcomes[0]?.url).toContain("/share/");
+        await expect(shareNote("Widgets/Design/Note.md", ["nowhere"])).rejects.toThrow('no share target "nowhere"');
     });
 
     test("fails when the note is missing", async () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { migrateShareConfig, ShareConfigSchema } from "@app/dev-dashboard/lib/share/drivers/options";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -12,6 +13,72 @@ describe("dev-dashboard config", () => {
     it("defaults allowedHosts to an empty array", async () => {
         const config = await getConfig();
         expect(Array.isArray(config.allowedHosts)).toBe(true);
+    });
+});
+
+describe("dev-dashboard share config", () => {
+    it("defaults to one mac-live target named mac", () => {
+        const share = ShareConfigSchema.parse(migrateShareConfig(undefined));
+
+        expect(share).toEqual({ defaults: { target: "mac" }, targets: [{ name: "mac", driver: "mac-live" }] });
+    });
+
+    it("migrates the first design's share.target and share.server into named targets", () => {
+        const legacy = {
+            target: "server",
+            server: {
+                host: "deploy@share.example.com",
+                dataDir: "/srv/share/data/",
+                publicBase: "https://example.com/share/",
+            },
+        };
+        const share = ShareConfigSchema.parse(migrateShareConfig(legacy));
+
+        expect(share.defaults.target).toBe("server");
+        expect(share.targets).toEqual([
+            { name: "mac", driver: "mac-live" },
+            {
+                name: "server",
+                driver: "ssh-rsync",
+                host: "deploy@share.example.com",
+                dataDir: "/srv/share/data",
+                publicBase: "https://example.com/share",
+            },
+        ]);
+        expect(ShareConfigSchema.parse(migrateShareConfig({ target: "server", server: {} })).defaults.target).toBe(
+            "mac"
+        );
+    });
+
+    it("keeps a current shape as it is and refuses two targets with one name", () => {
+        const current = { defaults: { target: "mac" }, targets: [{ name: "mac", driver: "mac-live" }] };
+
+        expect(migrateShareConfig(current)).toBe(current);
+        expect(
+            ShareConfigSchema.safeParse({
+                targets: [
+                    { name: "a", driver: "mac-live" },
+                    { name: "a", driver: "mac-live" },
+                ],
+            }).success
+        ).toBe(false);
+    });
+
+    it("refuses a paired target whose token is a plaintext string instead of a vault reference", () => {
+        const target = {
+            name: "pub",
+            driver: "paired",
+            url: "https://example.com/share",
+            deviceId: "d1",
+            token: "gtshare_plain",
+        };
+
+        expect(ShareConfigSchema.safeParse({ targets: [target] }).success).toBe(false);
+        expect(
+            ShareConfigSchema.safeParse({
+                targets: [{ ...target, token: { type: "secure", path: "dev-dashboard/share-targets/pub/token" } }],
+            }).success
+        ).toBe(true);
     });
 });
 
@@ -90,7 +157,7 @@ describe("dev-dashboard config that exists but cannot be used", () => {
 
         const saved = SafeJSON.parse(readFileSync(configPath, "utf8"), { strict: true });
         expect(saved.auth.passwordHash).toBe(AUTH.passwordHash);
-        expect(saved.publishedNotes).toEqual(NOTES);
+        expect(saved.publishedNotes).toEqual(NOTES.map((note) => ({ ...note, targets: [] })));
         expect(saved.ttydSessions).toHaveLength(1);
 
         if (process.platform !== "win32") {

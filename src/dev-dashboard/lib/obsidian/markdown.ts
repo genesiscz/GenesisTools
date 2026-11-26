@@ -80,6 +80,8 @@ interface RenderOptions {
     lineAnchors?: boolean;
     /** Prefix for `/share/<slug>` links; a saved copy of a page sets the dashboard's public origin. */
     pageBaseUrl?: string;
+    /** The path shared notes live under (`/share` when omitted; a share server may use `/md`). */
+    pagePath?: string;
 }
 
 export interface RenderResult {
@@ -813,7 +815,7 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
     const slug = opts.resolveWikilink(target);
 
     if (slug) {
-        return `<a href="${escapeHtml(opts.pageBaseUrl ?? "")}/share/${encodeURIComponent(slug)}${escapeHtml(hash)}" class="dd-wikilink">${escapeHtml(display)}</a>`;
+        return `<a href="${escapeHtml(opts.pageBaseUrl ?? "")}${escapeHtml(opts.pagePath ?? "/share")}/${encodeURIComponent(slug)}${escapeHtml(hash)}" class="dd-wikilink">${escapeHtml(display)}</a>`;
     }
 
     return null;

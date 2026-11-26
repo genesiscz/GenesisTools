@@ -8,7 +8,9 @@ const LOCAL_FILE_HEADER = 0x04034b50;
  * Reads a ZIP archive into a name -> bytes map. Handles stored and deflated entries, which is what zip tools
  * and Sentry artifact bundles write; ZIP64 and encrypted archives throw. Directory entries are skipped.
  */
-export function unzip(body: Uint8Array): Map<string, Uint8Array> {
+export function unzip(body: Uint8Array, options: { maxTotalBytes?: number } = {}): Map<string, Uint8Array> {
+    const maxTotal = options.maxTotalBytes ?? Number.POSITIVE_INFINITY;
+    let total = 0;
     const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
     let end = -1;
     // The end record is 22 bytes plus a comment of at most 65535 bytes, so it sits within that distance of the end.
@@ -55,13 +57,33 @@ export function unzip(body: Uint8Array): Map<string, Uint8Array> {
         const start =
             localOffset + 30 + view.getUint16(localOffset + 26, true) + view.getUint16(localOffset + 28, true);
         const data = body.subarray(start, start + compressedSize);
+        let entry: Uint8Array;
         if (method === 0) {
-            files.set(name, data.slice());
+            entry = data.slice();
         } else if (method === 8) {
-            files.set(name, new Uint8Array(inflateRawSync(data)));
+            // Bounded while it inflates, so a small archive cannot expand past the cap (a zip bomb).
+            const room = maxTotal - total;
+            try {
+                entry = new Uint8Array(
+                    inflateRawSync(data, Number.isFinite(room) ? { maxOutputLength: Math.max(1, room) } : {})
+                );
+            } catch (err) {
+                if (err instanceof RangeError) {
+                    throw new Error(`zip expands past ${maxTotal} bytes (${name})`);
+                }
+
+                throw err;
+            }
         } else {
             throw new Error(`unsupported zip compression method ${method} (${name})`);
         }
+
+        total += entry.length;
+        if (total > maxTotal) {
+            throw new Error(`zip expands past ${maxTotal} bytes (${name})`);
+        }
+
+        files.set(name, entry);
     }
 
     return files;

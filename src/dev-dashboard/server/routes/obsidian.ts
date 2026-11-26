@@ -1,8 +1,14 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
-import { listPublished, publishNote, unpublishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import {
+    findPublishedBySlug,
+    listPublished,
+    publishNote,
+    unpublishNote,
+} from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { shareInBackground, unshareInBackground } from "@app/dev-dashboard/lib/share/targets";
 import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
@@ -95,6 +101,7 @@ export function obsidianRoutes(): RouteDef[] {
                 }
 
                 const note = await publishNote(path);
+                shareInBackground(note);
 
                 return { kind: "json", status: 200, body: { note } };
             } catch (err) {
@@ -109,7 +116,13 @@ export function obsidianRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "slug required" } };
                 }
 
+                const note = await findPublishedBySlug(slug);
                 await unpublishNote(slug);
+
+                if (note) {
+                    unshareInBackground(note);
+                }
+
                 const remaining = await listPublished();
 
                 return { kind: "json", status: 200, body: { remaining } };

@@ -13,7 +13,11 @@ import {
     noteSection,
     SHARE_BUNDLE_MAX_BYTES,
     type ShareEmbedPanels,
+    vaultAssetReader,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import { snapshotShareSource, writeShareSnapshot } from "@app/dev-dashboard/lib/share/snapshot";
+import type { ShareSource } from "@app/dev-dashboard/lib/share/source";
+import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { LINKED_NOTE_READ_CONCURRENCY, shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
@@ -173,7 +177,8 @@ describe("GET /share/:slug assets", () => {
         query: Record<string, string>,
         accept = "*/*",
         target = slug,
-        extra: Record<string, string> = {}
+        extra: Record<string, string> = {},
+        source?: ShareSource
     ): Promise<RouteResult> {
         const ctx: RouteContext = {
             method: "GET",
@@ -188,8 +193,47 @@ describe("GET /share/:slug assets", () => {
             services: {} as RouteContext["services"],
         };
 
-        return shareRoutes()[0].handler(ctx);
+        return shareRoutes(source)[0].handler(ctx);
     }
+
+    test("a snapshot renders the same page, assets and zip as the vault, from a folder with no vault", async () => {
+        const data = join(dir, "snapshots");
+        const vault = vaultShareSource();
+
+        for (const target of [slug, pubSlug]) {
+            const note = await vault.findBySlug(target);
+            expect(note).not.toBeNull();
+
+            if (note) {
+                await writeShareSnapshot({ source: vault, note, dir: join(data, target) });
+            }
+        }
+
+        const snapshots = snapshotShareSource({ dataDir: data, publicOrigin: "https://share.example.com" });
+        const live = await get({}, "text/html");
+        const served = await get({}, "text/html", slug, {}, snapshots);
+
+        expect(served.kind === "raw" && served.body).toBe(live.kind === "raw" ? live.body : "missing");
+
+        const picture = await get({ asset: sha(PIC) }, "image/*", slug, {}, snapshots);
+        expect(picture.kind === "binary" && Buffer.from(picture.body).equals(PIC)).toBe(true);
+
+        const logo = await get({ asset: sha(LOGO) }, "*/*", slug, {}, snapshots);
+        const logoText = logo.kind === "binary" ? Buffer.from(logo.body).toString("utf8") : "";
+        expect(logoText).toContain("[redacted]");
+        expect(logoText).not.toContain("sk-test-");
+
+        const zipped = await get({ download: "zip" }, "*/*", slug, {}, snapshots);
+        const liveZip = await get({ download: "zip" });
+        const names = (res: RouteResult) => (res.kind === "binary" ? [...unzip(res.body).keys()].sort() : []);
+        expect(names(zipped)).toEqual(names(liveZip));
+
+        const saved = await get({ download: "html" }, "*/*", slug, {}, snapshots);
+        expect(saved.kind === "raw" && saved.body).toContain(`https://share.example.com/share/${pubSlug}`);
+
+        expect(await get({}, "text/html", "no-such-slug", {}, snapshots)).toMatchObject({ status: 404 });
+        expect(await get({}, "text/html", "..", {}, snapshots)).toMatchObject({ status: 404 });
+    });
 
     function assetUrl(bytes: Buffer | string): string {
         return `/share/${slug}?asset=${sha(bytes)}`;
@@ -760,7 +804,7 @@ describe("GET /share/:slug assets", () => {
 
         writeFileSync(join(vault, "N/a.png"), Buffer.from("\u0089PNG a-changed-after-indexing"));
         const bundle = await buildShareBundle({
-            vaultRoot: vault,
+            read: vaultAssetReader(vault),
             index,
             notePath: "N/Twins.md",
             noteText: source,
@@ -782,7 +826,7 @@ describe("GET /share/:slug assets", () => {
         const source = "![[original.png]]\n\n![[alias.png]]";
         const index = await buildShareAssetIndex({ vaultRoot: vault, notePath: "N/Alias.md", source });
         const bundle = await buildShareBundle({
-            vaultRoot: vault,
+            read: vaultAssetReader(vault),
             index,
             notePath: "N/Alias.md",
             noteText: source,
@@ -807,10 +851,12 @@ describe("GET /share/:slug assets", () => {
         };
         const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
 
-        expect(await buildShareEmbed({ vaultRoot: dir, index, panelBase: () => "", sourceBytes })).toBeNull();
+        expect(
+            await buildShareEmbed({ read: vaultAssetReader(dir), index, panelBase: () => "", sourceBytes })
+        ).toBeNull();
         expect(
             await buildShareBundle({
-                vaultRoot: dir,
+                read: vaultAssetReader(dir),
                 index,
                 notePath: "large.md",
                 noteText: "a".repeat(sourceBytes),
