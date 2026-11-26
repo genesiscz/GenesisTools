@@ -18,6 +18,7 @@ import { PairCodeResponseSchema } from "@genesiscz/utils/device-pairing/types";
 import { formatBytes } from "@genesiscz/utils/format";
 import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
 import { PUBLISH_KIND_IDS } from "@genesiscz/utils/genesis-tools/publish/kinds";
+import { loadShareConfig, resolveServer } from "@genesiscz/utils/genesis-tools/publish/store";
 import { shareServerSetupCommand, shareTargetAddCommand } from "@genesiscz/utils/genesis-tools/tools/publish";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -35,6 +36,8 @@ import {
     adminRequest,
     DEFAULT_MIN_FREE_BYTES,
     parsePublicOrigin,
+    type RunningPublishServer,
+    serverOptionsFrom,
     startPublishServer,
 } from "@genesiscz/utils/publish/server";
 import { listSnapshotIds } from "@genesiscz/utils/publish/snapshot-store";
@@ -63,8 +66,9 @@ export function shareServerDirs(opts: ShareServerPaths): { dataDir: string; stat
 }
 
 export interface ShareServerServeOptions extends ShareServerPaths {
-    port: number;
-    host: string;
+    server?: string;
+    port?: number;
+    host?: string;
     publicBase?: string;
     pair?: boolean;
     tunnel?: string;
@@ -91,56 +95,93 @@ async function printPairCode(stateDir: string, publicBase: string): Promise<numb
     return Date.parse(expiresAt);
 }
 
-/** `share-server serve`: run the share server in the foreground (what the service unit runs). */
-export async function runShareServerServe(opts: ShareServerServeOptions): Promise<void> {
-    const { dataDir, stateDir } = shareServerDirs(opts);
-    const publicBase = opts.publicBase ?? `http://${opts.host}:${opts.port}`;
+function listenOrigin(host: string, port: number): string {
+    const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+    return `http://${authority}:${port}`;
+}
 
+export async function startShareServe(opts: ShareServerServeOptions = {}): Promise<{
+    server: RunningPublishServer;
+    stateDir: string;
+    tunnel?: { name: string; configFile: string };
+}> {
+    const config = await loadShareConfig();
+    const flags = {
+        dataDir: opts.data,
+        stateDir: opts.state,
+        host: opts.host,
+        port: opts.port,
+        publicBase: opts.publicBase,
+        minFreeGb: opts.minFreeGb,
+        tunnel: opts.tunnel,
+    };
+    const legacy =
+        opts.server === undefined &&
+        config.servers.length === 0 &&
+        Object.values(flags).some((value) => value !== undefined);
+    const selected = legacy ? undefined : resolveServer(config, opts.server);
+    const kinds = Object.values(PUBLISH_KIND_SERVERS);
+    const fromConfig = selected ? serverOptionsFrom(selected, kinds) : undefined;
+    const legacyDirs = shareServerDirs({});
+    const host = opts.host ?? fromConfig?.host ?? "127.0.0.1";
+    const port = opts.port ?? fromConfig?.port ?? SHARE_SERVER_PORT;
+    const dataDir = opts.data ?? fromConfig?.dataDir ?? legacyDirs.dataDir;
+    const stateDir = opts.state ?? fromConfig?.stateDir ?? legacyDirs.stateDir;
+    const publicBase = parsePublicOrigin(
+        opts.publicBase ?? fromConfig?.publicBase ?? listenOrigin(host, port),
+        PUBLISH_KIND_IDS
+    );
+    const tunnel = opts.tunnel ?? (selected?.exposure.kind === "cloudflared" ? selected.exposure.tunnel : undefined);
+    const configFile = tunnel ? tunnelConfigPath(stateDir, tunnel) : undefined;
+    if (configFile && !existsSync(configFile)) {
+        throw new Error(`No cloudflared config for tunnel "${tunnel}" at ${configFile}`);
+    }
+
+    const server = await startPublishServer({
+        kinds: fromConfig?.kinds ?? kinds,
+        legacyFlatKind: fromConfig ? fromConfig.legacyFlatKind : "md",
+        dataDir,
+        stateDir,
+        publicBase,
+        port,
+        host,
+        minFreeBytes: opts.minFreeGb === undefined ? fromConfig?.minFreeBytes : minFreeBytes(opts.minFreeGb),
+    });
+    const sources = Object.fromEntries(
+        Object.entries(flags).map(([key, value]) => [
+            key,
+            value === undefined ? (selected ? "config" : "default") : "flag",
+        ])
+    );
+    log.info({ server: selected?.name, sources, dataDir, stateDir, publicBase }, "publish server settings");
+    return { server, stateDir, tunnel: tunnel && configFile ? { name: tunnel, configFile } : undefined };
+}
+
+export async function runShareServerServe(opts: ShareServerServeOptions): Promise<void> {
+    let started: Awaited<ReturnType<typeof startShareServe>>;
     try {
-        parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
+        started = await startShareServe(opts);
     } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
     }
 
-    let configFile: string | null = null;
-
-    if (opts.tunnel) {
-        configFile = tunnelConfigPath(stateDir, opts.tunnel);
-
-        if (!existsSync(configFile)) {
-            return fail(
-                `no cloudflared config for tunnel "${opts.tunnel}" at ${configFile}`,
-                suggestCommand(TOOL, { replaceCommand: ["tunnel", "--name", opts.tunnel, "--hostname", "<host>"] })
-            );
-        }
-    }
-
-    const server = await startPublishServer({
-        kinds: Object.values(PUBLISH_KIND_SERVERS),
-        legacyFlatKind: "md",
-        dataDir,
-        stateDir,
-        publicBase,
-        port: opts.port,
-        host: opts.host,
-        minFreeBytes: minFreeBytes(opts.minFreeGb),
-    });
+    const { server, stateDir, tunnel } = started;
     out.println(
-        `Publish server on ${server.url} (data ${dataDir}, public ${server.context.origin}; kinds ${PUBLISH_KIND_IDS.join(", ")})`
+        `Publish server at ${server.url} (public ${server.context.origin}, kinds ${[...server.context.kinds.keys()].join(", ")})`
     );
-
     if (opts.pair) {
         await printPairCode(stateDir, server.context.origin);
     }
 
-    if (opts.tunnel && configFile) {
-        const connector = startTunnelConnector({ name: opts.tunnel, configFile });
+    if (tunnel) {
+        const connector = startTunnelConnector(tunnel);
         const code = await connector.exited;
-        // The connector is half of the service: when it dies, exit so the supervisor restarts both.
-        log.error({ code, tunnel: opts.tunnel }, "the cloudflared connector exited");
+        log.error({ code, tunnel: tunnel.name }, "the cloudflared connector exited");
         await server.stop();
         process.exit(code === 0 ? 1 : code);
     }
+
+    await out.flush();
 }
 
 export interface ShareServerStatusOptions extends ShareServerPaths {

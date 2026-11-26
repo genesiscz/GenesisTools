@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectShareServerStatus } from "@app/dev-dashboard/commands/share-server";
+import { collectShareServerStatus, startShareServe } from "@app/dev-dashboard/commands/share-server";
 import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
 import { mdKind } from "@app/dev-dashboard/lib/share/kind";
 import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
@@ -15,12 +15,14 @@ import { type ZipEntry, zip } from "@genesiscz/utils/fs/zip";
 import {
     findPublication,
     loadShareConfig,
+    type ShareServerConfig,
     shareConfigPath,
+    shareServerDir,
     updateShareConfig,
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { PUBLISH_API } from "@genesiscz/utils/publish/api";
+import { HealthSchema, PUBLISH_API } from "@genesiscz/utils/publish/api";
 import { startPublishServer } from "@genesiscz/utils/publish/server";
 import { installSnapshot } from "@genesiscz/utils/publish/snapshot-store";
 import { transportFor } from "@genesiscz/utils/publish/transports";
@@ -251,6 +253,74 @@ describe("published note snapshots", () => {
             ]);
         } finally {
             await server.stop();
+        }
+    });
+
+    async function configureServer(): Promise<ShareServerConfig> {
+        const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+        const port = Number(probe.port);
+        await probe.stop(true);
+        const config: ShareServerConfig = {
+            name: "desk",
+            listen: { host: "127.0.0.1", port },
+            publicOrigin: "https://share.example.com",
+            dataDir: shareServerDir("desk", "data"),
+            stateDir: shareServerDir("desk", "state"),
+            kinds: ["md", "artifact"],
+            minFreeGb: 0,
+            exposure: { kind: "local" },
+            service: { manager: "none" },
+        };
+        await updateShareConfig((current) => ({
+            ...current,
+            defaults: { ...current.defaults, server: "desk" },
+            servers: [config],
+        }));
+        return config;
+    }
+
+    test("serve reads the configured listener without flags", async () => {
+        const config = await configureServer();
+        const { server } = await startShareServe();
+        try {
+            expect(Number(new URL(server.url).port)).toBe(config.listen.port);
+            expect(server.context.dataDir).toBe(config.dataDir);
+            const res = await fetch(new URL(PUBLISH_API.health, server.url));
+            expect(HealthSchema.parse(await res.json()).kinds).toEqual(["md", "artifact"]);
+        } finally {
+            await server.stop();
+        }
+    });
+
+    test("serve overrides a saved path and still accepts the old flag-only unit", async () => {
+        const config = await configureServer();
+        const data = join(dir, "override");
+        const first = await startShareServe({
+            server: config.name,
+            data,
+            publicBase: "https://override.example.com/md",
+        });
+        try {
+            expect(first.server.context.dataDir).toBe(data);
+            expect(first.server.context.origin).toBe("https://override.example.com");
+            expect(first.stateDir).toBe(config.stateDir);
+        } finally {
+            await first.server.stop();
+        }
+
+        await updateShareConfig((current) => ({ ...current, defaults: {}, servers: [] }));
+        const legacy = await startShareServe({
+            data,
+            state: join(dir, "legacy"),
+            port: 0,
+            host: "127.0.0.1",
+            publicBase: "https://share.example.com/md",
+        });
+        try {
+            const res = await fetch(new URL(PUBLISH_API.health, legacy.server.url));
+            expect(HealthSchema.parse(await res.json()).kinds).toEqual(["md", "artifact"]);
+        } finally {
+            await legacy.server.stop();
         }
     });
 
