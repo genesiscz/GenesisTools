@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { collectShareServerStatus } from "@app/dev-dashboard/commands/share-server";
+import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
 import { mdKind } from "@app/dev-dashboard/lib/share/kind";
 import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
 import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
@@ -10,15 +12,23 @@ import { shareToTargets } from "@app/dev-dashboard/lib/share/targets";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import { type ZipEntry, zip } from "@genesiscz/utils/fs/zip";
-import { findPublication, updatePublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import {
+    findPublication,
+    loadPublishConfig,
+    publishConfigPath,
+    updatePublishConfig,
+} from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { PUBLISH_API } from "@genesiscz/utils/publish/api";
 import { startPublishServer } from "@genesiscz/utils/publish/server";
 import { installSnapshot } from "@genesiscz/utils/publish/snapshot-store";
+import { transportFor } from "@genesiscz/utils/publish/transports";
 import {
     _resetMasterKeyProviders,
     _resetSecretsForTest,
     _setMasterKeyProvidersForTest,
+    resolveSecret,
     secrets,
 } from "@genesiscz/utils/security";
 import { formatAgo, freshnessTone, isEditedAfterSync } from "./freshness";
@@ -116,6 +126,8 @@ describe("published note snapshots", () => {
         }
 
         resetDevDashboardStorage();
+        _resetSecretsForTest();
+        _resetMasterKeyProviders();
         rmSync(dir, { recursive: true, force: true });
     });
 
@@ -171,7 +183,7 @@ describe("published note snapshots", () => {
         }
     });
 
-    test("the reader gets the paired default link and the times saved by the publisher", async () => {
+    function useFixtureVaultKey(): void {
         const key = randomBytes(32);
         _setMasterKeyProvidersForTest([
             {
@@ -183,6 +195,10 @@ describe("published note snapshots", () => {
             },
         ]);
         _resetSecretsForTest();
+    }
+
+    test("the reader gets the paired default link and the times saved by the publisher", async () => {
+        useFixtureVaultKey();
         const vault = join(dir, "vault");
         mkdirSync(vault);
         writeFileSync(join(vault, "Note.md"), "# Weekly report\n");
@@ -237,8 +253,106 @@ describe("published note snapshots", () => {
             ]);
         } finally {
             await server.stop();
-            _resetSecretsForTest();
-            _resetMasterKeyProviders();
+        }
+    });
+
+    test("status probes the listener, kinds, admin socket and disk without writing client config", async () => {
+        const dataDir = join(dir, "data");
+        const stateDir = join(dir, "state");
+        const server = await startPublishServer({
+            kinds: Object.values(PUBLISH_KIND_SERVERS),
+            dataDir,
+            stateDir,
+            host: "127.0.0.1",
+            port: 0,
+            publicBase: "https://share.example.com",
+        });
+        try {
+            const opts = {
+                data: dataDir,
+                state: stateDir,
+                port: Number(new URL(server.url).port),
+                publicBase: server.url,
+                minFreeGb: 0,
+            };
+            const rows = await collectShareServerStatus(opts);
+            expect(rows.map(({ label, ok }) => [label, ok])).toEqual([
+                ["Local port", true],
+                ["Local health", true],
+                ["Public health", true],
+                ["Admin socket", true],
+                ["Paired devices", true],
+                ["md snapshots", true],
+                ["artifact snapshots", true],
+                ["Free disk", true],
+                ["Live mounts", true],
+            ]);
+            expect(rows.find(({ label }) => label === "Local health")?.detail).toBe("md, artifact");
+            expect(rows.find(({ label }) => label === "Paired devices")?.detail).toBe("0");
+            const failed = await collectShareServerStatus({ ...opts, minFreeGb: 1_000_000 });
+            expect(failed.find(({ label }) => label === "Free disk")?.ok).toBe(false);
+            expect(existsSync(publishConfigPath())).toBe(false);
+            expect(existsSync(getDevDashboardStorage().getConfigPath())).toBe(false);
+        } finally {
+            await server.stop();
+        }
+    });
+
+    test("client setup re-pairs the same target and prints the old device for revocation", async () => {
+        useFixtureVaultKey();
+        const server = await startPublishServer({
+            kinds: Object.values(PUBLISH_KIND_SERVERS),
+            dataDir: join(dir, "data"),
+            stateDir: join(dir, "state"),
+            publicBase: "https://share.example.com",
+            port: 0,
+            host: "127.0.0.1",
+            minFreeBytes: 0,
+        });
+        const exitCode = process.exitCode;
+        const printed = spyOn(out, "println");
+        try {
+            await runTargetAdd("remote", {
+                driver: "paired",
+                url: server.url,
+                code: server.context.devices.createPairingCode().code,
+                publicBase: "https://share.example.com",
+                deviceName: "desk",
+                default: true,
+            });
+            const previous = (await loadPublishConfig()).client.targets.find(({ name }) => name === "remote");
+            if (previous?.transport.kind !== "paired") {
+                throw new Error("fixture has no paired target");
+            }
+
+            const previousToken = await resolveSecret(previous.transport.token);
+            await runTargetAdd("remote", {
+                driver: "paired",
+                replace: true,
+                code: server.context.devices.createPairingCode().code,
+                deviceName: "desk",
+            });
+            const { client } = await loadPublishConfig();
+            const named = client.targets.filter(({ name }) => name === "remote");
+            expect(named).toHaveLength(1);
+            const target = named[0];
+            if (target.transport.kind !== "paired") {
+                throw new Error("fixture target is no longer paired");
+            }
+
+            expect(target.transport.deviceId).not.toBe(previous.transport.deviceId);
+            expect(await resolveSecret(target.transport.token)).not.toBe(previousToken);
+            expect(target.publicBase).toBe(previous.publicBase);
+            expect(client.defaults.target).toBe("remote");
+            expect((await transportFor(target).check(target)).every(({ ok }) => ok)).toBe(true);
+            expect(printed.mock.calls.flat().join("\n")).toContain(
+                `dev-dashboard share-server devices --revoke ${previous.transport.deviceId}`
+            );
+            expect((await server.context.devices.list()).map(({ id }) => id)).toContain(previous.transport.deviceId);
+        } finally {
+            printed.mockRestore();
+            process.exitCode = exitCode;
+            await server.stop();
         }
     });
 });

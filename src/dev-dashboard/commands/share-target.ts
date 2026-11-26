@@ -1,7 +1,8 @@
 import { importLegacyShare, loadSharePublishConfig } from "@app/dev-dashboard/lib/share/legacy-share";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadPublishConfig, updatePublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { ALL_TARGETS, TARGET_NAME_RE } from "@genesiscz/utils/publish/targets";
 import {
@@ -10,11 +11,13 @@ import {
     TRANSPORT_KINDS,
     transportFor,
 } from "@genesiscz/utils/publish/transports";
+import { tokenPath } from "@genesiscz/utils/publish/transports/paired";
 import {
     MissingSetupValueError,
     type SetupAsk,
     type TransportSetupInput,
 } from "@genesiscz/utils/publish/transports/types";
+import { resolveSecret, secrets } from "@genesiscz/utils/security";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -29,6 +32,7 @@ export interface TargetAddOptions {
     publicBase?: string;
     deviceName?: string;
     default?: boolean;
+    replace?: boolean;
 }
 
 const askInTerminal: SetupAsk = async (prompt) =>
@@ -88,22 +92,65 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
             },
             ask: isInteractive() ? askInTerminal : askNever,
         };
-        await withTargetLock(name, async () => {
+        const replaced = await withTargetLock(name, async () => {
             const config = await loadPublishConfig();
-            if (config.client.targets.some((target) => target.name === name)) {
+            const previous = config.client.targets.find((target) => target.name === name);
+            if (previous && !opts.replace) {
                 throw new Error(`a share target named "${name}" exists; ${TOOL} remove ${name} first`);
             }
 
+            const pair = previous?.transport.kind === "paired" ? previous.transport : undefined;
+            const oldToken = pair?.token.path === tokenPath(name) ? await resolveSecret(pair.token) : undefined;
+            if (pair && previous) {
+                const url = opts.url ?? pair.url;
+                input.values.url = url;
+                if (!opts.publicBase && URL.canParse(url) && new URL(url).origin === pair.url) {
+                    input.values["public-base"] = previous.publicBase;
+                }
+            }
+
             const target = await transport.setup(input);
-            await updatePublishConfig((current) => ({
-                ...current,
-                client: {
-                    defaults: opts.default ? { target: name } : current.client.defaults,
-                    targets: [...current.client.targets, target],
-                },
-            }));
+            try {
+                await updatePublishConfig((current) => ({
+                    ...current,
+                    client: {
+                        defaults: opts.default ? { target: name } : current.client.defaults,
+                        targets: previous
+                            ? current.client.targets.map((entry) => (entry.name === name ? target : entry))
+                            : [...current.client.targets, target],
+                    },
+                }));
+            } catch (err) {
+                if (pair && oldToken !== undefined) {
+                    await (await secrets()).set(pair.token.path, oldToken);
+                } else {
+                    await transport.forget(target);
+                }
+
+                throw err;
+            }
+
+            if (pair && target.transport.kind === "paired") {
+                if (pair.token.path !== target.transport.token.path) {
+                    await (await secrets())
+                        .delete(pair.token.path)
+                        .catch((err: unknown) =>
+                            logger.warn(
+                                { err, target: name },
+                                "could not remove the previous token from the local vault"
+                            )
+                        );
+                }
+
+                const revoke = toolCommand("dev-dashboard share-server devices", "--revoke", pair.deviceId);
+                out.println(`Previous device ${pair.deviceId} on ${pair.url}. Revoke it on that server with ${revoke}`);
+            }
+
+            return previous !== undefined;
         });
-        out.println(`added share target ${name} (${kind})${opts.default ? ", now the default" : ""}`);
+        out.println(
+            `${replaced ? "updated" : "added"} share target ${name} (${kind})${opts.default ? ", now the default" : ""}`
+        );
     } catch (err) {
         if (err instanceof MissingSetupValueError) {
             out.error(`${err.message} in non-interactive mode`);

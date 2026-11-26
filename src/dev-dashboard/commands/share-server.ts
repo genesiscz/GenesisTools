@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
-import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
+import { importLegacyShare, loadSharePublishConfig } from "@app/dev-dashboard/lib/share/legacy-share";
 import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
 import {
     cloudflaredConfig,
@@ -15,15 +15,33 @@ import {
 } from "@app/dev-dashboard/lib/share/server/tunnel";
 import { Executor, isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { PairCodeResponseSchema } from "@genesiscz/utils/device-pairing/types";
+import { formatBytes } from "@genesiscz/utils/format";
+import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
 import { PUBLISH_KIND_IDS } from "@genesiscz/utils/genesis-tools/publish/kinds";
-import { shareTargetAddCommand } from "@genesiscz/utils/genesis-tools/tools/publish";
+import { shareServerSetupCommand, shareTargetAddCommand } from "@genesiscz/utils/genesis-tools/tools/publish";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { ADMIN_API, DeviceListSchema, PUBLISH_SERVER_HEADER } from "@genesiscz/utils/publish/api";
-import { adminRequest, parsePublicOrigin, startPublishServer } from "@genesiscz/utils/publish/server";
+import {
+    ADMIN_API,
+    DeviceListSchema,
+    HealthSchema,
+    PUBLISH_API,
+    PUBLISH_SERVER_HEADER,
+    PUBLISH_SERVER_ID,
+} from "@genesiscz/utils/publish/api";
+import {
+    ADMIN_SOCKET,
+    adminRequest,
+    DEFAULT_MIN_FREE_BYTES,
+    parsePublicOrigin,
+    startPublishServer,
+} from "@genesiscz/utils/publish/server";
 import { listSnapshotIds } from "@genesiscz/utils/publish/snapshot-store";
+import { transportFor } from "@genesiscz/utils/publish/transports";
+import type { TransportCheck } from "@genesiscz/utils/publish/transports/types";
 import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
+import { formatTable } from "@genesiscz/utils/table";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import { z } from "zod";
 
@@ -50,6 +68,7 @@ export interface ShareServerServeOptions extends ShareServerPaths {
     publicBase?: string;
     pair?: boolean;
     tunnel?: string;
+    minFreeGb?: number;
 }
 
 function fail(message: string, suggestion?: string): void {
@@ -62,12 +81,14 @@ function fail(message: string, suggestion?: string): void {
     process.exitCode = 1;
 }
 
-async function printPairCode(stateDir: string, publicBase: string): Promise<void> {
+async function printPairCode(stateDir: string, publicBase: string): Promise<number> {
     const { code, expiresAt } = PairCodeResponseSchema.parse(
         await adminRequest({ stateDir, path: ADMIN_API.pairCode, method: "POST" })
     );
     out.println(`pairing code: ${code} (valid until ${new Date(expiresAt).toLocaleString()})`);
     out.println(`On the client: ${shareTargetAddCommand({ url: publicBase, code })}`);
+    await out.flush();
+    return Date.parse(expiresAt);
 }
 
 /** `share-server serve`: run the share server in the foreground (what the service unit runs). */
@@ -102,6 +123,7 @@ export async function runShareServerServe(opts: ShareServerServeOptions): Promis
         publicBase,
         port: opts.port,
         host: opts.host,
+        minFreeBytes: minFreeBytes(opts.minFreeGb),
     });
     out.println(
         `Publish server on ${server.url} (data ${dataDir}, public ${server.context.origin}; kinds ${PUBLISH_KIND_IDS.join(", ")})`
@@ -121,32 +143,170 @@ export async function runShareServerServe(opts: ShareServerServeOptions): Promis
     }
 }
 
-/** `share-server status`: is this server answering on the port, and what does it hold. */
-export async function runShareServerStatus(opts: ShareServerPaths & { port: number }): Promise<void> {
-    const { dataDir, stateDir } = shareServerDirs(opts);
-    const url = `http://127.0.0.1:${opts.port}/`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) }).catch((err: unknown) => {
-        log.debug({ err, url }, "share server did not answer");
-        return null;
-    });
-    const ours = res?.headers.get(PUBLISH_SERVER_HEADER) !== null && res !== null;
-    out.println(`server:    ${ours ? "up" : res ? "another server holds the port" : "down"} (${url})`);
-    for (const kind of PUBLISH_KIND_IDS) {
-        out.println(`${kind} snapshots: ${(await listSnapshotIds({ dataDir, kind })).length} in ${dataDir}`);
+export interface ShareServerStatusOptions extends ShareServerPaths {
+    port: number;
+    publicBase?: string;
+    minFreeGb?: number;
+    json?: boolean;
+}
+
+export interface ShareServerStatusRow extends TransportCheck {
+    target?: string;
+}
+
+interface HealthProbe {
+    answered: boolean;
+    ours: boolean;
+    kinds?: string[];
+    detail: string;
+}
+
+function minFreeBytes(gb: number | undefined): number {
+    return gb === undefined ? DEFAULT_MIN_FREE_BYTES : Math.ceil(gb * 1024 ** 3);
+}
+
+async function probeHealth(origin: string): Promise<HealthProbe> {
+    const url = new URL(PUBLISH_API.health, origin);
+    let response: Response;
+    try {
+        response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error" });
+    } catch (err) {
+        log.debug({ err, url: url.href }, "publish server did not answer");
+        return { answered: false, ours: false, detail: `${origin} did not answer` };
     }
 
-    if (ours) {
-        const devices = await adminRequest({ stateDir, path: ADMIN_API.devices }).catch((err: unknown) => {
-            log.debug({ err }, "admin socket did not answer");
-            return null;
-        });
-        const parsed = DeviceListSchema.safeParse(devices);
-        out.println(
-            `devices:   ${parsed.success ? parsed.data.devices.length : "unknown (no access to the admin socket)"}`
+    const ours = response.headers.get(PUBLISH_SERVER_HEADER) === PUBLISH_SERVER_ID;
+    if (!response.ok || !ours) {
+        await response.body?.cancel();
+        const detail =
+            ours && response.status === 404
+                ? `Health route missing. Update with ${shareServerSetupCommand("server")}.`
+                : `${url.href} returned HTTP ${response.status}${ours ? "" : " without the publish server header"}`;
+        return { answered: true, ours, detail };
+    }
+
+    try {
+        const health = HealthSchema.parse(await response.json());
+        return { answered: true, ours, kinds: health.kinds, detail: health.kinds.join(", ") };
+    } catch (err) {
+        log.debug({ err, url: url.href }, "publish health response rejected");
+        return { answered: true, ours, detail: "Invalid publish health response" };
+    }
+}
+
+function hasKinds(got: string[] | undefined, expected: readonly string[]): boolean {
+    return got !== undefined && expected.every((kind) => got.includes(kind));
+}
+
+async function checkRow(label: string, check: () => Promise<string> | string): Promise<ShareServerStatusRow> {
+    try {
+        return { label, ok: true, detail: await check() };
+    } catch (err) {
+        log.debug({ err, label }, "publish server check failed");
+        return { label, ok: false, detail: err instanceof Error ? err.message : String(err) };
+    }
+}
+
+async function readDevices(stateDir: string) {
+    return DeviceListSchema.parse(await adminRequest({ stateDir, path: ADMIN_API.devices })).devices;
+}
+
+async function serverStatusRows(opts: ShareServerStatusOptions): Promise<ShareServerStatusRow[]> {
+    const origin = `http://127.0.0.1:${opts.port}`;
+    const local = await probeHealth(origin);
+    if (!local.answered && !existsSync(UNIT_PATH)) {
+        return [];
+    }
+
+    const { dataDir, stateDir } = shareServerDirs(opts);
+    const rows: ShareServerStatusRow[] = [
+        { label: "Local port", ok: local.ours, detail: local.ours ? origin : local.detail },
+        { label: "Local health", ok: hasKinds(local.kinds, PUBLISH_KIND_IDS), detail: local.detail },
+    ];
+
+    if (opts.publicBase) {
+        const publicBase = opts.publicBase;
+        rows.push(
+            await checkRow("Public health", async () => {
+                const publicOrigin = parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
+                const remote = await probeHealth(publicOrigin);
+                const expected = local.kinds ?? PUBLISH_KIND_IDS;
+                if (!hasKinds(remote.kinds, expected) || remote.kinds?.length !== expected.length) {
+                    throw new Error(
+                        remote.kinds
+                            ? `${publicOrigin} serves ${remote.detail}; expected ${expected.join(", ")}`
+                            : remote.detail
+                    );
+                }
+
+                return `${publicOrigin} serves ${remote.detail}`;
+            })
         );
     }
 
-    if (!ours) {
+    let deviceCount: number | undefined;
+    rows.push(
+        await checkRow("Admin socket", async () => {
+            deviceCount = (await readDevices(stateDir)).length;
+            return join(stateDir, ADMIN_SOCKET);
+        })
+    );
+    rows.push({
+        label: "Paired devices",
+        ok: deviceCount !== undefined,
+        detail: deviceCount === undefined ? "Device count unavailable" : String(deviceCount),
+    });
+
+    const snapshots = PUBLISH_KIND_IDS.map((kind) =>
+        checkRow(`${kind} snapshots`, async () => {
+            const ids = await listSnapshotIds({ dataDir, kind });
+            return `${ids.length} in ${join(dataDir, kind)}`;
+        })
+    );
+    const disk = checkRow("Free disk", () => {
+        const available = freeDiskSpace(dataDir).available;
+        const required = minFreeBytes(opts.minFreeGb);
+        const detail = `${formatBytes(available)} available, ${formatBytes(required)} required`;
+        if (available < required) {
+            throw new Error(detail);
+        }
+
+        return detail;
+    });
+    rows.push(...(await Promise.all([...snapshots, disk])));
+
+    return rows;
+}
+
+export async function collectShareServerStatus(opts: ShareServerStatusOptions): Promise<ShareServerStatusRow[]> {
+    const [server, config] = await Promise.all([serverStatusRows(opts), loadSharePublishConfig()]);
+    const clients = await Promise.all(
+        config.client.targets.map(async (target) => {
+            const rows = await transportFor(target).check(target);
+            return rows.map((row) => ({ ...row, target: target.name }));
+        })
+    );
+    return [...server, ...clients.flat()];
+}
+
+function printStatus(rows: ShareServerStatusRow[], json = false): void {
+    if (json) {
+        out.result(rows);
+    } else {
+        out.println(
+            formatTable(
+                rows.map(({ target, label, ok, detail }) => [target ?? "server", label, ok ? "ok" : "failed", detail]),
+                ["Target", "Check", "Status", "Detail"],
+                { maxColWidth: 120 }
+            )
+        );
+    }
+}
+
+export async function runShareServerStatus(opts: ShareServerStatusOptions): Promise<void> {
+    const rows = await collectShareServerStatus(opts);
+    printStatus(rows, opts.json);
+    if (rows.some((row) => !row.ok)) {
         process.exitCode = 1;
     }
 
@@ -344,7 +504,11 @@ async function systemctl(args: string[]): Promise<boolean> {
     return result.success;
 }
 
-/** `share-server up` / `down`: start (and enable) or stop (and disable) the installed service. */
+async function startInstalledService(): Promise<boolean> {
+    return (await systemctl(["enable", SHARE_SERVER_SERVICE])) && systemctl(["restart", SHARE_SERVER_SERVICE]);
+}
+
+/** `share-server up` enables and restarts. `down` disables and stops. */
 export async function runShareServerService(action: "up" | "down"): Promise<void> {
     if (!hasSystemd()) {
         return fail(
@@ -360,9 +524,8 @@ export async function runShareServerService(action: "up" | "down"): Promise<void
         );
     }
 
-    const ok = await systemctl(
-        action === "up" ? ["enable", "--now", SHARE_SERVER_SERVICE] : ["disable", "--now", SHARE_SERVER_SERVICE]
-    );
+    const ok =
+        action === "up" ? await startInstalledService() : await systemctl(["disable", "--now", SHARE_SERVER_SERVICE]);
 
     if (ok) {
         out.println(`${SHARE_SERVER_SERVICE} ${action === "up" ? "started" : "stopped"}`);
@@ -401,25 +564,48 @@ async function ask(message: string, given: string | undefined, initial?: string)
     return p.text({ message, initialValue: initial });
 }
 
-/**
- * The server part of setup, also its update and its check: the unit it would write against the one installed, the
- * service state, and what `status` sees. With root on a systemd host it writes the unit and starts it; otherwise it
- * prints the unit for the host's own config management (GenesisInfra on the vpn host).
- */
+async function offerPairing(stateDir: string, publicBase: string, pairNow?: boolean): Promise<void> {
+    if (!isInteractive()) {
+        if (pairNow) {
+            await printPairCode(stateDir, publicBase);
+        }
+
+        return;
+    }
+
+    let confirmed = pairNow ?? (await p.confirm({ message: "Pair a computer with this server now?" }));
+    while (confirmed) {
+        const known = new Set((await readDevices(stateDir)).map(({ id }) => id));
+        const expiresAt = await printPairCode(stateDir, publicBase);
+        let name: string | undefined;
+
+        while (Date.now() < expiresAt) {
+            await Bun.sleep(Math.min(2000, Math.max(0, expiresAt - Date.now())));
+            const device = (await readDevices(stateDir)).find(({ id }) => !known.has(id));
+            if (device) {
+                name = device.name;
+                break;
+            }
+        }
+
+        out.println(name ? `Paired ${name}` : "The pairing code expired.");
+        confirmed = await p.confirm({ message: "Pair a computer with this server now?" });
+    }
+}
+
 async function setupServer(opts: ShareServerSetupOptions): Promise<boolean> {
     const publicBase = await ask("Public origin of the pages (e.g. https://share.example.com)", opts.publicBase);
-
     if (!publicBase) {
         fail(
             "--public-base is required",
             suggestCommand(TOOL, {
-                replaceCommand: ["setup", "--mode", "server", "--public-base", "https://share.example.com/md"],
+                replaceCommand: ["setup", "--mode", "server", "--public-base", "https://share.example.com"],
             })
         );
         return false;
     }
 
-    parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
+    const origin = parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
     const { dataDir, stateDir } = shareServerDirs(opts);
     const unit = shareServerUnit({
         root: opts.root,
@@ -431,34 +617,47 @@ async function setupServer(opts: ShareServerSetupOptions): Promise<boolean> {
         user: opts.user,
         tunnel: opts.tunnel,
     });
-    const installed = await readFile(UNIT_PATH, "utf8").catch(() => null);
+    const installed = await readFile(UNIT_PATH, "utf8").catch((err: unknown) => {
+        log.debug({ err, unit: UNIT_PATH }, "could not read the installed service unit");
+        return null;
+    });
     out.println(
         `unit ${UNIT_PATH}: ${installed === null ? "not installed" : installed === unit ? "up to date" : "differs from this setup"}`
     );
 
-    if (installed === unit) {
-        await runShareServerStatus({ ...opts, port: opts.port });
-        return true;
+    if (installed !== unit) {
+        const canWrite = hasSystemd() && process.getuid?.() === 0 && isInteractive();
+        if (canWrite && (await p.confirm({ message: `Write ${UNIT_PATH} and restart the service?` }))) {
+            for (const [dir, mode] of [
+                [dataDir, "0755"],
+                [stateDir, "0700"],
+            ]) {
+                if (
+                    !existsSync(dir) &&
+                    !(await runStep(["install", "-d", "-m", mode, "-o", opts.user, "-g", opts.user, "--", dir]))
+                ) {
+                    return false;
+                }
+            }
+
+            await writeFile(UNIT_PATH, unit);
+            if (!(await systemctl(["daemon-reload"])) || !(await startInstalledService())) {
+                return false;
+            }
+        } else {
+            out.println("Install this unit with your host's config management, then run share-server up.");
+            out.print(unit);
+        }
     }
 
-    const canWrite = hasSystemd() && process.getuid?.() === 0;
-
-    if (
-        !canWrite ||
-        !isInteractive() ||
-        !(await p.confirm({ message: `Write ${UNIT_PATH} and (re)start the service?` }))
-    ) {
-        out.println("The unit for this setup (install it with your host's config management, then share-server up):");
-        out.print(unit);
-        return true;
+    const rows = await collectShareServerStatus({ ...opts, publicBase: origin });
+    printStatus(rows);
+    const admin = rows.find((row) => !row.target && row.label === "Admin socket");
+    if (opts.pair || admin?.ok) {
+        await offerPairing(stateDir, origin, opts.pair);
     }
 
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(UNIT_PATH, unit);
-    const ok = (await systemctl(["daemon-reload"])) && (await systemctl(["enable", "--now", SHARE_SERVER_SERVICE]));
-    await systemctl(["restart", SHARE_SERVER_SERVICE]);
-
-    return ok;
+    return rows.every(({ ok }) => ok);
 }
 
 /** `share-server setup`: set up, update or check a share server, a client (this Mac), or both, then offer pairing. */
@@ -491,16 +690,6 @@ export async function runShareServerSetup(opts: ShareServerSetupOptions): Promis
             return;
         }
 
-        if (mode !== "client") {
-            const pairNow =
-                opts.pair ??
-                (isInteractive() ? await p.confirm({ message: "Pair a computer with this server now?" }) : false);
-
-            if (pairNow) {
-                await runShareServerPair({ ...opts, publicBase: opts.publicBase });
-            }
-        }
-
         if (mode !== "server") {
             const name = await ask("Name of the share target on this machine", opts.target, "public");
 
@@ -508,7 +697,7 @@ export async function runShareServerSetup(opts: ShareServerSetupOptions): Promis
                 return fail("--target <name> is required for the client part");
             }
 
-            await runTargetAdd(name, { driver: "paired", url: opts.url, code: opts.code, publicBase: opts.url });
+            await runTargetAdd(name, { driver: "paired", url: opts.url, code: opts.code, replace: true });
         }
     } catch (err) {
         fail(err instanceof Error ? err.message : String(err));

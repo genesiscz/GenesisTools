@@ -42,7 +42,7 @@ import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 
 export async function killChild(child: ChildProcess | Subprocess, opts: { graceMs?: number } = {}): Promise<boolean> {
     return killWithEscalation(child, opts);
@@ -260,6 +260,14 @@ program
 
 const collectTargets = (value: string, previous: string[]) => [...previous, value];
 const portOption = (value: string): number => Number.parseInt(value, 10);
+const minFreeOption = (value: string): number => {
+    const gb = Number(value);
+    if (!value.trim() || !Number.isFinite(gb) || gb < 0 || gb * 1024 ** 3 > Number.MAX_SAFE_INTEGER) {
+        throw new InvalidArgumentError("Enter a non-negative number of GiB.");
+    }
+
+    return gb;
+};
 
 const share = program
     .command("share")
@@ -267,7 +275,7 @@ const share = program
     .argument("<path>", "Vault-relative or absolute path to a .md note")
     .option(
         "--target <name>",
-        'share target (repeatable, or "all"); default: share.defaults.target',
+        'share target (repeatable, or "all"); uses the configured default when omitted',
         collectTargets,
         []
     )
@@ -315,7 +323,7 @@ shareTarget
     .description("Add a share target with the driver's guided setup (mac-live, paired, ssh-rsync)")
     .argument("<name>", "target name, e.g. home or public")
     .option("--driver [kind]", "mac-live | paired | ssh-rsync")
-    .option("--url <url>", "paired: the share server's share base (https://host/share)")
+    .option("--url <url>", "paired: publish server origin (https://share.example.com)")
     .option("--code <code>", "paired: the one-time code from `share-server pair`")
     .option("--device-name <name>", "paired: how the server lists this Mac (default: host name)")
     .option("--host <user@host>", "ssh-rsync: ssh destination")
@@ -341,18 +349,19 @@ shareTarget.command("default").argument("<name>").description("Set the default s
 
 const shareServer = program
     .command("share-server")
-    .description("The share server: serves /share/<slug> from note snapshots, on a host that has no vault");
+    .description("Serve note and artifact snapshots and manage paired devices");
 
 const serverPaths = (command: Command): Command =>
     command
-        .option("--data <dir>", "snapshot folder (one <slug>/ per note)")
+        .option("--data <dir>", "snapshot folder (one <kind>/<id>/ per publication)")
         .option("--state <dir>", "state folder: paired devices, the admin socket, tunnel configs");
 
 serverPaths(shareServer.command("serve"))
     .description("Run the share server in the foreground (what the service runs)")
     .option("--port <port>", "port", portOption, SHARE_SERVER_PORT)
     .option("--host <host>", "bind address", "127.0.0.1")
-    .option("--public-base <url>", "public base: origin plus one path, e.g. https://share.example.com/md")
+    .option("--public-base <url>", "public origin, e.g. https://share.example.com")
+    .option("--min-free-gb <n>", "minimum free disk space in GiB after upload (default: 2)", minFreeOption)
     .option("--pair", "print a one-time pairing code once it is up")
     .option("--tunnel <name>", "also run the cloudflared connector set up by `share-server tunnel`")
     .action(runShareServerServe);
@@ -360,7 +369,7 @@ serverPaths(shareServer.command("serve"))
 serverPaths(shareServer.command("setup"))
     .description("Set up, update or check a share server, a client, or both; then offer pairing")
     .option("--mode [mode]", "server | client | both")
-    .option("--public-base <url>", "server: public base, e.g. https://share.example.com/md")
+    .option("--public-base <url>", "server: public origin, e.g. https://share.example.com")
     .option("--port <port>", "server: port", portOption, SHARE_SERVER_PORT)
     .option("--user <name>", "server: service user", "genesis-share")
     .option("--root <dir>", "server: GenesisTools checkout", PROJECT_ROOT)
@@ -368,13 +377,13 @@ serverPaths(shareServer.command("setup"))
     .option("--tunnel <name>", "server: run the cloudflared connector too")
     .option("--pair", "server: print a pairing code at the end")
     .option("--target <name>", "client: share target name")
-    .option("--url <url>", "client: the server's public base")
+    .option("--url <url>", "client: publish server origin")
     .option("--code <code>", "client: the pairing code")
     .action(runShareServerSetup);
 
 shareServer
     .command("up")
-    .description("Start the installed share server service")
+    .description("Enable and restart the installed share server service")
     .action(() => runShareServerService("up"));
 shareServer
     .command("down")
@@ -382,8 +391,11 @@ shareServer
     .action(() => runShareServerService("down"));
 
 serverPaths(shareServer.command("status"))
-    .description("Is the share server up on the port, and what does it hold")
+    .description("Check server health, snapshots, disk space and configured targets")
     .option("--port <port>", "port", portOption, SHARE_SERVER_PORT)
+    .option("--public-base <url>", "also check health through this public origin")
+    .option("--min-free-gb <n>", "minimum free disk space in GiB (default: 2)", minFreeOption)
+    .option("--json", "print check results as JSON")
     .action(runShareServerStatus);
 
 serverPaths(shareServer.command("pair"))
