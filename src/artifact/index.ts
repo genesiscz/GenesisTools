@@ -4,11 +4,12 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
+import { createBoxTable, formatTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -602,5 +603,109 @@ program
             }
         }
     );
+
+const collectTarget = (name: string, targets: string[]): string[] => [...targets, name];
+
+program
+    .command("publish")
+    .description("Build a self-contained artifact and publish it to a configured target")
+    .argument("[target]", "registered name, directory or artifact file (default: cwd)")
+    .option("-e, --entry <file>", "entry file, relative to the folder")
+    .option("--title <text>", "title of the publication")
+    .option("--target <name>", "publish target (repeatable, or all)", collectTarget, [])
+    .option("--no-clipboard", "skip copying the first publication URL")
+    .option("--json", "print the id and target outcomes as JSON")
+    .action(
+        async (
+            target: string | undefined,
+            opts: { entry?: string; title?: string; target: string[]; clipboard: boolean; json?: boolean }
+        ) => {
+            const { publishArtifact } = await import("./lib/publish");
+            try {
+                const result = await publishArtifact({
+                    target,
+                    entry: opts.entry,
+                    title: opts.title,
+                    targetNames: opts.target,
+                });
+                if (opts.json) {
+                    out.result(result);
+                } else {
+                    for (const outcome of result.outcomes) {
+                        if (outcome.error) {
+                            out.printlnErr(`${outcome.target}: ${outcome.error}`);
+                        } else if (outcome.url) {
+                            out.println(
+                                result.outcomes.length === 1 ? outcome.url : `${outcome.target}\t${outcome.url}`
+                            );
+                        }
+                    }
+                }
+
+                const first = result.outcomes.find(({ url }) => url)?.url;
+                if (opts.clipboard && first) {
+                    await copyToClipboard(first, { label: "artifact URL" });
+                }
+
+                if (!first || result.outcomes.some(({ error }) => error)) {
+                    process.exitCode = 1;
+                }
+            } catch (err) {
+                out.log.error(err instanceof Error ? err.message : String(err));
+                process.exitCode = 1;
+            }
+        }
+    );
+
+program
+    .command("unpublish")
+    .description("Remove a publication from selected targets, or from all targets")
+    .argument("<id|target>", "publication id, registered name, directory or artifact file")
+    .option("--target <name>", "publish target (repeatable, or all)", collectTarget, [])
+    .action(async (idOrTarget: string, opts: { target: string[] }) => {
+        const { unpublishArtifact } = await import("./lib/publish");
+        try {
+            const outcomes = await unpublishArtifact({ idOrTarget, targetNames: opts.target });
+            for (const outcome of outcomes) {
+                if (outcome.error) {
+                    out.printlnErr(`${outcome.target}: ${outcome.error}`);
+                    process.exitCode = 1;
+                } else {
+                    out.println(`${outcome.target}: unpublished`);
+                }
+            }
+        } catch (err) {
+            out.log.error(err instanceof Error ? err.message : String(err));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("published")
+    .description("List published artifacts and when each target was synced")
+    .option("--json", "print publications as JSON")
+    .action(async (opts: { json?: boolean }) => {
+        const { listPublishedArtifacts } = await import("./lib/publish");
+        const publications = await listPublishedArtifacts();
+        if (opts.json) {
+            out.result(publications);
+            return;
+        }
+
+        out.println(
+            formatTable(
+                publications.map(({ title, id, syncs, stale }) => [
+                    title,
+                    id,
+                    Object.entries(syncs)
+                        .map(([target, sync]) => `${target} ${sync.syncedAt}`)
+                        .join(", "),
+                    stale ? "stale" : "current",
+                ]),
+                ["Title", "ID", "Targets and sync times", "Status"],
+                { maxColWidth: 140 }
+            )
+        );
+    });
 
 await runTool(program, { tool: "artifact" });
