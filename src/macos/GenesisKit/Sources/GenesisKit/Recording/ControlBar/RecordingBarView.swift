@@ -270,6 +270,7 @@ public struct RecordingBarView: View {
 
     private var head: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if motion.growth == .up { notes }
             HStack(spacing: 4) {
                 RecordingGrip().frame(width: 14, height: RecordingBarMetrics.cell)
                     .overlay(RecordingWindowDragArea(dragged: onDrag))
@@ -286,7 +287,7 @@ public struct RecordingBarView: View {
             }
             .frame(height: RecordingBarMetrics.cell)
             statusLine
-            notes
+            if motion.growth == .down { notes }
         }
         .padding(.horizontal, 8).padding(.top, 7).padding(.bottom, 8)
     }

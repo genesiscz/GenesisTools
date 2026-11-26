@@ -111,7 +111,8 @@ struct RecordingWindowDragArea: NSViewRepresentable {
 
 final class RecordingWindowDragView: NSView {
     var dragged: (() -> Void)?
-    private var last: CGPoint?
+    /// Where the drag began: the pointer in global CoreGraphics points, and this view's origin on the screen.
+    private var grab: (pointer: CGPoint, view: CGPoint)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -124,29 +125,43 @@ final class RecordingWindowDragView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: last == nil ? .openHand : .closedHand) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: grab == nil ? .openHand : .closedHand) }
 
     /// Global CoreGraphics points (y down), from the event itself, so a drag delivered in the background moves it too.
     private func location(_ event: NSEvent) -> CGPoint {
         event.cgEvent?.location ?? CGPoint(x: NSEvent.mouseLocation.x, y: -NSEvent.mouseLocation.y)
     }
 
+    /// This view's origin in its window, where it sits now.
+    private var originInWindow: CGPoint { convert(bounds.origin, to: nil) }
+
     override func mouseDown(with event: NSEvent) {
-        last = location(event)
-        window?.invalidateCursorRects(for: self)
+        guard let window else { return }
+        grab = (location(event), window.convertPoint(toScreen: originInWindow))
+        window.invalidateCursorRects(for: self)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window, let last else { return }
-        let point = location(event)
-        window.setFrameOrigin(CGPoint(x: window.frame.minX + point.x - last.x, y: window.frame.minY - (point.y - last.y)))
-        self.last = point
+        guard let window, let grab else { return }
+        window.setFrameOrigin(Self.windowOrigin(grabbedAt: grab.pointer, viewWas: grab.view, pointer: location(event),
+                                                viewInWindow: originInWindow))
         dragged?()
     }
 
     override func mouseUp(with event: NSEvent) {
-        last = nil
+        grab = nil
         window?.invalidateCursorRects(for: self)
+    }
+
+    /// The window origin that puts this view where the pointer has carried it since mouse-down: the view's screen
+    /// origin then, plus the pointer's whole travel (CoreGraphics y runs down, so it is flipped), less where the view
+    /// sits in its window now, so a window that changes height during the drag keeps the grabbed spot under the
+    /// pointer. Whole points, as the window server keeps them. Adding each event's delta to the window's rounded
+    /// origin lost the fraction on every event: 200 steps of 0.4 pt moved the window 0 pt one way and 200 pt the other.
+    static func windowOrigin(grabbedAt start: CGPoint, viewWas view: CGPoint, pointer: CGPoint,
+                             viewInWindow: CGPoint) -> CGPoint {
+        CGPoint(x: (view.x + pointer.x - start.x - viewInWindow.x).rounded(),
+                y: (view.y - (pointer.y - start.y) - viewInWindow.y).rounded())
     }
 }
 
@@ -313,6 +328,13 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// Whether losing the keyboard closes the picker as a cancel. The recorder's capture picker sets it from its
     /// setting (stay open by default): agents' apps that take the focus closed it under the person (2026-11-09).
     public var closesOnFocusLoss = true
+    /// Counts the presentations, so a size reported by content that was replaced since is never applied.
+    private(set) var presentation = 0
+    /// The content's latest reported size, with the presentation it belongs to.
+    private var reported: (presentation: Int, size: CGSize)?
+    var scheduleResize: (@escaping @MainActor () -> Void) -> Void = { action in
+        DispatchQueue.main.async { action() }
+    }
 
     override public init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
@@ -331,11 +353,16 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// the keyboard; the panel's first click takes it (`FirstMouseHostingView`).
     public func present(_ view: some View, near anchor: CGPoint, focus: Bool = true, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
+        presentation += 1
+        let presentation = self.presentation
         // A fresh hosting view each time: a reused one that had been on screen measured 0x0 after a new root view, so
         // the second picker of a session opened invisible and the recorder waited for a choice nobody could see.
+        // The content is pinned to the window's top, the edge the window keeps when it follows the content. Until the
+        // window has caught up (a main-queue turn after each layout), a list that grew cuts only the bottom; centred, it
+        // cut the header and the tabs off the top by half the difference (105 pt of a 553 pt picker in a 343 pt window).
         let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
-            DispatchQueue.main.async { self?.resize(to: size) }
-        }))
+            self?.report(size: size, for: presentation)
+        }.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)))
         let size = Self.measure(hosting)
         window.contentView = hosting
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.screens.first
@@ -355,6 +382,18 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         let size = hosting.fittingSize
         hosting.sizingOptions = []
         return CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
+    }
+
+    func report(size: CGSize, for presentation: Int) {
+        guard presentation == self.presentation else { return }
+        reported = (presentation, size)
+        // Never resize the window inside the layout pass that measured it. The latest size wins.
+        scheduleResize { [weak self] in self?.followReportedSize() }
+    }
+
+    private func followReportedSize() {
+        guard let reported, reported.presentation == presentation else { return }
+        resize(to: reported.size)
     }
 
     /// Follows the content (a tab that lists more or fewer rows), keeping the top edge inside its screen.

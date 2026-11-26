@@ -275,12 +275,15 @@ public final class RecordingBarPanel {
     }
 }
 
-/// Keeps the bar against the edge its drawer opens away from, so a taller window never moves the first row.
+/// Keeps the bar against the edge its drawer opens away from, so a window of another height never moves the first row.
+/// The zero minimums matter for a window shorter than the content: without them the frame takes the content's own
+/// height and the hosting view centres it, which moved the first row by half the shortfall.
 private struct RecordingBarRoot<Content: View>: View {
     @ObservedObject var motion: RecordingBarMotion
     let content: Content
 
     var body: some View {
-        content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: motion.growth == .up ? .bottom : .top)
+        content.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity,
+                      alignment: motion.growth == .up ? .bottom : .top)
     }
 }
