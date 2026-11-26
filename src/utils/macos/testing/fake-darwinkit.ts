@@ -16,6 +16,20 @@ while IFS= read -r line; do
 done
 `;
 
+const SILENT_HELPER = `#!/bin/bash
+while IFS= read -r line; do
+  :
+done
+`;
+
+/** A helper that keeps its pipes open without sending ready. */
+export function silentDarwinKitPath(): string {
+    return persistentFixture("darwinkit-silent", SILENT_HELPER, (path) => {
+        writeFileSync(path, SILENT_HELPER);
+        chmodSync(path, 0o755);
+    });
+}
+
 /** The path of the fake helper, named `darwinkit`, made once and kept (see persistentFixture). */
 export function fakeDarwinKitPath(): string {
     return persistentFixture("darwinkit", FAKE_HELPER, (path) => {

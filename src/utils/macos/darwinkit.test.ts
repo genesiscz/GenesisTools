@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     createIdleCloser,
     GuardedDarwinKit,
@@ -7,7 +9,7 @@ import {
     shouldAnnounceAccessPrompt,
     translateDarwinKitAccessError,
 } from "./darwinkit";
-import { fakeDarwinKitPath } from "./testing/fake-darwinkit";
+import { fakeDarwinKitPath, silentDarwinKitPath } from "./testing/fake-darwinkit";
 
 /**
  * `MacReminders.requestAccess` retires the DarwinKit helper it spawned, because
@@ -220,6 +222,17 @@ describe("holdUntilSettled", () => {
         expect(expired).toBe(1);
     });
 
+    test("expiry rejects with the deadline even when cleanup throws", async () => {
+        const pending = holdUntilSettled(new Promise<never>(() => {}), {
+            ms: 20,
+            what: "stalled helper",
+            onExpire: () => {
+                throw new Error("cleanup failed");
+            },
+        });
+        await expect(pending).rejects.toThrow("stalled helper after 20 ms");
+    });
+
     test("negative control: a settled wait never runs onExpire", async () => {
         let expired = 0;
         await holdUntilSettled(Promise.resolve(), {
@@ -236,6 +249,53 @@ describe("holdUntilSettled", () => {
 });
 
 describe("GuardedDarwinKit", () => {
+    test("closes a silent helper and rejects connect at the deadline", async () => {
+        const dk = new GuardedDarwinKit(
+            { binary: silentDarwinKitPath(), reconnect: { enabled: false } },
+            { connectMs: 40 }
+        );
+        const close = spyOn(dk, "close");
+        try {
+            await expect(dk.connect()).rejects.toThrow("The darwinkit helper sent no ready line after 40 ms");
+            expect(close).toHaveBeenCalledTimes(1);
+        } finally {
+            close.mockRestore();
+            await dk.close();
+        }
+    });
+
+    test("a standalone CLI stays alive until a silent helper fails its deadline", async () => {
+        const source = `import { GuardedDarwinKit } from ${SafeJSON.stringify(import.meta.resolve("./darwinkit"))};
+const dk = new GuardedDarwinKit(
+    { binary: ${SafeJSON.stringify(silentDarwinKitPath())}, reconnect: { enabled: false } },
+    { connectMs: 40 }
+);
+try {
+    await dk.connect();
+    process.exitCode = 1;
+} catch (error) {
+    process.stdout.write(String(error));
+    process.exitCode = 7;
+} finally {
+    await dk.close();
+}`;
+        const child = Bun.spawn([process.execPath, "--eval", source], {
+            cwd: process.cwd(),
+            env: env.getProcessEnv(),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const timeout = setTimeout(() => child.kill(), 5_000);
+        try {
+            const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+            expect(code).toBe(7);
+            expect(output).toContain("The darwinkit helper sent no ready line after 40 ms");
+        } finally {
+            clearTimeout(timeout);
+            child.kill();
+        }
+    });
+
     test("answers through a helper that sends ready, and passes its status through", async () => {
         const dk = new GuardedDarwinKit({ binary: fakeDarwinKitPath(), timeout: 5_000, reconnect: { enabled: false } });
 

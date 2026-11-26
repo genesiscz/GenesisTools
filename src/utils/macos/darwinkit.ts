@@ -83,8 +83,12 @@ export function holdUntilSettled<T>(
 ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => {
-            onExpire?.();
             reject(new Error(`${what} after ${ms} ms`));
+            try {
+                onExpire?.();
+            } catch (error) {
+                logger.debug({ error, what }, "darwinkit deadline cleanup failed");
+            }
         }, ms);
 
         work.then(resolve, reject).finally(() => clearTimeout(timer));
@@ -97,15 +101,19 @@ export function holdUntilSettled<T>(
  */
 export class GuardedDarwinKit extends DarwinKit {
     private readonly requestTimeoutMs: number;
+    private readonly connectDeadlineMs: number;
+    private readonly replyGraceMs: number;
 
-    constructor(options?: DarwinKitOptions) {
+    constructor(options?: DarwinKitOptions, deadlines: { connectMs?: number; replyGraceMs?: number } = {}) {
         super(options);
         this.requestTimeoutMs = options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        this.connectDeadlineMs = deadlines.connectMs ?? CONNECT_DEADLINE_MS;
+        this.replyGraceMs = deadlines.replyGraceMs ?? REPLY_GRACE_MS;
     }
 
     override connect(): Promise<ReadyNotification> {
         return holdUntilSettled(super.connect(), {
-            ms: CONNECT_DEADLINE_MS,
+            ms: this.connectDeadlineMs,
             what: "The darwinkit helper sent no ready line",
             onExpire: () => {
                 void this.close();
@@ -121,7 +129,7 @@ export class GuardedDarwinKit extends DarwinKit {
         await this.connect();
 
         return holdUntilSettled(super.call(method, params, options), {
-            ms: (options?.timeout ?? this.requestTimeoutMs) + REPLY_GRACE_MS,
+            ms: (options?.timeout ?? this.requestTimeoutMs) + this.replyGraceMs,
             what: `The darwinkit helper sent no answer to ${method}`,
             onExpire: () => {
                 void this.close();
@@ -130,13 +138,13 @@ export class GuardedDarwinKit extends DarwinKit {
     }
 }
 
-let _instance: DarwinKit | null = null;
+let _instance: GuardedDarwinKit | null = null;
 
 export function hasDarwinKit(): boolean {
     return _instance !== null;
 }
 
-export function getDarwinKit(options?: DarwinKitOptions): DarwinKit {
+export function getDarwinKit(options?: DarwinKitOptions): GuardedDarwinKit {
     if (_instance) {
         if (options && Object.keys(options).length > 0) {
             throw new Error("DarwinKit is already initialized. Call closeDarwinKit() before changing options.");
