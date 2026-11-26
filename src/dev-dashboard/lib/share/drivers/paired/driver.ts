@@ -53,6 +53,7 @@ export function createPairedDriver(deps: PairedDriverDeps = LIVE_DEPS): ShareDri
     return {
         kind: "paired",
         summary: "upload each snapshot over HTTPS to a share server this Mac paired with (a one-time code)",
+        live: false,
         pageUrl: async (target, slug) => {
             const paired = targetOf(target, "paired");
 

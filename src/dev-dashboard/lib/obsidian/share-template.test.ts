@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+    FRESHNESS_POSITION_DEFAULT,
+    FRESHNESS_POSITION_STORAGE_KEY,
     HEADING_FLASH_DEFAULT_MS,
     HEADING_FLASH_STORAGE_KEY,
+    renderFreshnessBadge,
     renderSharePage,
 } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { JSDOM } from "jsdom";
@@ -34,6 +37,63 @@ function openPage(options: { html: string; marker: string; stored?: Record<strin
 
     return dom;
 }
+
+describe("freshness badge", () => {
+    const NOW = Date.parse("2026-03-10T12:00:00Z");
+
+    test("a live page shows a pulsing live badge coloured by its last edit", () => {
+        const html = renderFreshnessBadge({ mode: "live", editedAt: "2026-03-10T11:55:00Z" }, NOW);
+
+        expect(html).toContain('data-mode="live" data-tone="fresh"');
+        expect(html).toContain("Live from the Mac, edited 5 min ago");
+        expect(html).not.toContain("dd-share-freshness-detail");
+    });
+
+    test("a snapshot says when it was synced, coloured by the sync, with the edit before it", () => {
+        const html = renderFreshnessBadge(
+            { mode: "snapshot", syncedAt: "2026-03-10T09:00:00Z", editedAt: "2026-03-09T12:00:00Z" },
+            NOW
+        );
+
+        expect(html).toContain('data-mode="snapshot" data-tone="recent"');
+        expect(html).toContain("Synced 3 h ago");
+        expect(html).toContain("edited 1 day ago, before sync");
+        expect(renderFreshnessBadge({ mode: "snapshot", syncedAt: "2026-02-01T12:00:00Z" }, NOW)).toContain(
+            'data-tone="stale"'
+        );
+    });
+
+    test("the page carries the badge and its position setting, left by default, kept in the browser", () => {
+        const page = renderSharePage({
+            title: "Note",
+            freshness: { mode: "snapshot", syncedAt: "2026-03-10T09:00:00Z" },
+            rendered: { html: "<p>x</p>", hasMath: false, hasMermaid: false, tags: [] },
+            source: "",
+        });
+
+        expect(page).toContain('id="dd-share-freshness"');
+        expect(page).toContain('<select id="dd-share-freshness-position"><option value="left" selected>Left</option>');
+        expect(FRESHNESS_POSITION_DEFAULT).toBe("left");
+
+        const dom = new JSDOM(page, { url: "http://localhost/md/demo" });
+        dom.window.localStorage.setItem(FRESHNESS_POSITION_STORAGE_KEY, "right");
+
+        for (const match of page.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+            if ((match[1] ?? "").includes(FRESHNESS_POSITION_STORAGE_KEY)) {
+                new Function("window", `with (window) {${match[1] ?? ""}}`)(dom.window);
+            }
+        }
+
+        expect(dom.window.document.documentElement.classList.contains("dd-freshness-right")).toBe(true);
+        expect(
+            renderSharePage({
+                title: "Note",
+                rendered: { html: "", hasMath: false, hasMermaid: false, tags: [] },
+                source: "",
+            })
+        ).not.toContain('<select id="dd-share-freshness-position"');
+    });
+});
 
 describe("renderSharePage", () => {
     test("carries the image viewer with its controls, closed, and every inline script of the page parses", () => {

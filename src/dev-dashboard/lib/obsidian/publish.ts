@@ -39,6 +39,7 @@ export function publishNote(vaultPath: string): Promise<PublishedNote> {
             vaultPath,
             publishedAt: new Date().toISOString(),
             targets: [],
+            syncs: {},
         };
         await saveConfig({ ...config, publishedNotes: [...config.publishedNotes, note] });
 
@@ -56,8 +57,14 @@ export function unpublishNote(slug: string): Promise<void> {
     });
 }
 
-/** Record which share targets hold the note; a slug that is no longer published is left alone. */
-export function setPublishedTargets(slug: string, targets: string[]): Promise<PublishedNote | undefined> {
+/**
+ * Record which share targets hold the note, and the sends that just succeeded (`syncs`, merged by target). A target
+ * that no longer holds the note loses its sync record. A slug that is no longer published is left alone.
+ */
+export function setPublishedTargets(
+    slug: string,
+    update: { targets: string[]; syncs?: PublishedNote["syncs"] }
+): Promise<PublishedNote | undefined> {
     return withConfigMutation(async () => {
         const config = await getConfig();
         const note = config.publishedNotes.find((entry) => entry.slug === slug);
@@ -66,7 +73,11 @@ export function setPublishedTargets(slug: string, targets: string[]): Promise<Pu
             return undefined;
         }
 
-        const next = { ...note, targets: [...new Set(targets)] };
+        const targets = [...new Set(update.targets)];
+        const syncs = Object.fromEntries(
+            Object.entries({ ...note.syncs, ...update.syncs }).filter(([name]) => targets.includes(name))
+        );
+        const next = { ...note, targets, syncs };
         await saveConfig({
             ...config,
             publishedNotes: config.publishedNotes.map((entry) => (entry.slug === slug ? next : entry)),

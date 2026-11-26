@@ -1,11 +1,20 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
 import type { OfflineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
 import { codeLanguageFor, type ShareEmbedPanels } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import {
+    FRESHNESS_TONE_LIMITS,
+    formatAgo,
+    freshnessAnchor,
+    freshnessTone,
+    type ShareFreshness,
+} from "@app/dev-dashboard/lib/share/freshness";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
 
 interface ShareTemplateOptions {
     title: string;
+    /** Drives the freshness badge in the top bar; no badge without it. */
+    freshness?: ShareFreshness;
     rendered: RenderResult;
     source: string;
     sourcePath?: string;
@@ -953,8 +962,65 @@ body.dd-share-mode-source .dd-share-source-panel {
     display: block;
 }
 
+.dd-share-freshness {
+    --dd-tone: var(--dd-text-faint);
+    /* Scrolls away with the page instead of covering the text the way a fixed bar would. */
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 200px));
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid color-mix(in srgb, var(--dd-tone) 45%, var(--dd-border-strong));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--dd-tone) 10%, var(--dd-bg-elevated));
+    color: var(--dd-text);
+    font: 500 12px/1.2 var(--dd-sans);
+    white-space: nowrap;
+    cursor: default;
+}
+.dd-share-freshness[data-tone="fresh"] { --dd-tone: var(--dd-accent); }
+.dd-share-freshness[data-tone="recent"] { --dd-tone: #60a5fa; }
+.dd-share-freshness[data-tone="aging"] { --dd-tone: #f59e0b; }
+.dd-share-freshness[data-tone="stale"] { --dd-tone: var(--dd-text-faint); }
+html.dd-freshness-right .dd-share-freshness {
+    left: auto;
+    right: 16px;
+    top: 60px;
+}
+.dd-share-freshness-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dd-tone);
+}
+.dd-share-freshness[data-mode="live"] .dd-share-freshness-dot {
+    animation: dd-freshness-pulse 2s ease-in-out infinite;
+}
+@keyframes dd-freshness-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dd-tone) 55%, transparent); }
+    50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--dd-tone) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dd-share-freshness[data-mode="live"] .dd-share-freshness-dot { animation: none; }
+}
+.dd-share-freshness-main { overflow: hidden; text-overflow: ellipsis; }
+.dd-share-freshness-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--dd-text-dim);
+    font-weight: 400;
+}
+
 @media (max-width: 600px) {
     body { padding: 28px 16px 64px; }
+    .dd-share-freshness { max-width: calc(100vw - 172px); }
+    .dd-share-freshness-detail { display: none; }
     article { font-size: 16px; }
     h1 { font-size: 1.8em; }
     h2 { font-size: 1.4em; }
@@ -1026,6 +1092,110 @@ export const HEADING_FLASH_OPTIONS: ReadonlyArray<{ ms: number; label: string }>
 ];
 export const HEADING_FLASH_DEFAULT_MS = 1800;
 export const HEADING_FLASH_STORAGE_KEY = "dd-share:heading-flash-ms";
+
+/** Where the freshness badge sits (a setting in the page's settings panel, kept in localStorage). */
+export const FRESHNESS_POSITIONS = ["left", "right"] as const;
+export type FreshnessPosition = (typeof FRESHNESS_POSITIONS)[number];
+export const FRESHNESS_POSITION_DEFAULT: FreshnessPosition = "left";
+export const FRESHNESS_POSITION_STORAGE_KEY = "dd-share:freshness-position";
+
+function badgeTexts(freshness: ShareFreshness, now: number): { main: string; detail: string } {
+    const ago = (iso: string | undefined): string => (iso ? formatAgo(now - Date.parse(iso)) : "");
+
+    if (freshness.mode === "live") {
+        return {
+            main: freshness.editedAt ? `Live from the Mac, edited ${ago(freshness.editedAt)}` : "Live from the Mac",
+            detail: "",
+        };
+    }
+
+    return {
+        main: freshness.syncedAt ? `Synced ${ago(freshness.syncedAt)}` : "Snapshot",
+        detail: freshness.editedAt ? `edited ${ago(freshness.editedAt)}, before sync` : "",
+    };
+}
+
+/**
+ * The freshness badge: a live page shows a pulsing dot and its last edit, a snapshot when it was synced. The colour
+ * follows the age (`freshnessTone`); the script below keeps the words current and puts the viewer's local time in
+ * the tooltip.
+ */
+export function renderFreshnessBadge(freshness: ShareFreshness, now = Date.now()): string {
+    const anchor = freshnessAnchor(freshness);
+    const tone = anchor ? freshnessTone(now - Date.parse(anchor)) : "stale";
+    const { main, detail } = badgeTexts(freshness, now);
+    const title = [
+        freshness.syncedAt ? `Synced ${freshness.syncedAt}` : "",
+        freshness.editedAt ? `Edited ${freshness.editedAt}` : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+    const attrs = [
+        `data-mode="${freshness.mode}"`,
+        `data-tone="${tone}"`,
+        freshness.syncedAt ? `data-synced="${escapeHtml(freshness.syncedAt)}"` : "",
+        freshness.editedAt ? `data-edited="${escapeHtml(freshness.editedAt)}"` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    return `<div class="dd-share-freshness" id="dd-share-freshness" ${attrs} title="${escapeHtml(title)}"><span class="dd-share-freshness-dot" aria-hidden="true"></span><span class="dd-share-freshness-main">${escapeHtml(main)}</span>${detail ? `<span class="dd-share-freshness-detail">${escapeHtml(detail)}</span>` : ""}</div>`;
+}
+
+/** Keeps the badge's words, colour and local-time tooltip current: once a minute, never faster. */
+function buildFreshnessScript(): string {
+    return `<script>
+(function () {
+    var badge = document.getElementById("dd-share-freshness");
+    if (!badge) {
+        return;
+    }
+    var LIMITS = ${SafeJSON.stringify(FRESHNESS_TONE_LIMITS)};
+    var mode = badge.getAttribute("data-mode");
+    var synced = badge.getAttribute("data-synced");
+    var edited = badge.getAttribute("data-edited");
+    var main = badge.querySelector(".dd-share-freshness-main");
+    var detail = badge.querySelector(".dd-share-freshness-detail");
+
+    function ago(iso) {
+        var ms = Math.max(0, Date.now() - Date.parse(iso));
+        var min = 60000, hour = 60 * min, day = 24 * hour;
+        if (ms < min) { return "just now"; }
+        if (ms < hour) { return Math.floor(ms / min) + " min ago"; }
+        if (ms < day) { return Math.floor(ms / hour) + " h ago"; }
+        var days = Math.floor(ms / day);
+        if (days < 14) { return days + (days === 1 ? " day ago" : " days ago"); }
+        return Math.floor(days / 7) + " weeks ago";
+    }
+    function tone(iso) {
+        var ms = Date.now() - Date.parse(iso);
+        for (var i = 0; i < LIMITS.length; i++) {
+            if (ms < LIMITS[i].underMs) { return LIMITS[i].tone; }
+        }
+        return "stale";
+    }
+    function local(iso) {
+        return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    }
+    function render() {
+        var anchor = mode === "live" ? edited : (synced || edited);
+        if (anchor) { badge.setAttribute("data-tone", tone(anchor)); }
+        if (mode === "live") {
+            main.textContent = edited ? "Live from the Mac, edited " + ago(edited) : "Live from the Mac";
+        } else {
+            main.textContent = synced ? "Synced " + ago(synced) : "Snapshot";
+            if (detail && edited) { detail.textContent = "edited " + ago(edited) + ", before sync"; }
+        }
+        var lines = [];
+        if (synced) { lines.push("Synced " + local(synced)); }
+        if (edited) { lines.push("Edited " + local(edited)); }
+        badge.title = lines.join("\\n");
+    }
+    render();
+    setInterval(render, 60000);
+})();
+</script>`;
+}
 
 function embedJson(value: unknown): string {
     return SafeJSON.stringify(value).replace(/</g, "\\u003c");
@@ -1614,6 +1784,38 @@ function buildSettingsScript(): string {
     }
     apply(ms);
 
+    var POSITION_KEY = ${SafeJSON.stringify(FRESHNESS_POSITION_STORAGE_KEY)};
+    var POSITION_DEFAULT = ${SafeJSON.stringify(FRESHNESS_POSITION_DEFAULT)};
+    var positionSelect = document.getElementById("dd-share-freshness-position");
+    function applyPosition(value) {
+        root.classList.toggle("dd-freshness-right", value === "right");
+    }
+    var position = POSITION_DEFAULT;
+    try {
+        var storedPosition = localStorage.getItem(POSITION_KEY);
+        if (storedPosition === "left" || storedPosition === "right") {
+            position = storedPosition;
+        }
+    } catch (e) {
+        // No storage: the default.
+    }
+    applyPosition(position);
+    if (positionSelect) {
+        positionSelect.value = position;
+        positionSelect.addEventListener("change", function () {
+            applyPosition(positionSelect.value);
+            try {
+                if (positionSelect.value === POSITION_DEFAULT) {
+                    localStorage.removeItem(POSITION_KEY);
+                } else {
+                    localStorage.setItem(POSITION_KEY, positionSelect.value);
+                }
+            } catch (e) {
+                // Storage can be off (private mode); the choice then lasts for this page only.
+            }
+        });
+    }
+
     if (!btn || !menu || !select) {
         return;
     }
@@ -2024,6 +2226,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         embeddedPanels,
         offlineAssets,
         mermaidCode,
+        freshness,
     } = options;
     const headExtras: string[] = offlineAssets
         ? [`<style>${offlineAssets.css}</style>`]
@@ -2061,6 +2264,10 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     bodyExtras.push(buildWidthScript());
     bodyExtras.push(buildSettingsScript());
 
+    if (freshness) {
+        bodyExtras.push(buildFreshnessScript());
+    }
+
     const attachmentsLabel = `${attachmentCount} ${attachmentCount === 1 ? "attachment" : "attachments"}`;
     const zipItem =
         downloads && attachmentCount > 0
@@ -2086,6 +2293,12 @@ ${zipItem}
 <div class="dd-share-settings-menu" id="dd-share-settings-menu" hidden>
 <label for="dd-share-heading-flash">Heading highlight<small>How long a heading a link jumps to stays marked</small></label>
 <select id="dd-share-heading-flash">${flashOptions}</select>
+${
+    freshness
+        ? `<label for="dd-share-freshness-position">Sync badge position<small>Where the badge with the last sync or edit sits</small></label>
+<select id="dd-share-freshness-position">${FRESHNESS_POSITIONS.map((value) => `<option value="${value}"${value === FRESHNESS_POSITION_DEFAULT ? " selected" : ""}>${value === "left" ? "Left" : "Right"}</option>`).join("")}</select>`
+        : ""
+}
 </div>
 </div>`;
 
@@ -2107,6 +2320,7 @@ ${headExtras.join("\n")}
 ${downloadControl}
 ${settingsControl}
 </div>
+${freshness ? renderFreshnessBadge(freshness) : ""}
 <main>
 <article>${rendered.html}</article>
 <pre class="dd-share-source-panel" id="dd-share-source-panel"></pre>

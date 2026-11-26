@@ -9,6 +9,7 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { driverFor } from "@app/dev-dashboard/lib/share/drivers";
 import type { ShareConfig, ShareTarget } from "@app/dev-dashboard/lib/share/drivers/options";
+import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("share-targets");
@@ -45,12 +46,17 @@ export function resolveTargets(share: ShareConfig, names: readonly string[]): Sh
 async function sendTo(targets: ShareTarget[], note: PublishedNote): Promise<TargetOutcome[]> {
     const outcomes: TargetOutcome[] = [];
 
+    const syncs: PublishedNote["syncs"] = {};
+    // The version every target gets is the file as it is now; its mtime tells a later edit apart.
+    const editedAt = (await vaultShareSource().freshness(note)).editedAt ?? new Date().toISOString();
+
     for (const target of targets) {
         const driver = driverFor(target);
 
         try {
             await driver.sync(target, note);
             outcomes.push({ target: target.name, url: await driver.pageUrl(target, note.slug) });
+            syncs[target.name] = { syncedAt: new Date().toISOString(), sourceModifiedAt: editedAt };
         } catch (err) {
             log.warn({ err, target: target.name, slug: note.slug }, "share target sync failed");
             outcomes.push({ target: target.name, error: err instanceof Error ? err.message : String(err) });
@@ -58,7 +64,7 @@ async function sendTo(targets: ShareTarget[], note: PublishedNote): Promise<Targ
     }
 
     const reached = outcomes.filter((outcome) => !outcome.error).map((outcome) => outcome.target);
-    await setPublishedTargets(note.slug, [...note.targets, ...reached]);
+    await setPublishedTargets(note.slug, { targets: [...note.targets, ...reached], syncs });
 
     return outcomes;
 }
@@ -196,10 +202,7 @@ export async function unshareFromTargets(options: {
     if (everything && removed.size === targets.length) {
         await unpublishNote(note.slug);
     } else {
-        await setPublishedTargets(
-            note.slug,
-            note.targets.filter((name) => !removed.has(name))
-        );
+        await setPublishedTargets(note.slug, { targets: note.targets.filter((name) => !removed.has(name)) });
     }
 
     return outcomes;

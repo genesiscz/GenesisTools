@@ -271,7 +271,27 @@ export type CmuxLayoutRes = { layout: CmuxLayoutTree };
 export type QaLogRes = { entries: EnrichedQaEntry[] };
 export type AttentionRes = { items: AttentionItem[]; count: number };
 export type ObsidianTreeRes = { entries: VaultEntry[] };
-export type ObsidianNoteRes = { source: string; html: string; publishedSlug: string | null };
+/** One place a published note is served from, for the reader's chips. */
+export interface ShareTargetStatusDto {
+    target: string;
+    driver: string;
+    /** Served live from this Mac's vault (no sync; it is always current). */
+    live: boolean;
+    isDefault: boolean;
+    url: string;
+    syncedAt: string | null;
+    sourceModifiedAt: string | null;
+}
+
+export type ObsidianNoteRes = {
+    source: string;
+    html: string;
+    publishedSlug: string | null;
+    /** The note file's mtime (ISO). */
+    editedAt: string | null;
+    /** Where the published note is served: every live target, then each target it was synced to. Empty when unpublished. */
+    shares: ShareTargetStatusDto[];
+};
 export type WeatherRes = WeatherSnapshot;
 export type NetStatusRes = NetStatus;
 export type TodosRes = TodosResult;

@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
 import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsidian/publish";
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
@@ -9,7 +11,10 @@ import {
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import { type ShareSource, ShareSourceUnavailableError } from "@app/dev-dashboard/lib/share/source";
+import { logger } from "@genesiscz/utils/logger";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
+
+const { log } = logger.scoped("share-vault-source");
 
 const ASSET_CACHE_LIMIT = 64;
 const ASSET_INDEX_TTL_MS = 30_000;
@@ -65,6 +70,14 @@ export function vaultShareSource(): ShareSource {
             assetIndexCache.delete(slug);
         },
         assetReader: async () => vaultAssetReader(await vaultRoot()),
+        freshness: async (note) => {
+            const info = await stat(resolve(await vaultRoot(), note.vaultPath)).catch((err: unknown) => {
+                log.debug({ err, vaultPath: note.vaultPath }, "shared note has no readable mtime");
+                return null;
+            });
+
+            return { mode: "live", editedAt: info ? info.mtime.toISOString() : undefined };
+        },
         publicOrigin: publicBaseUrl,
     };
 }

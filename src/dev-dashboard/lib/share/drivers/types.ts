@@ -34,6 +34,8 @@ export interface ShareDriver {
     readonly kind: ShareDriverKind;
     /** One line for `share target add --help` and the guided setup. */
     readonly summary: string;
+    /** True when the target serves the vault itself (every published note, always current), so it has no sync. */
+    readonly live: boolean;
     /** The link a person gets for `slug` on this target. */
     pageUrl(target: ShareTarget, slug: string): Promise<string>;
     /** Bring the target's copy of the note up to date (a share, a re-share, `share sync`). */

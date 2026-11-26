@@ -17,6 +17,11 @@
     --dd-text-muted: #5b6670;
     --dd-warning: #fbbf24;
     --dd-danger: #f87171;
+    /* Freshness of a shared note (lib/share/freshness.ts): under 1 h, under 24 h, under 7 days, older. */
+    --dd-tone-fresh: var(--dd-accent-from);
+    --dd-tone-recent: #60a5fa;
+    --dd-tone-aging: var(--dd-warning);
+    --dd-tone-stale: var(--dd-text-muted);
     --dd-accent-glow: rgba(52, 211, 153, 0.35);
     --dd-status-open-border: #3f5530;
     --dd-status-open-text: #a3e635;
