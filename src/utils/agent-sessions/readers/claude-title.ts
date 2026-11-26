@@ -4,8 +4,10 @@
  * parses (`claude.ts`), and the title search (`claude-locate.ts`) finds only the candidate rows in the raw bytes and
  * hands each one to the same function, so a 200 MB transcript is never parsed whole for its title.
  */
+import { appendFileSync, closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { scanFileMatches } from "@genesiscz/utils/ai/transcripts/file-scan";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Where a `/rename` row starts: Claude writes `type` as its first key. */
 const CUSTOM_TITLE_ROW = '"type":"custom-title"';
@@ -79,4 +81,77 @@ export function lastClaudeTitleIn(path: string): string | null {
     });
 
     return last;
+}
+
+/** Where a title that Claude Code generated starts. */
+const AI_TITLE_ROW = '"type":"ai-title"';
+
+/** The newest title Claude Code generated for a session (its `ai-title` rows), streamed, or null. */
+export function lastClaudeAiTitleIn(path: string): string | null {
+    let last: string | null = null;
+    scanFileMatches(path, AI_TITLE_ROW, TITLE_WINDOW, (slice) => {
+        const text = slice.toString("utf8");
+        const end = text.indexOf("\n");
+
+        try {
+            const row: unknown = SafeJSON.parse(`{${end === -1 ? text : text.slice(0, end)}`, { strict: true });
+
+            if (isJsonObject(row) && typeof row.aiTitle === "string" && row.aiTitle !== "") {
+                last = row.aiTitle;
+            }
+        } catch (error) {
+            logger.debug({ error, path }, "an ai-title row that does not parse inside the window");
+        }
+    });
+
+    return last;
+}
+
+/** True when the file is empty or ends with a newline, so an appended row starts on its own line. */
+function endsWithNewline(path: string): boolean {
+    const fd = openSync(path, "r");
+
+    try {
+        const { size } = fstatSync(fd);
+
+        if (size === 0) {
+            return true;
+        }
+
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, size - 1);
+        return last[0] === 0x0a;
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/**
+ * The rows Claude Code's `/rename` writes, in its order: `custom-title` names the session in the resume list, and
+ * `agent-name` is the name beside the prompt. A rename that wrote only the first left the old name beside the prompt
+ * (2026-11-23), because a resumed session takes that name from the newest `agent-name` row.
+ */
+export function claudeRenameRows(sessionId: string, title: string): string[] {
+    return [
+        { type: "custom-title", customTitle: title, sessionId },
+        { type: "agent-name", agentName: title, sessionId },
+    ].map((row) => SafeJSON.stringify(row, { strict: true }));
+}
+
+/** Renames a session the way Claude Code's `/rename` does; the newest rows win. */
+export function appendClaudeTitle({
+    path,
+    sessionId,
+    title,
+}: {
+    path: string;
+    sessionId: string;
+    title: string;
+}): void {
+    appendClaudeRows(path, claudeRenameRows(sessionId, title));
+}
+
+/** Appends whole rows to a transcript, each on its own line, also when the file's last line has no newline. */
+export function appendClaudeRows(path: string, rows: readonly string[]): void {
+    appendFileSync(path, `${endsWithNewline(path) ? "" : "\n"}${rows.join("\n")}\n`);
 }

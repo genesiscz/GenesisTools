@@ -12,6 +12,11 @@ export interface BunModule {
     isEntrypoint: boolean;
 }
 
+interface LocatedModule extends BunModule {
+    tableOffset: number;
+    stride: number;
+}
+
 function parseModuleTable({
     buf,
     blobStart,
@@ -28,14 +33,14 @@ function parseModuleTable({
     modulesLen: number;
     entryPointId: number;
     stride: number;
-}): BunModule[] {
+}): LocatedModule[] {
     const count = modulesLen / stride;
 
     if (entryPointId >= count) {
         throw new Error(`entrypoint id ${entryPointId} out of range for ${count} modules (stride ${stride})`);
     }
 
-    const modules: BunModule[] = [];
+    const modules: LocatedModule[] = [];
 
     for (let i = 0; i < count; i++) {
         const entry = blobStart + modulesOff + i * stride;
@@ -57,6 +62,8 @@ function parseModuleTable({
 
         modules.push({
             name,
+            tableOffset: entry,
+            stride,
             contents: buf.subarray(blobStart + contentsOff, blobStart + contentsOff + contentsLen),
             loader,
             isEntrypoint: i === entryPointId,
@@ -70,7 +77,7 @@ function parseModuleTable({
     return modules;
 }
 
-function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
+function parseAtTrailer(buf: Buffer, trailerPos: number): LocatedModule[] {
     const offsetsPos = trailerPos - SIZEOF_OFFSETS;
 
     if (offsetsPos < 0) {
@@ -115,7 +122,7 @@ function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
  * terminates the data section near EOF). Validates each candidate and falls back to earlier
  * occurrences. Works for Mach-O/ELF/PE without parsing container formats.
  */
-export function extractBunModules(binary: Uint8Array): BunModule[] {
+function locateBunModules(binary: Uint8Array): LocatedModule[] {
     const buf = Buffer.isBuffer(binary) ? binary : Buffer.from(binary.buffer, binary.byteOffset, binary.byteLength);
     let candidate = buf.lastIndexOf(TRAILER);
     let lastError: unknown = null;
@@ -131,4 +138,31 @@ export function extractBunModules(binary: Uint8Array): BunModule[] {
     }
 
     throw new Error(`Bun trailer not found or all candidates invalid (last: ${lastError})`);
+}
+
+export function extractBunModules(binary: Uint8Array): BunModule[] {
+    return locateBunModules(binary).map(({ name, contents, loader, isEntrypoint }) => ({
+        name,
+        contents,
+        loader,
+        isEntrypoint,
+    }));
+}
+
+export function replaceBunModule(binary: Buffer, name: string, source: Uint8Array): void {
+    const matches = locateBunModules(binary).filter((module) => module.name === name);
+    const [module] = matches;
+
+    if (!module || matches.length !== 1 || module.stride !== STRIDE_NEW || module.loader !== 1) {
+        throw new Error(`Expected one JavaScript module in a 52-byte Bun module table: ${name}`);
+    }
+
+    if (source.length !== module.contents.length) {
+        throw new Error("Replacement must preserve the original module byte length");
+    }
+
+    module.contents.set(source);
+    // CompiledModuleGraphFile stores bytecode as its fourth offset/length pair.
+    // Clear the pointer so Bun evaluates the updated JavaScript.
+    binary.fill(0, module.tableOffset + 24, module.tableOffset + 32);
 }

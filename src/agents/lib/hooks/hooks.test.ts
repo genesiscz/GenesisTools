@@ -32,6 +32,7 @@ import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/u
 import { env } from "@genesiscz/utils/env";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { RmRequest } from "@genesiscz/utils/rm";
 import { AREA_RULES_DEFAULTS, mergeAreaRules } from "../../../../plugins/genesis-tools/hooks/area-rules";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
@@ -48,6 +49,7 @@ import {
     loadHooksConfig,
     wantedEntryKinds,
 } from "./config";
+import { callHasOwnRow, scriptCallIdNotice } from "./diff/script-calls";
 import { collectStaleCaptures, parseHorizon, sweepAbandonedCaptures } from "./gc";
 import { evaluateGuard } from "./guard";
 import { lastSeenPerHarness } from "./harnesses";
@@ -840,6 +842,22 @@ describe("applySetting", () => {
         expect(set("mods.hooks.metrics", "false").hooks.metrics).toBe(false);
         expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
+    });
+
+    it("mods.diff.foldAfterLines: 20 by default, 0 never folds, and a value past 10,000 or below 0 is refused", () => {
+        const set = (value: string) => applySetting(DEFAULT_HOOKS_CONFIG, "mods.diff.foldAfterLines", value).mods.diff;
+        const problems: string[] = [];
+
+        expect(DEFAULT_HOOKS_CONFIG.mods.diff.foldAfterLines).toBe(20);
+        expect(set("40").foldAfterLines).toBe(40);
+        expect(set("0").foldAfterLines).toBe(0);
+        expect(() => set("-1")).toThrow("at least 0");
+        expect(() => set("10001")).toThrow("0 to 10000");
+        expect(() => set("many")).toThrow("whole number");
+        expect(HOOK_CONFIG_SECTIONS.mods.merge({ diff: { foldAfterLines: 12.5 } }, problems).diff.foldAfterLines).toBe(
+            20
+        );
+        expect(problems).toHaveLength(1);
     });
 
     it("mods.resumeGuard: off by default, bounded, and set by a named value or any number in range", () => {
@@ -3088,6 +3106,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: true,
             readToolCalls: claudeToolCalls,
             modsDrawDiffs: true,
+            scriptCalls: expect.objectContaining({ prefix: "repl_", rowPrefix: "toolu_" }),
             settingsModel: true,
             currentModel: claudeCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3108,6 +3127,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: true,
             readToolCalls: grokToolCalls,
             modsDrawDiffs: false,
+            scriptCalls: null,
             settingsModel: false,
             currentModel: grokCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3128,6 +3148,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             diffLogFromTranscript: false,
             readToolCalls: codexToolCalls,
             modsDrawDiffs: false,
+            scriptCalls: null,
             settingsModel: false,
             currentModel: codexCurrentModel,
             subagentTranscript: expect.any(Function),
@@ -3146,6 +3167,95 @@ describe("HARNESS_HOOK_FACTS", () => {
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();
+    });
+
+    it("a Claude code-mode script's shell call has no row of its own; a Bash tool call has one", () => {
+        expect(callHasOwnRow(HARNESS_HOOK_FACTS.claude, "repl_da72304f-7185-4763-a0b9-5381f7e062c0")).toBe(false);
+        expect(callHasOwnRow(HARNESS_HOOK_FACTS.claude, "toolu_01JMBRPQRSipAuSW9VpEegK7")).toBe(true);
+        expect(callHasOwnRow(HARNESS_HOOK_FACTS.claude, undefined)).toBe(true);
+        expect(callHasOwnRow(HARNESS_HOOK_FACTS.codex, "repl_x")).toBe(true);
+        expect(callHasOwnRow(HARNESS_HOOK_FACTS.grok, "repl_x")).toBe(true);
+        expect(HARNESS_HOOK_FACTS.claude.scriptCalls?.codeModeOn({ CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" })).toBe(
+            true
+        );
+        expect(HARNESS_HOOK_FACTS.claude.scriptCalls?.codeModeOn({ CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "0" })).toBe(
+            false
+        );
+        expect(HARNESS_HOOK_FACTS.claude.scriptCalls?.codeModeOn({})).toBe(false);
+    });
+});
+
+describe("scriptCallIdNotice", () => {
+    const claude = HARNESS_HOOK_FACTS.claude;
+    const codeMode = { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" };
+    const hour = 60 * 60 * 1000;
+    const start = Date.parse("2026-11-25T08:00:00Z");
+    const fresh = () => join(mkdtempSync(join(tmpdir(), "gt-script-calls-")), "stamp.json");
+    const notice = (
+        stampPath: string,
+        toolUseId: string | undefined,
+        now: number,
+        vars: Record<string, string> = codeMode
+    ) => scriptCallIdNotice({ harness: "claude", facts: claude, toolUseId, vars, now, stampPath });
+
+    it("stays quiet while a script's calls keep their prefix, and a first tool call only starts the clock", async () => {
+        const stamp = fresh();
+
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start)).toBeNull();
+        expect(await notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start + hour)).toBeNull();
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 20 * hour)).toBeNull();
+        expect(await notice(stamp, undefined, start + 90 * hour)).toBeNull();
+        expect(
+            await scriptCallIdNotice({
+                harness: "codex",
+                facts: HARNESS_HOOK_FACTS.codex,
+                toolUseId: "call_x",
+                vars: codeMode,
+                now: start,
+                stampPath: stamp,
+            })
+        ).toBeNull();
+    });
+
+    it("concurrent hooks claim one warning interval", async () => {
+        const stamp = fresh();
+        const script = [
+            `import { scriptCallIdNotice } from ${SafeJSON.stringify(join(import.meta.dir, "diff/script-calls.ts"))};`,
+            `import { HARNESS_HOOK_FACTS } from ${SafeJSON.stringify(join(import.meta.dir, "payload.ts"))};`,
+            `const message = await scriptCallIdNotice({harness:"claude",facts:HARNESS_HOOK_FACTS.claude,toolUseId:"changed_1234",vars:{},now:${start},stampPath:${SafeJSON.stringify(stamp)}});`,
+            'process.stdout.write(message ? "warn" : "quiet");',
+        ].join("\n");
+        const outputs = await Promise.all(
+            Array.from({ length: 3 }, async () => {
+                const child = await boundedCommand({ command: [process.execPath, "-e", script], timeoutMs: 5_000 });
+                expect(child.status).toBe(0);
+                return child.stdout;
+            })
+        );
+        expect(outputs.filter((output) => output === "warn")).toHaveLength(1);
+    });
+
+    it("speaks once a day when code mode is on and no script call ran for a day", async () => {
+        const stamp = fresh();
+
+        expect(await notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start)).toBeNull();
+        // Code mode off: a tool call is no sign.
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour, {})).toBeNull();
+
+        const first = await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour);
+
+        expect(first).toContain("no shell call with the `repl_` prefix of a script's call ran for 30 hours");
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 31 * hour)).toBeNull();
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 55 * hour)).toContain("ran for 55 hours");
+    });
+
+    it("speaks at once about an id with neither prefix, then not again that day", async () => {
+        const stamp = fresh();
+        const renamed = await notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start);
+
+        expect(renamed).toContain("(`script_8c1f0…`) has neither the `toolu_` prefix");
+        expect(await notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start + hour)).toBeNull();
+        expect(readFileSync(stamp, "utf8")).toContain(String(start));
     });
 });
 

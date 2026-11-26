@@ -20,7 +20,7 @@ import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
 import { actorOf, readOnlyCommand } from "./attribution";
-import { commandDirs, namedArguments } from "./command-paths";
+import { namedArguments, workDirs } from "./command-paths";
 import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
@@ -208,13 +208,19 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
  * command. A regex got all three of these wrong: it took only the FIRST `cd`, refused a
  * relative path, and truncated `cd /Users/x/My Repo` at the space.
  *
- * ⚠️ A directory the command merely NAMES is not a root, even when it is a repository. That
+ * A command that may write also works in each folder it hands a program (`programDirs`): a folder flag such as
+ * `--cwd <dir>` or `-C <dir>`, or a repository's top folder given to a script runner.
+ *
+ * ⚠️ Any other directory the command merely NAMES is not a root, even when it is in a repository. That
  * is deliberate (one `git rev-parse` per candidate costs about 8 ms on the hot path, and the
  * `git status` that follows in the post phase costs 30 to 60 ms more); files named that way
- * are watched individually instead, by `captureNamed`.
+ * are watched individually instead, by `captureNamed`. A command that only reads gets no program folder for the
+ * same reason: `git -C <dir> log` changes nothing there.
  */
 export function captureRoots(payload: HookPayload, config: DiffConfig): string[] {
-    return rootsOf(commandDirs(payload.command, payload.cwd), config).map((entry) => entry.root);
+    return rootsOf(workDirs(payload.command, payload.cwd, readOnlyCommand(payload.command)), config).map(
+        (entry) => entry.root
+    );
 }
 
 /**
@@ -617,10 +623,11 @@ export interface CaptureStart {
 
 /** The roots of a call and whether its command only reads, so the status reads can be prepared before the capture. */
 export function captureStart(payload: HookPayload, config: DiffConfig): CaptureStart {
-    const dirs = commandDirs(payload.command, payload.cwd);
+    const readOnly = readOnlyCommand(payload.command);
+    const dirs = workDirs(payload.command, payload.cwd, readOnly);
     const skipped: string[] = [];
     const roots = rootsOf(dirs, config, skipped);
-    return { dirs, roots, skipped, readOnly: readOnlyCommand(payload.command) };
+    return { dirs, roots, skipped, readOnly };
 }
 
 export function capturePre(

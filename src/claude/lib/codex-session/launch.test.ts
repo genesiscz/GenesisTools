@@ -44,8 +44,8 @@ describe("model and effort", () => {
         const sol = resolveSessionModel(undefined, codexModel);
         const astra = resolveSessionModel("astra", codexModel);
 
-        expect(isError(sol) ? sol.error : sol.slug).toBe("gpt-6.1-sol");
-        expect(isError(astra) ? astra.error : astra.slug).toBe("gpt-6-astra");
+        expect(isError(sol) ? sol.error : sol.slug).toBe("gpt-6.2-sol");
+        expect(isError(astra) ? astra.error : astra.slug).toBe("gpt-6.2-astra");
         const terra = resolveSessionModel("terra", codexModel);
         expect(isError(terra) ? terra.error : terra.slug).toBe("gpt-6.1-terra");
         expect(resolveSessionModel("gpt-9-nope", codexModel)).toEqual({

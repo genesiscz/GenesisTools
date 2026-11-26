@@ -632,7 +632,14 @@ links its full diff.
 
 #### Which files it watches
 
-- Files inside the git roots the command works in.
+- Files inside the git roots the command works in: the session cwd and every `cd` target. A command that may write
+  also works in each folder it hands a program: the value of a folder flag (`--cwd`, `--dir`, `--directory`,
+  `--root`, `--chdir`, `--workdir`, `--work-tree`, `-C`), and the repository of a folder given to a script runner
+  (`bun renames.ts <checkout>`, `bun x.ts <checkout>/packages/a`), as its top folder. A folder inside a repository the
+  command already works in (an output folder) adds nothing, and neither does a folder given to any other program
+  (`cp`, `find`, `./script.sh`): on three days of real commands that would have watched 139 more repositories for no
+  edit. A command that only reads (`git -C <dir> log`) gets no such root, because each root costs a `git rev-parse`
+  and a `git status`.
 - Files the command **names** as a path (`diff.watchNamedPaths`, on), so an edit to a note, a `~/.claude` memory file
   or any path outside the cwd repository shows at all. At most `diff.maxNamedPaths` (8) per call, each a `stat` and a
   clone.
@@ -968,7 +975,18 @@ Installing the plugin is not what makes the diff hook stand down. On every turn 
 draws it, so it is not drawn twice. The mod may be loaded from any settings scope or with `--plugin-dir`. A session
 that has not loaded it (started before the install and not reloaded, or a nested session that inherited another
 session's id) keeps the hook's own message, and so does a marked session whose settings now disable the plugin, until
-it reloads. Codex and Grok always keep the hook's message.
+it reloads. Codex and Grok always keep the hook's message. A shell call of a code-mode script (the REPL tool, a call
+id `repl_<uuid>`) is a row of its own too: Claude Code adds each call of a script to the transcript as a tool call
+(a virtual `tool_use` with that id), and the mod draws its diff under that row, folded past
+`mods.diff.foldAfterLines` like a Bash call's. The hook leaves such a diff to the mod only in a session the mod
+marked: it sets `GENESIS_TOOLS_MODS_SCRIPT_ROWS` to the session's id in the same step as `GENESIS_TOOLS_MODS_SESSION`,
+so the mark exists from the session's first hook on and the hook never prints its own text diff for the first script of
+a session. It sets the mark again the first time a row with a `repl_` id draws, for a session whose first attempt failed.
+A session without the mark (a mod older than it) keeps the hook's message for a script's diff, because on 2026-11-24
+diffs left to the mod in a session that never marked them were drawn by no one. The id prefix is the one fact
+the hook has (Claude Code 2.1.328). So the post phase checks it, at most once a
+day: a call whose id has neither the `toolu_` nor the `repl_` prefix, or a day with code mode on
+(`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) and no `repl_` call, adds a one-line self-check note to the hook's message.
 
 Each file has a `[-]` / `[+]` button that folds its diff to its name and back, and `[ files only ]` above them folds
 every file; a click on the diff itself still opens the group's calls. The diff of a call that runs `git pull`,
@@ -985,6 +1003,17 @@ Under an open diff the mod draws a second row: `[ ↑ top ]` jumps to the top of
 `[ files only (everywhere) ]` stand there again, so a long diff folds from where the reading ended. These buttons
 scroll to the block's top first and fold after that; otherwise the window would stay where the block's end was.
 `config set mods.diff.bottomRow false --write` removes the row (on by default).
+
+An open file whose diff is longer than `mods.diff.foldAfterLines` lines (20) draws its first 20 lines and
+`[ show all 1,974 lines ]` under them. The whole diff then ends with `[ fold to 20 lines ]`, which scrolls to the
+block's top and folds it back; the choice holds for that file through a redraw and a reload of the mod. The mod does
+the same for the result of a Write over an existing file and of an Edit, which Claude Code draws with every line of
+the diff (a new file it already folds to its first lines), also when a REPL script's `write()` made the call: the
+folded result shows Claude Code's own `Added 987 lines, removed 987 lines` line, the first 20 lines and the button;
+open, it is Claude Code's own drawing with `[ fold to 20 lines ]` under it. The ctrl+o transcript and `--verbose`
+show it whole, and a file in the session's scratchpad folder keeps Claude Code's summary line. A diff of 20 lines or
+fewer looks as before. `config set mods.diff.foldAfterLines 40 --write` sets another limit (0 to 10,000), and `0`
+never folds.
 
 #### The idle-compaction mod (`mods.idleCompact`, on)
 

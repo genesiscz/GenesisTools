@@ -1,5 +1,5 @@
 import { orgMismatch, probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
-import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
+import { LONG_LIVED_SCOPES, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
@@ -41,24 +41,24 @@ export function fingerprintOf(account?: AccountEntry): StoredFingerprint | undef
 
 /**
  * Mint a 1-year token ourselves instead of shelling out to `claude setup-token`.
- * The server only accepts a custom `expires_in` when the grant carries
- * INFERENCE_SCOPE alone, so this flow deliberately requests nothing else —
- * the resulting token can run inference but cannot read usage or profile.
+ * The server accepts a custom `expires_in` only for a small scope set
+ * (LONG_LIVED_SCOPES): the token runs inference and reads the profile, which
+ * Code Mode needs, and it is saved with the scopes the server granted.
  */
 export async function mintLongLivedToken(
     accountName: string,
     openUrl?: (url: string) => Promise<void>
-): Promise<{ token: string; expiresAt: number } | null> {
+): Promise<{ token: string; expiresAt: number; scopes: string[] } | null> {
     p.note(
         [
             "This runs the same OAuth flow as `claude setup-token`, in this terminal.",
-            `Scope requested: ${pc.cyan(INFERENCE_SCOPE)} only — the one combination the`,
-            "server grants a 1-year token for.",
+            `Scopes requested: ${pc.cyan(LONG_LIVED_SCOPES)}. The server grants a 1-year`,
+            "token for these; the profile scope lets Claude Code start Code Mode.",
         ].join("\n"),
         `Mint a long-lived token for "${accountName}"`
     );
 
-    const authUrl = await generateAuthUrl(INFERENCE_SCOPE);
+    const authUrl = await generateAuthUrl(LONG_LIVED_SCOPES);
 
     await presentAuthUrl(authUrl, openUrl);
 
@@ -85,7 +85,7 @@ export async function mintLongLivedToken(
         p.log.warn(`Token does not start with "${TOKEN_PREFIX}" — saving anyway, but check it works.`);
     }
 
-    return { token: tokens.accessToken, expiresAt: tokens.expiresAt };
+    return { token: tokens.accessToken, expiresAt: tokens.expiresAt, scopes: tokens.scopes };
 }
 
 /**
@@ -338,6 +338,7 @@ export async function anthropicLoginLong(ctx: LoginLongContext): Promise<LoginOu
 
     let token = ctx.pastedToken;
     let expiresAt: number | undefined;
+    let scopes: string[] | undefined;
 
     if (token === undefined) {
         const method = ctx.providerFlags?.has(SETUP_TOKEN_FLAG.name) ? "mint" : await askMethod();
@@ -351,6 +352,7 @@ export async function anthropicLoginLong(ctx: LoginLongContext): Promise<LoginOu
 
             token = minted.token;
             expiresAt = minted.expiresAt;
+            scopes = minted.scopes.length > 0 ? minted.scopes : undefined;
         } else {
             token = await promptForPastedToken(accountName);
         }
@@ -394,6 +396,8 @@ export async function anthropicLoginLong(ctx: LoginLongContext): Promise<LoginOu
             // unknowable, and undefined CLEARS any expiry a previously minted
             // token left behind rather than mislabelling the new one.
             ...(expiresAt === undefined ? {} : { longLivedTokenExpiresAt: expiresAt }),
+            // The same rule for the scopes: a pasted token's grant is unknowable, so it is treated as inference-only.
+            ...(scopes === undefined ? {} : { longLivedTokenScopes: scopes }),
         },
         identity: { organizationUuid: identity.organizationUuid },
         accountFields: identity.organizationUuid ? { organizationUuid: identity.organizationUuid } : {},

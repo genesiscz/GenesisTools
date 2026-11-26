@@ -67,6 +67,7 @@ Run `tools claude <command> --help` for the full flag list of any command below.
 | `history extract-shell-quirks` | Report zsh and bash quirk incidents from transcripts |
 | `history dashboard <action>` | The history web dashboard (`up`, `down`, `open`, ...) |
 | `resume [query]` | Resume a session by short id, name, or content search |
+| `fork-with-codemode <session>` | Move a session into Code Mode; a copy under a new id keeps it without |
 | `tail [query]` | Live-tail a session or a subagent |
 | `export <session-id>` | Export a session (`-f full\|mini\|raw`, `-o <path>`) |
 | `transcript <session-id>` | A session as JSON turns, for the Genesis Session Details window |
@@ -136,9 +137,10 @@ goes to `claude` unchanged.
   that resets soonest. Neither blocks a launch: when nothing qualifies you get the normal picker, and an `opus`
   pick below the floor launches with a warning. A real account with that name wins. Each name also launches that
   model (the Opus or the Fable option); an explicit `--model` wins.
-- **An account with no weekly quota left is refused.** `start` exits 1 and names the accounts that still have
-  weekly headroom, because every model gets a 429 on such an account. The check reads the usage cache only, so a
-  cache miss lets the launch go.
+- **An account with no weekly quota left asks first.** `start` warns that every model gets a 429 on such an
+  account, names the accounts that still have weekly headroom, and asks "Still want to launch it?" (Yes is the
+  default, because the cache can be behind a reset; No exits without a launch). A non-interactive run exits 1
+  instead. The check reads the usage cache only, so a cache miss lets the launch go.
 - **The Fable-headroom guard.** When the account's Fable weekly bucket is spent (3% or less left), an interactive
   launch with no `--model` warns, names the accounts with Fable headroom, and asks "Launch anyway?" (No exits
   without a launch). An explicit Fable model (`--model fable` or `start fable`) only warns. Another model, a resume
@@ -146,6 +148,10 @@ goes to `claude` unchanged.
 - **The resume picker is shared.** In a terminal, `tools claude resume`, `start|run --resume` (bare or with a
   query) and `tools claude codex --resume` use one picker. A session that already runs in a cmux tab is listed on
   top as live, and Enter on it focuses that tab instead of starting a second Claude process on it.
+- **A resume keeps the session's model.** On `--resume <id>` with no `--model`, `start` passes the model of the
+  session's last real turn, with `[1m]` when that turn read more than 200k tokens. Claude Code itself resumes on the
+  default model, and a different model starts the prompt cache from nothing. `--model` wins; `--continue` without an
+  id keeps the default.
 - **`--tmux`** works for Anthropic accounts. On `--resume <query>` the tmux session is named from the conversation
   title. Inside tmux already (a ttyd tab), it renames the current session and the bound ttyd tab instead of
   nesting. A slash target (`account/provider`) goes to `proxy` and ignores `--tmux`. `--tmux --keychain` cannot be
@@ -310,6 +316,15 @@ same accounts. An account can hold three credentials:
 `--both` (the OAuth pair and the long-lived token), `--all`, and `-y` to skip the confirmation. `login-long` asks you
 to paste the output of `claude setup-token`, or mints it with `--setup-token`.
 
+A minted token asks for `user:inference user:profile` and keeps the scopes the server granted
+(`credentials.longLivedTokenScopes`). `start`, `exec`, `embed`, `worker` and the agent-team teammates pass them as
+`CLAUDE_CODE_OAUTH_SCOPES`. Without that variable Claude Code treats the token as inference-only, cannot read the
+organization policy, and refuses Code Mode ("couldn't read your organization's settings or policy"). A pasted
+`claude setup-token` token has only `user:inference`, so Code Mode needs a token minted again with `--setup-token`.
+Such a launch also leaves out `CLAUDE_CODE_SUBSCRIPTION_TYPE`: with a plan name Claude Code treats the login as a
+personal plan and skips the policy fetch, so Code Mode still refused (2.1.328). The session then shows its plan as
+"Claude API" and `/usage` shows the API cost view; a 1M model switch still works.
+
 - **`usage`** opens a TUI over every account. `--account <name...>` (alias `-f/--filter`) limits it, `--range`
   takes `60m`, `6h`, `24h` or `7d`, `--json` prints the data (`--scored` adds the ranking the picker uses),
   `--no-tui` prints plain text, and `--fresh` forces a live fetch past the shared cache (45 seconds). `--token`
@@ -386,6 +401,24 @@ Searches stay scoped to Claude and the current project unless `-p`, `--cwd` or `
 - A non-interactive `resume` query with several matches fails instead of silently taking the first session.
 - **`resume [query]`** takes a short id, a name or a search term. `-l` lists recent sessions, `-a` searches every
   project, `-n` sets the count (default 20).
+- **`fork-with-codemode <session>`** (alias `fork-with-codemod`) moves an ordinary session into Code Mode.
+  `<session>` is an id, an id prefix of eight characters or more, or the exact `/rename` title of a session written
+  in the last 14 days. Claude Code pins a session's mode when the session starts: a session started without Code Mode
+  resumes with the ordinary tools even when `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, and its own
+  `--fork-session` keeps that pin (measured on 2.1.328). The command first writes a copy of the conversation under a
+  new id, titled `<title>-without-codemode` (`--backup-suffix`), both in the resume list and beside the prompt, as
+  `/rename` writes them. Then it adds the Code Mode marker to the session itself, which keeps its id and title
+  (`--title` renames it). Links, cmux layouts and notes that name the id reach the Code Mode session, and its
+  sub-agents and `/rewind` checkpoints stay with it. It refuses while a Claude Code process has the session open, a
+  session that already runs in Code Mode, and a copy identified by its fork provenance. In a terminal it then asks
+  which of the two sessions to resume, under the account and the model the session ran on; elsewhere it prints that launch command.
+  When the session is open in cmux, a terminal offers stop and resume in the same tab or focus and wait up to 15 minutes. Any terminal also offers stop and move, or cancel. A stop sends SIGTERM to Claude Code and the launchers above it, up to the tab's shell, then SIGKILL after 10
+  seconds. A Code Mode session resumes only where Code Mode is available: on an account whose organization policy
+  Claude Code cannot read, Claude Code refuses to resume it. `--dry-run` writes nothing; `--json` prints the outcome.
+  Only the main transcript is copied: sub-agent transcripts, tool results and file checkpoints stay with the session.
+  `--check` (either id of the pair, reads only, also while both are open) compares the copy with the session row by
+  row, checks the Code Mode marker and both names, and counts the REPL scripts each one ran after the move; it exits
+  1 when a check fails.
 - **`tail [query]`** follows a session (`-a <id>` for a subagent). `--include` picks content: `thinking`, `tools`
   (`tools:in:500,tools:out:500`), `agents` (`agents:input,agents:tools,agents:result`), and the finer forms
   `tools:in[:<chars>]`, `agents:tools:out[:<N>]`, `agents:thinking`. A later specifier overrides an earlier one.

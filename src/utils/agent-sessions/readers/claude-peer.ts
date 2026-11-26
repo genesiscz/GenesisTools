@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
 import type { PeerProcess } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyCommand } from "@genesiscz/utils/process/classify";
+import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 
 const { log } = logger.scoped("agent-context");
 
@@ -84,4 +86,87 @@ export function claudePeerSession(process: PeerProcess, registryDir: string = cl
     }
 
     return parsed.sessionId;
+}
+
+/** The native Claude executable and the wrappers this toolkit uses to launch it. */
+export function isClaudeLaunchProcess(entry: Pick<ProcessEntry, "name" | "command">): boolean {
+    if (!["claude", "gt-claude", "GenesisTools", "bun", "node", "zsh", "bash", "sh"].includes(entry.name)) {
+        return false;
+    }
+    const kind = classifyCommand(entry.command ?? entry.name);
+    if (kind.kind === "other" && entry.name === "claude") {
+        return true;
+    }
+    return (kind.kind === "agent" || kind.kind === "wrapper") && kind.provider === "claude" && !kind.service;
+}
+
+const REGISTRY_FILE = /^(\d+)\.json$/;
+
+/** A cheap first test before the process lookup; a file removed meanwhile (its process exited) names nothing. */
+function registryFileNames(path: string, sessionId: string): boolean {
+    try {
+        return readFileSync(path, "utf8").includes(sessionId);
+    } catch (error) {
+        log.debug({ error, path }, "a claude session file went away while the registry was read");
+        return false;
+    }
+}
+
+/**
+ * The running Claude Code processes that have this session open now. A registry file counts only when it names the
+ * session, its pid runs, and that process is the one the file was written for (`claudePeerSession`), so a stale file
+ * of a closed session is not a holder.
+ */
+export function claudeSessionHolderProcesses(
+    sessionId: string,
+    {
+        registryDir = claudeSessionsDir(),
+        processOf,
+    }: { registryDir?: string; processOf?: (pid: number) => PeerProcess | null } = {}
+): PeerProcess[] {
+    let names: string[];
+
+    try {
+        names = readdirSync(registryDir);
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+
+        throw error;
+    }
+
+    const table = processOf
+        ? undefined
+        : new Map(listProcesses({ commands: false }).map((entry) => [entry.pid, entry]));
+    const lookup =
+        processOf ??
+        ((pid: number) => {
+            const entry = table?.get(pid);
+            return entry && !entry.zombie && entry.startMs !== null ? { pid, startSec: entry.startMs / 1000 } : null;
+        });
+    const holders: PeerProcess[] = [];
+
+    for (const name of names) {
+        const pid = REGISTRY_FILE.exec(name)?.[1];
+
+        if (!pid || !registryFileNames(join(registryDir, name), sessionId)) {
+            continue;
+        }
+
+        const running = lookup(Number(pid));
+
+        if (running && claudePeerSession(running, registryDir) === sessionId) {
+            holders.push(running);
+        }
+    }
+
+    return holders;
+}
+
+export function claudeSessionHolders(
+    sessionId: string,
+    options: { registryDir?: string; processOf?: (pid: number) => PeerProcess | null } = {}
+): number[] {
+    return claudeSessionHolderProcesses(sessionId, options).map((entry) => entry.pid);
 }

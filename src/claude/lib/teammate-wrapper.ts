@@ -40,7 +40,10 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export interface TeammateAuthEnv {
     oauthToken: string;
-    subscriptionType: string;
+    /** The token's granted scopes, space-separated (CLAUDE_CODE_OAUTH_SCOPES); absent when the grant is unknown. */
+    oauthScopes?: string;
+    /** Absent for a token that reads the profile (`subscriptionTypeFor` in launch-env.ts). */
+    subscriptionType?: string;
     accountName: string;
     fableModel?: string;
     customModelOption?: string;
@@ -142,8 +145,15 @@ export function buildTeammateWrapperScript(input: { claudeBin: string; env: Team
         [accountEnvVar("claude"), auth.accountName],
         ["TOOLS_CLAUDE_AUTH", "token"],
         ["CLAUDE_CODE_OAUTH_TOKEN", auth.oauthToken],
-        ["CLAUDE_CODE_SUBSCRIPTION_TYPE", auth.subscriptionType],
     ];
+
+    if (auth.subscriptionType) {
+        exports.push(["CLAUDE_CODE_SUBSCRIPTION_TYPE", auth.subscriptionType]);
+    }
+
+    if (auth.oauthScopes) {
+        exports.push(["CLAUDE_CODE_OAUTH_SCOPES", auth.oauthScopes]);
+    }
 
     if (auth.fableModel) {
         exports.push(["ANTHROPIC_DEFAULT_FABLE_MODEL", auth.fableModel]);
@@ -168,6 +178,7 @@ export function buildTeammateWrapperScript(input: { claudeBin: string; env: Team
 # Injects OAuth launch env into Claude Code agent-team tmux teammates
 # (CC's spawn allowlist does not forward CLAUDE_CODE_OAUTH_TOKEN).
 set -euo pipefail
+unset CLAUDE_CODE_SUBSCRIPTION_TYPE CLAUDE_CODE_OAUTH_SCOPES
 ${exportLines}
 exec ${shellQuote(claudeBin)} "$@"
 `;

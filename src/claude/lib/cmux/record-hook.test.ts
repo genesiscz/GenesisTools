@@ -2,11 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LAUNCH_ID_ENV, LAUNCHER_PID_ENV } from "@app/claude/lib/launch-tag";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { agentHostFromEnv } from "@genesiscz/utils/ai/active-processes";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { AGENT_HOST_MARKERS, priorAccount } from "../../../../plugins/genesis-tools/hooks/record-session-account";
+import {
+    AGENT_HOST_MARKERS,
+    launchIdFor,
+    type ProcessHop,
+    priorAccount,
+} from "../../../../plugins/genesis-tools/hooks/record-session-account";
 
 /**
  * The pin journal is written by a standalone hook script in the plugin (it cannot import
@@ -42,6 +48,10 @@ async function runHook(payload: string, env: Record<string, string> = {}): Promi
             TOOLS_GROK_ACCOUNT: "",
             CLAUDE_CODE_OAUTH_TOKEN: "",
             CMUX_WORKSPACE_ID: "",
+            // A suite run inside a session that `tools claude run` started inherits its launch tag, and the hook's walk
+            // would find that session's claude and launcher above it and tag every pin here.
+            [LAUNCH_ID_ENV]: "",
+            [LAUNCHER_PID_ENV]: "",
             // This suite may run inside a T3 Code thread, whose marker would give every pin a host.
             // Every host marker the hook reads, so a run inside T3 Code does not record its host here.
             ...Object.fromEntries(AGENT_HOST_MARKERS.map((marker) => [marker.envKey, ""])),
@@ -173,6 +183,56 @@ describe("record-session-account hook", () => {
         expect(stdout).toBe("");
     });
 });
+describe("the launch that started a session", () => {
+    const env = { [LAUNCH_ID_ENV]: "launch-1", [LAUNCHER_PID_ENV]: "100" };
+    const table = (hops: ProcessHop[]) => (pid: number) => hops.find((hop) => hop.pid === pid) ?? null;
+
+    test("a claude whose parent is the launcher records the launch id", () => {
+        expect(launchIdFor(env, { pid: 300, ppid: 100, command: "/opt/bin/claude --resume x" }, table([]))).toBe(
+            "launch-1"
+        );
+    });
+
+    test("the zsh -ic the launcher runs claude through is not another claude, even when its text names claude", () => {
+        const hops = [{ pid: 200, ppid: 100, command: "/bin/zsh -ic exec claude --model opus" }];
+
+        expect(launchIdFor(env, { pid: 300, ppid: 200, command: "/opt/bin/claude --model opus" }, table(hops))).toBe(
+            "launch-1"
+        );
+    });
+
+    test("a claude -p that a tool runs inside the session does not take the session's tag", () => {
+        // claude -p (400) → the tool's shell (350) → the session's claude (300) → zsh -ic (200) → the launcher (100)
+        const hops = [
+            { pid: 350, ppid: 300, command: "/bin/zsh -c claude -p summarize" },
+            { pid: 300, ppid: 200, command: "/opt/bin/claude --resume x" },
+            { pid: 200, ppid: 100, command: "/bin/zsh -ic exec ccc --resume x" },
+        ];
+
+        expect(launchIdFor(env, { pid: 400, ppid: 350, command: "claude -p summarize" }, table(hops))).toBeNull();
+    });
+
+    test("NEGATIVE CONTROL: without the launcher's variables, or with a launcher far above, nothing is recorded", () => {
+        const far = [
+            { pid: 250, ppid: 240, command: "/bin/zsh" },
+            { pid: 240, ppid: 230, command: "/bin/zsh" },
+            { pid: 230, ppid: 100, command: "/bin/zsh" },
+        ];
+
+        expect(launchIdFor({}, { pid: 300, ppid: 100, command: "/opt/bin/claude" }, table([]))).toBeNull();
+        expect(launchIdFor(env, { pid: 300, ppid: 250, command: "/opt/bin/claude" }, table(far))).toBeNull();
+    });
+
+    test("the hook writes no launch id when its claude is not the launcher's child", async () => {
+        await runHook('{"session_id":"abc","cwd":"/tmp/project"}', {
+            [LAUNCH_ID_ENV]: "launch-1",
+            [LAUNCHER_PID_ENV]: "999999",
+        });
+
+        expect((await readPins())[0]).not.toHaveProperty("launchId");
+    });
+});
+
 describe("the harness decides which account variable is read", () => {
     const CODEX_TRANSCRIPT =
         "/Users/u/.codex/sessions/2026/09/10/rollout-2026-09-10T22-56-02-01a08d1b-296d-73f2-9e9c-a5d515cbc1ae.jsonl";

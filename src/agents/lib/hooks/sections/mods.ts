@@ -14,7 +14,7 @@ import type { ModsConfig } from "../config";
 
 // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
 const DEFAULT_MODS: ModsConfig = {
-    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
+    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false, foldAfterLines: 20 },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "version", effort: true },
@@ -80,6 +80,7 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
             collapseGitSync: boolOr(diff.collapseGitSync, boolOr(held.collapseGitSync, base.diff.collapseGitSync)),
             bottomRow: boolOr(diff.bottomRow, base.diff.bottomRow),
             filesOnly: boolOr(diff.filesOnly, base.diff.filesOnly),
+            foldAfterLines: limitedOr(problems, "diff.foldAfterLines", diff.foldAfterLines, base.diff.foldAfterLines),
         },
         idleCompact: {
             enabled: boolOr(idle.enabled, legacyIdle ?? base.idleCompact.enabled),
@@ -223,6 +224,7 @@ const MOD_ALIASES: Record<string, string> = {
 
 /** The highest whole number each numeric mods field takes, and the lowest when it is not 1. */
 const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string }> = {
+    "diff.foldAfterLines": { min: 0, max: 10_000, why: "0 never folds; 10,000 is the maximum preview length" },
     "idleCompact.minutes": { max: 59, why: "at 60 the 1-hour prompt cache has expired" },
     "idleCompact.minTokens": { max: Number.MAX_SAFE_INTEGER, min: 0, why: "" },
     "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },
@@ -364,7 +366,7 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
     defaults: () => structuredClone(DEFAULT_MODS),
     merge: mergeMods,
     settable: [
-        "mods.diff.<fullDiff|collapseGitSync|bottomRow|filesOnly>",
+        "mods.diff.<fullDiff|collapseGitSync|bottomRow|filesOnly|foldAfterLines>",
         "mods.idleCompact.<enabled|minutes|minTokens>",
         "mods.agentModel.<enabled|format>",
         "mods.agentRow.<enabled|format|effort>",

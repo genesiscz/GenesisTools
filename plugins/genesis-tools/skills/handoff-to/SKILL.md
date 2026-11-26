@@ -25,8 +25,10 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 | model | cost | intelligence | taste |
 |---|---|---|---|
 | fable-5-2 | 3 | 10 | 9 |
+| gpt-6.2-astra | 4 | 9 | 7 |
 | gpt-6-astra | 2 | 9 | 7 |
 | opus-5-5 | 5 | 9 | 9 |
+| gpt-6.2-sol | 9 | 8 | 7 |
 | gpt-6.1-sol | 9 | 8 | 7 |
 | sonnet-5-5 | 7 | 8 | 8 |
 | gpt-6.1-terra | 10 | 7 | 6 |
@@ -39,6 +41,7 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 <!-- updated 2026-10-13 17:32: haiku-5-5 added from launch data; sonnet-5-5 cache reads halved -->
 <!-- updated 2026-10-27 03:48: gpt-6.1-terra added from launch data (released 2026-10-26) -->
 <!-- updated 2026-11-10 03:51: fable-5-2 replaces fable-5-1 (released 2026-11-09, $8/$40, about 30% faster output) -->
+<!-- updated 2026-11-20 18:12: gpt-6.2-astra and gpt-6.2-sol added from launch data (released 2026-11-17); fable-5-2 and opus-5-5 checked against fable-5-2's own launch data, scores unchanged -->
 
 List prices per MTok (input/output), from the vendor pages on 2026-10-13: gpt-6-astra
 $10/$50, fable-5-2 $8/$40 (2026-11-10; fast mode $16/$80), opus-5-5 $4/$20, gpt-6.1-sol $2/$10, sonnet-5-5 $2/$10, gpt-6-luna $0.10/$0.50,
@@ -49,6 +52,10 @@ long-context band.
 gpt-6.1-sol has GPT-6 Sol's list price but cached input at $0.10 (5% of input, half of 6 Sol's), so
 cache-heavy agent loops cost less than on 6 Sol; Artificial Analysis measured $0.72 per Intelligence
 Index task against $1.05 for gpt-6-sol and $3.26 for gpt-6-astra.
+gpt-6.2-astra (2026-11-17) costs $8/$40 with cached input at $0.40: 20% below gpt-6-astra, and the same
+list price as fable-5-2. gpt-6.2-sol (2026-11-17) keeps gpt-6.1-sol's $2/$10 and $0.10 cached input.
+Artificial Analysis measured, at an equal Intelligence Index score of 62, $2.52 per task for gpt-6.2-astra
+(xhigh) against $9.08 for fable-5-2 (high); that is why Astra's cost score is 4 and Fable's is 3.
 GPT-6 prompts above 272K input tokens bill 2x input and 1.5x output; grok-4.7 bills 2x above 200K.
 Subscription quota and API-equivalent cost are different measures. Do not infer that a worker is free.
 
@@ -64,9 +71,30 @@ Launch benchmarks behind the scores (vendor-reported, different harnesses, so re
 - FrontierCode v1.1 Main: opus-5-5 54.4%, gpt-6-astra 53.3%, fable-5-1 50.3 to 50.9%.
 - Humanity's Last Exam with tools: fable-5-1 65.0%, gpt-6-astra 57.2%. Artificial Analysis Coding Agent Index: fable-5-1 70, gpt-6-astra 67.
 
-fable-5-2 keeps intelligence 10 for the hardest ambiguous reasoning (the benchmark lines above are fable-5-1's
-launch numbers; 5.2 is its successor at 80% of the price). opus-5-5 matches or beats fable-5-1 on agentic
-coding at half of fable-5-2's price, so it stays the default Claude worker for work that ships. The grok-4.7 scores are
+Launch data of November 2026 (fable-5-2 on 2026-11-09, gpt-6.2 on 2026-11-17; read on 2026-11-20):
+
+- Artificial Analysis Intelligence Index v5, top effort: fable-5-2 65, gpt-6.2-astra 62 (gpt-6-astra 57),
+  opus-5-5 59, gpt-6.2-sol 57 (gpt-6.1-sol 55).
+- FrontierCode 2.0: fable-5-2 50.2% at xhigh (Cognition's run; 49.1% in Anthropic's, 45.3% at high),
+  opus-5-5 45.5%, gpt-6.2-astra 44.2%, gpt-6.2-sol 43.8% at about a fifth of Astra's cost per task,
+  gpt-6-astra 42.8%, gpt-6.1-sol 39.0%.
+- fable-5-2 (Anthropic's system card): SWE-bench Pro 93.0% (fable-5-1 81.2%), Terminal-Bench-Science 74.6%.
+  KingBench 4 (six whole projects from one prompt each): fable-5-2 70%, opus-5-5 57.8%. opus-5-5 still leads
+  SWE-bench Multimodal.
+- ⚠️ Artificial Analysis Coding Agent Index (Codex harness, max effort): gpt-6.2-astra is flat against
+  gpt-6-astra, and gpt-6.2-sol is 3 points BELOW gpt-6.1-sol. The Sol drop comes from a 14-point drop on
+  SWE-Atlas-QnA-AA: it leaves key facts out of answers about a codebase. OpenAI's own tests: both 6.2 models
+  fail more often than gpt-6-astra to say what blocked their work (Astra 22.28% against 11.09% with no
+  developer prompt). Early testers called Astra uneven and hard to steer in delegated work.
+- That Sol drop is a result at MAX effort only. On the Intelligence Index (nine tests, two of them coding)
+  gpt-6.2-sol is above gpt-6.1-sol at each effort, and faster: xhigh 56 against 52 ($0.65 against $0.76 per
+  task, 5.7 against 10.4 minutes), high 55 against 50, medium 53 against 46. Nobody published the Coding Agent
+  Index at xhigh.
+- So the 6.2 scores equal their predecessors' here: the gains are in price, science and long workflows, not in
+  coding-agent quality. Re-rank after real use, and read a 6.2 worker's "nothing blocked me" as unproven.
+
+fable-5-2 keeps intelligence 10 for the hardest ambiguous reasoning. opus-5-5 is within about 5 points of it on
+FrontierCode 2.0 at half the price per token, so it stays the default Claude worker for work that ships. The grok-4.7 scores are
 provisional (added 2026-09-23 from launch data only); re-rank after real use.
 
 How to apply:

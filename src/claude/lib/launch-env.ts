@@ -1,7 +1,9 @@
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { byId } from "@genesiscz/utils/ai/catalog";
+import { PROFILE_SCOPE } from "@genesiscz/utils/claude/auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeJsonPath, claudeJsonPathInConfigDir } from "@genesiscz/utils/providers/session-paths";
@@ -84,19 +86,54 @@ export function subscriptionTypeOf(account: Pick<AIAccountEntry, "label">): stri
     return account.label?.split(" ")[0] ?? "max";
 }
 
+/** An account's long-lived token and the scopes the server granted it (`credentials.longLivedTokenScopes`). */
+export interface PinnedToken {
+    value: string;
+    /** Absent for a token whose grant is unknown (a pasted `claude setup-token` one): Claude Code then assumes `user:inference`. */
+    scopes?: readonly string[];
+}
+
+/**
+ * The plan name to give Claude Code with this token, or undefined for a token that reads the profile.
+ *
+ * With a plan name Claude Code classes the login as a personal plan and skips the organization policy fetch, so Code
+ * Mode refuses to start ("couldn't read your organization's settings or policy"; Claude Code 2.1.328, one start each
+ * way on 2026-11-19). Without it the session reads the policy and starts Code Mode, shows its plan as "Claude API",
+ * and still switches to a 1M model. An inference-only token keeps the name: claude-code#70124.
+ */
+export function subscriptionTypeFor(account: Pick<AIAccountEntry, "label">, token: PinnedToken): string | undefined {
+    return token.scopes?.includes(PROFILE_SCOPE) ? undefined : subscriptionTypeOf(account);
+}
+
+/** Build a complete environment, clearing token metadata inherited from another account. */
+export function tokenLaunchEnv(
+    account: Pick<AIAccountEntry, "name" | "label">,
+    token: PinnedToken
+): Record<string, string | undefined> {
+    const inherited = { ...env.getProcessEnv() };
+    delete inherited.CLAUDE_CODE_SUBSCRIPTION_TYPE;
+    delete inherited.CLAUDE_CODE_OAUTH_SCOPES;
+    return { ...inherited, ...pinnedLaunchEnv(account, token) };
+}
+
 export function pinnedLaunchEnv(
     account: Pick<AIAccountEntry, "name" | "label">,
-    longLivedToken: string
+    token: PinnedToken
 ): Record<string, string> {
+    const subscriptionType = subscriptionTypeFor(account, token);
+
     return {
         [accountEnvVar("claude")]: account.name,
         // Survives Claude Code's hook env allowlist (the OAuth token does not).
         // SessionStart records this so cmux resume does not invent --keychain.
         TOOLS_CLAUDE_AUTH: "token",
-        CLAUDE_CODE_OAUTH_TOKEN: longLivedToken,
+        CLAUDE_CODE_OAUTH_TOKEN: token.value,
+        // Claude Code gives a token from the environment `user:inference` alone unless this names more. With
+        // `user:profile` it reads the organization policy, which Code Mode needs before it starts.
+        ...(token.scopes?.length ? { CLAUDE_CODE_OAUTH_SCOPES: token.scopes.join(" ") } : {}),
         // Interactive CC can't resolve the tier from an inference-only setup token,
         // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
-        CLAUDE_CODE_SUBSCRIPTION_TYPE: subscriptionTypeOf(account),
+        ...(subscriptionType === undefined ? {} : { CLAUDE_CODE_SUBSCRIPTION_TYPE: subscriptionType }),
         ANTHROPIC_DEFAULT_FABLE_MODEL: FABLE_MODEL_ID,
         ANTHROPIC_CUSTOM_MODEL_OPTION: FABLE_MODEL_OPTION,
         ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: FABLE_MODEL_OPTION_NAME,

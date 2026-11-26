@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractBunModules } from "./bun-binary";
+import { extractBunModules, replaceBunModule } from "./bun-binary";
 
 const TRAILER = new TextEncoder().encode("\n---- Bun! ----\n");
 
@@ -143,4 +143,32 @@ describe("extractBunModules", () => {
         expect(modules[1]?.loader).toBe(10);
         expect(modules[1]?.isEntrypoint).toBe(true);
     });
+});
+
+test("replaces one module and clears only its cached bytecode pointer", () => {
+    const fixture = Buffer.from(
+        buildFixture(
+            [
+                { name: "main.js", contents: "original", loader: 1 },
+                { name: "other.js", contents: "neighbor", loader: 1 },
+            ],
+            0
+        )
+    );
+    const table = fixture.length - TRAILER.length - 32 - 2 * 52;
+    fixture.writeUInt32LE(7, table + 24);
+    fixture.writeUInt32LE(1, table + 28);
+    fixture.writeUInt32LE(7, table + 52 + 24);
+    fixture.writeUInt32LE(3, table + 52 + 28);
+
+    expect(() => replaceBunModule(fixture, "main.js", Buffer.from("extra-long"))).toThrow();
+    expect(fixture.readUInt32LE(table + 28)).toBe(1);
+    replaceBunModule(fixture, "main.js", Buffer.from("modified"));
+
+    expect(fixture.readBigUInt64LE(table + 24)).toBe(0n);
+    expect(fixture.readBigUInt64LE(table + 52 + 24)).toBe((3n << 32n) | 7n);
+    expect(extractBunModules(fixture).map(({ contents }) => Buffer.from(contents).toString())).toEqual([
+        "modified",
+        "neighbor",
+    ]);
 });

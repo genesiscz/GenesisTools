@@ -1,6 +1,6 @@
-import { buildLaunchCommand, paneTitle } from "@app/claude/lib/cmux/command";
+import { buildLaunchCommand, type LaunchCommandOptions, paneTitle } from "@app/claude/lib/cmux/command";
 import { findCandidate } from "@app/claude/lib/cmux/sessions";
-import type { PlannedSession } from "@app/claude/lib/cmux/types";
+import type { PlannedSession, RestoreCandidate } from "@app/claude/lib/cmux/types";
 import { type OpenSessionTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -13,6 +13,24 @@ export interface OpenSessionResult {
 }
 
 /**
+ * The command that resumes a session under the account and model it was pinned to, from the same builder restore
+ * uses. Throws when no local session matches.
+ */
+export async function sessionLaunch(
+    sessionId: string,
+    opts: LaunchCommandOptions = {}
+): Promise<{ candidate: RestoreCandidate; planned: PlannedSession; command: string }> {
+    const candidate = await findCandidate(sessionId);
+
+    if (!candidate) {
+        throw new Error(`No local session matches "${sessionId}" (need a full id or an 8+ char prefix)`);
+    }
+
+    const planned: PlannedSession = { candidate, account: candidate.account, model: candidate.model };
+    return { candidate, planned, command: buildLaunchCommand(planned, opts) };
+}
+
+/**
  * Resume a session at a chosen level of the cmux hierarchy (see `OpenSessionTarget`). The launch
  * command comes from the same builder restore uses, so the session resumes under the account and
  * auth mode it was pinned to.
@@ -20,17 +38,11 @@ export interface OpenSessionResult {
 export async function openSessionAt(
     sessionId: string,
     target: OpenSessionTarget,
-    opts: { enter?: boolean } = {}
+    opts: { enter?: boolean; codeMode?: boolean } = {}
 ): Promise<OpenSessionResult> {
     const prof = profiler.scope("claude-cmux-open");
-    const candidate = await prof.measureAsync("candidate", () => findCandidate(sessionId));
-
-    if (!candidate) {
-        throw new Error(`No local session matches "${sessionId}" (need a full id or an 8+ char prefix)`);
-    }
-
-    const planned: PlannedSession = { candidate, account: candidate.account, model: candidate.model };
-    const command = buildLaunchCommand(planned);
+    const launch = await prof.measureAsync("candidate", () => sessionLaunch(sessionId, { codeMode: opts.codeMode }));
+    const { candidate, planned, command } = launch;
     const placed = await openCommandAt({
         command,
         target,

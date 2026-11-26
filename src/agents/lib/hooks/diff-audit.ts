@@ -10,7 +10,7 @@ import {
     scriptTexts,
     type Writes,
 } from "./diff/attribution";
-import { commandDirs, namedArguments } from "./diff/command-paths";
+import { namedArguments, workDirs } from "./diff/command-paths";
 import { canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./diff/mentions";
 import { type DiffLogEntry, readDiffLog } from "./diff-log";
 
@@ -158,7 +158,10 @@ export function auditDiffLog({
             entry.command && entry.cwd
                 ? [
                       ...mentionsOf({ tool: "Bash", input: { command: entry.command }, cwd: entry.cwd }),
-                      ...namedArguments(entry.command, commandDirs(entry.command, entry.cwd)).map(canonical),
+                      ...namedArguments(
+                          entry.command,
+                          workDirs(entry.command, entry.cwd, readOnlyCommand(entry.command))
+                      ).map(canonical),
                   ]
                 : [];
         const loggedRule = (file: string, side: AuditRow["side"]): string => {

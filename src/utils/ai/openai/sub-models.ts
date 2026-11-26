@@ -22,10 +22,10 @@ export const OPENAI_SUB_BUILTIN_ALIAS_NAMES = [
 ] as const;
 
 const OPENAI_SUB_BUILTIN_ALIASES: Record<string, (catalog: WhamModelRecord[]) => string | undefined> = {
-    astra: () => "gpt-6-astra",
+    astra: () => "gpt-6.2-astra",
     terra: () => "gpt-6.1-terra",
     luna: () => "gpt-6-luna",
-    sol: () => "gpt-6.1-sol",
+    sol: () => "gpt-6.2-sol",
     sol6: () => "gpt-6-sol",
     latest: (catalog) => catalog.find((record) => record.visibility === "list")?.slug,
     codex: (catalog) =>

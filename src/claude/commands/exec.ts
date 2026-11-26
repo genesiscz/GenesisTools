@@ -1,4 +1,4 @@
-import { ensureOnboardingSkippedForOAuthToken, pinnedLaunchEnv } from "@app/claude/lib/launch-env";
+import { ensureOnboardingSkippedForOAuthToken, tokenLaunchEnv } from "@app/claude/lib/launch-env";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -6,7 +6,6 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
@@ -204,7 +203,7 @@ export async function execCommand(args: string[]): Promise<never> {
         const proc = Bun.spawn({
             cmd: command,
             stdio: ["inherit", "inherit", "inherit"],
-            env: { ...env.getProcessEnv(), ...pinnedLaunchEnv(account, token) },
+            env: tokenLaunchEnv(account, { value: token, scopes: account.credentials.longLivedTokenScopes }),
         });
 
         process.exit(await proc.exited);

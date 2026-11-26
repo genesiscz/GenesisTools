@@ -243,6 +243,16 @@ export interface ProcessSignature {
     readonly headless: { readonly flags: readonly string[]; readonly subcommands: readonly string[] };
 }
 
+/** How a harness names the shell calls of a code-mode script (`HookFacts.scriptCalls`). */
+export interface ScriptCallIds {
+    /** The id prefix of a script's shell call, which the mods prove draws as a row before the hook relies on it. */
+    readonly prefix: string;
+    /** The id prefix of a call the model made itself, which has its row. */
+    readonly rowPrefix: string;
+    /** Whether the harness runs in code mode, read from its environment, which its hooks inherit. */
+    codeModeOn(vars: Readonly<Record<string, string | undefined>>): boolean;
+}
+
 /**
  * I: what a hook, the hook config and the change log may assume about the harness that ran them. Plain data in its
  * own module per plugin (`plugins/<plugin>/harness-hooks.ts`), because the guard hook reads it through
@@ -259,6 +269,15 @@ export interface HookFacts {
     readToolCalls(transcriptPath: string, fromOffset: number): ToolCallsRead;
     /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
     readonly modsDrawDiffs: boolean;
+    /**
+     * How it names the shell calls of a code-mode script, or null where it has no code mode. The mods draw a full diff
+     * only under the call's own row. A script's call draws as a row of its own in Claude Code (a virtual tool call), but
+     * a diff left to the mod in a session that never marked such rows showed nowhere (918 calls in 12 hours of the hook
+     * log, 2026-11-24), so the hook leaves it to the mod only where the mod marked them (`MODS_SCRIPT_ROWS_VAR`, set
+     * with the mod's session mark, so from the session's first script on). The diff hook's `callHasOwnRow` reads it, and
+     * `scriptCallIdNotice` checks once a day that the ids still have this shape.
+     */
+    readonly scriptCalls: ScriptCallIds | null;
     /** Its model may come from `~/.claude/settings.json` when the transcript names none. */
     readonly settingsModel: boolean;
     /**
