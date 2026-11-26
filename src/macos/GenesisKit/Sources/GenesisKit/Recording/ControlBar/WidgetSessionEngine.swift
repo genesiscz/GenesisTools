@@ -26,6 +26,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     private let systemScope: @MainActor () -> SystemAudioScope
     private let keepsOverlays: @MainActor () -> Bool
     private let finishTimeout: Duration
+    private let connectedDisplay: @MainActor (UInt32, String) -> RecordingDisplay?
     private var controller: RecordingSessionController?
     private var take: String?
     private var hasFrame = false
@@ -47,12 +48,16 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
 
     init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool,
          systemScope: @escaping @MainActor () -> SystemAudioScope = { SystemAudioScope.load() },
-         keepsOverlays: @escaping @MainActor () -> Bool = { false }, finishTimeout: Duration = .seconds(240)) {
+         keepsOverlays: @escaping @MainActor () -> Bool = { false }, finishTimeout: Duration = .seconds(240),
+         connectedDisplay: @escaping @MainActor (UInt32, String) -> RecordingDisplay? = {
+             RecordingDisplay.connected(displayID: $0, name: $1)
+         }) {
         self.makeController = makeController
         self.showsBorder = showsBorder
         self.systemScope = systemScope
         self.keepsOverlays = keepsOverlays
         self.finishTimeout = finishTimeout
+        self.connectedDisplay = connectedDisplay
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
     }
 
@@ -226,7 +231,9 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             }
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
             if event.target == .followDisplay, let display = event.display, let id = UInt32(exactly: display.id) {
-                emit(.liveDisplay(RecordingDisplay.connected(displayID: id, name: display.name)))
+                emit(.liveDisplay(connectedDisplay(id, display.name)))
+            } else if event.target != nil {
+                emit(.liveDisplay(nil))
             }
         case "elapsed":
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }

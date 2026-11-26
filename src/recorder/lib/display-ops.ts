@@ -174,6 +174,10 @@ export function displayOpOverrides(
                 );
             }
 
+            if ((firstUs.get(op.display) ?? Infinity) >= Math.min(toUs, endUs)) {
+                throw new Error(`display ${op.display} has no frames before ${seconds(Math.min(toUs, endUs))} s`);
+            }
+
             next.push({ fromUs, toUs, displayId: op.display });
         } else if (op.op === "hideDisplay") {
             requireDisplay(op.display);
@@ -191,7 +195,9 @@ export function displayOpOverrides(
                 const before = current[index - 1]?.displayId;
                 const after = current[index + 1]?.displayId;
                 const other = [...firstUs.entries()].find(([id, first]) => id !== op.display && first < pieceTo)?.[0];
-                const replacement = [before, after, other].find((id) => id !== undefined && id !== op.display);
+                const replacement = [before, after, other].find(
+                    (id) => id !== undefined && id !== op.display && (firstUs.get(id) ?? Infinity) < pieceTo
+                );
 
                 if (replacement === undefined) {
                     throw new Error(

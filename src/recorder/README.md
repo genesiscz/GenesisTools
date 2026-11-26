@@ -482,7 +482,7 @@ Select the sources before you start. Every target records the sources you choose
 display, an area, a window and an app alike. Settings → Recorder → What the movie keeps → "System audio of a window
 or app" picks whose sound a window or app movie keeps. The movie engine keeps its start-time audio settings.
 A frames take can mute a source or switch the microphone when it has the track and the live command.
-The widget records silent video. Its bar disables the camera and Add marker.
+The widget records the selected system and microphone audio tracks. Its bar disables the camera and Add marker.
 The camera starts with a movie. The bar disables Change needed when both frame rates are equal.
 “This take” identifies a live edit. “Next recording” identifies a setting to choose before capture.
 Restart replaces the current take. Discard ends it without saving.
