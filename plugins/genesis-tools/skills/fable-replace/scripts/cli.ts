@@ -33,7 +33,7 @@ import { printApi } from "./api";
 import { pruneScratch, removeEmptyDir, rollback, scratchDir } from "./backup-and-rollback";
 import { FableReplaceError } from "./internal";
 import { appendJournal, estimateTokens, type JournalEntry, printHistory, printStats } from "./journal";
-import { recon } from "./recon";
+import { recon, reconParamsFromJson } from "./recon";
 import { renameModuleParamsFromJson, renameModuleSymbol } from "./rename-module";
 import { editsFromJson, reportToJson } from "./report-json";
 import { parseSpec } from "./spec";
@@ -52,6 +52,8 @@ usage: bun cli.ts [--dry] [--diff [none|stat|full]] [--verify "<cmd>"] [--verify
        bun cli.ts --find <literal|/regex/flags> [--roots a,b] [--ext .ts,.tsx] [--cwd <dir>] [--json]
                                          # the files under roots (default .) that name it, with counts; writes nothing;
                                          # --ext defaults to .ts,.tsx, and --ext '' searches every file
+       bun cli.ts --find-json <file|-> [--cwd <dir>] [--json]
+                                         # {"pattern","regex","flags","roots","exts"} JSON; literal strings stay literal
        bun cli.ts --rollback <backupDir> [--force]   # undo a sweep from the backup dir a run printed
        bun cli.ts --api [query]          # every exported function/type with its docs; query narrows
        bun cli.ts --help
@@ -130,6 +132,7 @@ const VALUE_FLAGS = [
     "--rollback",
     "--edits",
     "--rename-module",
+    "--find-json",
     "--roots",
     "--ext",
     "--verify-control",
@@ -151,14 +154,31 @@ const BOOL_FLAGS = [
     "-h",
 ];
 // Each door reads the batch its own way; with two, one of them would be dropped without a word.
-const DOORS = ["--edits", "--spec", "--rename-module", "--find"];
+const DOORS = ["--edits", "--spec", "--rename-module", "--find", "--find-json"];
 const NOT_WITH_JSON = ["--rollback", "--prune", "--history", "--stats", "--api"];
 const DIFF_LEVELS: readonly DiffLevel[] = ["none", "stat", "full"];
 const VERIFY_CONTROLS = new Map<string, VerifyControl>([["ts", TS_VERIFY_CONTROL]]);
 
 const argv = process.argv.slice(2);
-// Read before the parse, so a usage error the parse finds is a JSON answer too.
-const jsonMode = argv.includes("--json");
+// Inspect option positions before parsing, including malformed calls that still need a JSON refusal.
+const outputFlags: string[] = [];
+for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    outputFlags.push(arg);
+    if (
+        PATTERN_FLAGS.includes(arg) ||
+        (VALUE_FLAGS.includes(arg) && argv[index + 1] !== undefined && !argv[index + 1].startsWith("--"))
+    ) {
+        index += 1;
+    } else if (
+        OPTIONAL_VALUE_FLAGS.includes(arg) &&
+        argv[index + 1] !== undefined &&
+        !argv[index + 1].startsWith("--")
+    ) {
+        index += 1;
+    }
+}
+const jsonMode = outputFlags.includes("--json");
 const values = new Map<string, string>();
 const flags = new Set<string>();
 let printedChars = 0;
@@ -247,12 +267,12 @@ if (doors.length > 1) {
 }
 
 const notWithJson = NOT_WITH_JSON.filter((name) => flags.has(name) || values.has(name));
-if (jsonMode && notWithJson.length > 0) {
+if ((jsonMode || values.has("--find") || values.has("--find-json")) && notWithJson.length > 0) {
     await refuse(`--json answers a run or --find, not ${notWithJson.join(" or ")}. Nothing was done.`);
 }
 
 const findOnly = ["--roots", "--ext"].filter((name) => values.has(name));
-if (findOnly.length > 0 && !values.has("--find")) {
+if (findOnly.length > 0 && !values.has("--find") && !values.has("--find-json")) {
     await refuse(`${findOnly.join(" and ")} narrow --find only. Nothing was done.`);
 }
 
@@ -429,17 +449,22 @@ const printRecon = (report: ReconReport): void => {
 };
 
 /** --find: read-only, so it is not journaled and never prunes. */
-const findDoor = async (raw: string): Promise<never> => {
-    let pattern: string | RegExp;
+const findDoor = async (raw: string, jsonInput = false): Promise<never> => {
+    let input: ReturnType<typeof reconParamsFromJson>;
     try {
-        pattern = findPattern(raw);
+        if (jsonInput) {
+            const text = raw === "-" ? await Bun.stdin.text() : fs.readFileSync(path.resolve(cwd, raw), "utf8");
+            input = reconParamsFromJson(JSON.parse(text));
+        } else {
+            input = { pattern: findPattern(raw), roots: listValue("--roots"), exts: listValue("--ext") };
+        }
     } catch (err) {
         return refuse(`--find: ${errorText(err)}. Nothing was done.`);
     }
 
     let report: ReconReport;
     try {
-        report = recon({ roots: listValue("--roots") ?? ["."], pattern, exts: listValue("--ext"), cwd });
+        report = recon({ ...input, roots: input.roots ?? ["."], cwd });
     } catch (err) {
         console.error(`FIND ERROR: ${errorText(err)}`);
         return finish(err instanceof FableReplaceError ? err.code : 1, reportToJson({ error: err, dryRun: false }));
@@ -557,9 +582,10 @@ const runDoor = async (): Promise<void> => {
 
     // The run backs up into this folder only when it writes; a run that writes nothing leaves it empty, and the
     // folder goes again, so no empty backup reads as one to roll back to.
-    const backupDir = flag("--no-backup") || dryRun ? undefined : scratchDir("cli", { cwd: runCwd });
+    let backupDir: string | undefined;
     let report: RunReport;
     try {
+        backupDir = flag("--no-backup") || dryRun ? undefined : scratchDir("cli", { cwd: runCwd });
         report = await run({
             edits,
             cwd: runCwd,
@@ -646,6 +672,11 @@ const runDoor = async (): Promise<void> => {
         await writeJson(reportToJson({ report, dryRun, warnings: specWarnings }));
     }
 };
+
+const findJson = value("--find-json");
+if (findJson !== undefined) {
+    await findDoor(findJson, true);
+}
 
 const findValue = value("--find");
 if (findValue !== undefined) {

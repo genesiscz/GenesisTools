@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { FableReplaceError, identifierPattern } from "./internal";
-import { findFiles } from "./recon";
+import { countMatches, findFiles } from "./recon";
 import { renameSymbolAcross } from "./rename-symbols";
 import { mergeFileEdits } from "./sweep-many-files";
 import type { FileEdit } from "./types";
@@ -37,6 +37,54 @@ export interface RenameModuleSymbolParams {
 }
 
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
+const RESERVED_BINDINGS = new Set([
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+    "let",
+    "static",
+    "implements",
+    "interface",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "await",
+]);
 const SEARCHED_EXTS = [".ts", ".tsx"];
 const PARAM_KEYS = ["file", "symbol", "to", "roots", "cwd", "includeShadowed"];
 
@@ -66,7 +114,7 @@ export const renameModuleSymbol = ({
         ["symbol", symbol],
         ["to", to],
     ]) {
-        if (!IDENTIFIER_RE.test(value)) {
+        if (!IDENTIFIER_RE.test(value) || RESERVED_BINDINGS.has(value)) {
             refuse(`${name} "${value}" is not an identifier`);
         }
     }
@@ -107,7 +155,7 @@ export const renameModuleSymbol = ({
         ...new Set(
             findFiles({
                 roots: [moduleFile, ...resolvedRoots],
-                containing: new RegExp(identifierPattern(symbol)),
+                containing: /^/,
                 exts: [...new Set([...SEARCHED_EXTS, ext])],
             })
         ),
@@ -119,11 +167,10 @@ export const renameModuleSymbol = ({
         );
     }
 
-    // Each file's count is pinned from what it holds now, so every rename op reports expected beside found.
-    const identifier = new RegExp(identifierPattern(symbol), "g");
-    const counts = Object.fromEntries(
-        files.map((abs) => [abs, (fs.readFileSync(abs, "utf8").match(identifier) ?? []).length])
-    );
+    const counts = countMatches({ files, pattern: new RegExp(identifierPattern(symbol), "g"), quiet: true });
+    if ((counts[moduleFile] ?? 0) === 0) {
+        refuse(`${file} does not contain the symbol "${symbol}"`);
+    }
     const renames = renameSymbolAcross({
         files: counts,
         oldName: symbol,

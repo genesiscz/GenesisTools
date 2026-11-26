@@ -29,6 +29,11 @@ const refusal = (value: unknown): FableReplaceError => {
 };
 
 describe("editsFromJson", () => {
+    test("an object-shaped kind is refused by its field path", () => {
+        const error = refusal([{ file: "a.ts", ops: [{ kind: { toString: 1 } }] }]);
+        expect(error.code).toBe(2);
+        expect(error.message).toContain("[0].ops[0].kind");
+    });
     test("a literal, a regex, deleteLines and dropComments with matching, and a rewrite round-trip", () => {
         const edits: FileEdit[] = [
             {

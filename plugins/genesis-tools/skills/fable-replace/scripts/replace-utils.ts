@@ -61,7 +61,7 @@ export { applyDeleteLines, applyDropComments, deleteLines, dropComments, removeS
 export { all, applyOps, drop, dropJsdocStarting, fuzzyWhitespaceRegex, maybe, nearestHint } from "./edit-one-file";
 export { changedOnDisk, countOccurrences, FableReplaceError, nthIndexOf } from "./internal";
 export type { LeftoverReport } from "./recon";
-export { countMatches, findFiles, grepPreview, leftovers, recon, shadowedFiles } from "./recon";
+export { countMatches, findFiles, grepPreview, leftovers, recon, reconParamsFromJson, shadowedFiles } from "./recon";
 export type { RenameModuleSymbolParams } from "./rename-module";
 export { renameModuleParamsFromJson, renameModuleSymbol } from "./rename-module";
 export { renameSymbol, renameSymbolAcross, sameOpsAcross } from "./rename-symbols";

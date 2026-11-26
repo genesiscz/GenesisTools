@@ -48,6 +48,9 @@ const strandedByRollback = ({ backupDir, touched }: { backupDir: string; touched
 
 const CLI_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "cli.ts");
 
+const rollbackCommand = (backupDir: string): string =>
+    ["bun", CLI_PATH, "--rollback", backupDir].map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ");
+
 /**
  * The failure block a reader must not misread. Its first sentence answers the only
  * question that matters after a red check: the files ARE written. A rollback here would
@@ -78,7 +81,7 @@ const printVerifyFailure = ({
     console.error(
         backupDir === undefined
             ? "  (no backup dir: this run used --no-backup, so undo it with git: `git diff`, then `git stash push -- <files>`)"
-            : `  bun "${CLI_PATH}" --rollback "${backupDir}"`
+            : `  ${rollbackCommand(backupDir)}`
     );
     for (const line of verify.shown) {
         console.error(`  ${line}`);
@@ -157,22 +160,42 @@ const diffRegion = (a: string[], b: string[], start: { a: number; b: number }, o
 
 const diffHunks = (before: string, after: string): Hunk[] => {
     const out: Hunk[] = [];
-    diffRegion(before.split("\n"), after.split("\n"), { a: 0, b: 0 }, out);
+    diffRegion(before === "" ? [] : before.split("\n"), after === "" ? [] : after.split("\n"), { a: 0, b: 0 }, out);
     return out;
 };
 
 /** The hunks as the printed diff, cut after `maxLines` lines. */
 const formatHunks = (hunks: Hunk[], maxLines: number): string => {
-    const out = hunks.flatMap((h) => [
-        `@@ line ${h.aStart + 1} (−${h.removed.length} +${h.added.length}) @@`,
-        ...h.removed.map((l) => `- ${l}`),
-        ...h.added.map((l) => `+ ${l}`),
-    ]);
+    const out: string[] = [];
+    let total = 0;
+    const add = (line: string) => {
+        total += 1;
+        if (out.length < maxLines) {
+            out.push(line);
+        }
+    };
+    for (const h of hunks) {
+        add(`@@ line ${h.aStart + 1} (−${h.removed.length} +${h.added.length}) @@`);
+        for (const line of h.removed) {
+            if (out.length < maxLines) {
+                add(`- ${line}`);
+            } else {
+                total += 1;
+            }
+        }
+        for (const line of h.added) {
+            if (out.length < maxLines) {
+                add(`+ ${line}`);
+            } else {
+                total += 1;
+            }
+        }
+    }
     if (out.length === 0) {
         return "(no line-level change)";
     }
-    if (out.length > maxLines) {
-        const hidden = out.length - maxLines;
+    if (total > maxLines) {
+        const hidden = total - maxLines;
         return [...out.slice(0, maxLines), `… (${hidden} more diff lines)`].join("\n");
     }
     return out.join("\n");
@@ -194,27 +217,24 @@ const diffStatOf = (hunks: Hunk[]): { added: number; removed: number } => ({
  */
 const changedLineHolding = (hunks: Hunk[], text: string): number | null => {
     for (const hunk of hunks) {
-        if (text.includes("\n")) {
-            if (hunk.added.join("\n").includes(text)) {
-                return hunk.bStart + 1;
-            }
-
-            continue;
-        }
-
         const unchanged = new Map<string, number>();
         for (const line of hunk.removed) {
             unchanged.set(line, (unchanged.get(line) ?? 0) + 1);
         }
-        for (const [index, line] of hunk.added.entries()) {
+        const changed = hunk.added.map((line) => {
             const left = unchanged.get(line) ?? 0;
             if (left > 0) {
                 unchanged.set(line, left - 1);
-                continue;
+                return false;
             }
-
-            if (line.includes(text)) {
-                return hunk.bStart + index + 1;
+            return true;
+        });
+        const added = hunk.added.join("\n");
+        for (let at = added.indexOf(text); at !== -1; at = added.indexOf(text, at + 1)) {
+            const first = added.slice(0, at).split("\n").length - 1;
+            const last = first + text.split("\n").length - 1;
+            if (changed.slice(first, last + 1).some(Boolean)) {
+                return hunk.bStart + first + 1;
             }
         }
     }
@@ -245,7 +265,15 @@ const GIT_TIMEOUT_MS = 30_000;
  * the user's own edit, and the rollback's `git reset` would drop a staged change of the user. Returns null after the
  * move, else why it did not run; then nothing was changed and the caller renames the file as before.
  */
-const gitMoveRefusal = ({ from, to }: { from: string; to: string }): string | null => {
+const gitMoveRefusal = ({
+    from,
+    to,
+    beforeMove,
+}: {
+    from: string;
+    to: string;
+    beforeMove?: () => void;
+}): string | null => {
     // Paths relative to the source's folder: git resolves an absolute path against its real work tree, and a temp
     // folder reached through a symlink (/var -> /private/var) could read as outside the repository.
     const dir = path.dirname(from);
@@ -276,6 +304,7 @@ const gitMoveRefusal = ({ from, to }: { from: string; to: string }): string | nu
             : `git diff --cached: ${staged.detail}`;
     }
 
+    beforeMove?.();
     const moved = git(["mv", "--", name, path.relative(dir, to)]);
     return moved.status === 0 ? null : `git mv: ${moved.detail}`;
 };
@@ -725,7 +754,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         before: string | null;
         after: string | null;
         /** The bytes read from disk, so the write phase can prove they are still there. */
-        diskBefore: string | null;
+        diskBefore: string | Buffer | null;
         /** The line diff of `before` and `after`, when both exist. */
         hunks: Hunk[] | null;
     }
@@ -744,16 +773,16 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
         if (edit.delete) {
             // The bytes at plan time, so the write phase can refuse to delete a file someone
             // changed in between: the same guard an ordinary edit gets.
-            let bytesAtPlan: string | null = null;
+            let bytesAtPlan: Buffer | null = null;
             if (!fs.existsSync(abs)) {
                 fileResult.action = "failed-read";
                 fileResult.postConditionFailures.push("delete requested but file does not exist");
             } else {
                 fileResult.action = "deleted";
                 fileResult.changed = true;
-                bytesAtPlan = fs.readFileSync(abs, "utf8");
+                bytesAtPlan = fs.readFileSync(abs);
                 fileResult.sha256Before = sha256Of(bytesAtPlan);
-                fileResult.diffStat = diffStatOf(diffHunks(bytesAtPlan, ""));
+                fileResult.diffStat = diffStatOf(diffHunks(bytesAtPlan.toString("utf8"), ""));
             }
             planned.push({
                 edit,
@@ -926,8 +955,12 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
             plan.after !== null &&
             plan.before !== plan.after
         ) {
-            // The report keeps the file's diff under its own cap; the total budget limits only what is printed.
-            plan.result.diff = formatHunks(plan.hunks, maxDiffLines);
+            // Reports and terminal output share the aggregate diff budget.
+            if (diffBudget <= 0) {
+                diffsSuppressed += 1;
+                continue;
+            }
+            plan.result.diff = formatHunks(plan.hunks, Math.min(maxDiffLines, diffBudget));
             if (diffBudget > 0) {
                 const text =
                     diffBudget >= maxDiffLines
@@ -987,7 +1020,7 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 printVerifyFailure({ verify, written, backupDir: opts.backupDir });
             } else {
                 console.error(`  The ${written.length} file(s) hold the sweep. Undo everything with:`);
-                console.error(`  bun "${CLI_PATH}" --rollback "${opts.backupDir}"`);
+                console.error(`  ${rollbackCommand(opts.backupDir)}`);
             }
 
             bail(
@@ -1053,7 +1086,12 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 // file in between, overwriting or deleting it now silently destroys their work
                 // and still reports OK, so prove the bytes are the ones the plan saw. The
                 // refused path never joins `touched`, so the recovery leaves it alone too.
-                if (plan.diskBefore !== null && changedOnDisk({ abs: plan.abs, expected: plan.diskBefore })) {
+                if (
+                    plan.diskBefore !== null &&
+                    (typeof plan.diskBefore === "string"
+                        ? changedOnDisk({ abs: plan.abs, expected: plan.diskBefore })
+                        : !fs.readFileSync(plan.abs).equals(plan.diskBefore))
+                ) {
                     throw new Error(
                         `${plan.edit.file} changed on disk after it was read — refusing to ${plan.edit.delete ? "delete" : "overwrite"} someone else's write. Re-run the sweep.`
                     );
@@ -1075,7 +1113,15 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 // A git move runs before the content write, so git shows the rename and the content change (RM).
                 let gitMoved = false;
                 if (plan.edit.gitMove === true && target !== plan.abs) {
-                    const refusal = gitMoveRefusal({ from: plan.abs, to: target });
+                    const refusal = gitMoveRefusal({
+                        from: plan.abs,
+                        to: target,
+                        beforeMove: () => {
+                            if (opts.backupDir !== undefined) {
+                                recordGitMove(opts.backupDir, { from: plan.abs, to: target });
+                            }
+                        },
+                    });
                     gitMoved = refusal === null;
                     if (refusal !== null) {
                         warn(`${plan.edit.file}: renamed without git mv (${refusal}).`);
@@ -1086,10 +1132,6 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                     // Both paths join `touched` before anything else can fail: the source is already gone from disk.
                     // The moved file exists now, so its content overwrites it instead of the exclusive create.
                     touched.push(target, plan.abs);
-                    if (opts.backupDir !== undefined) {
-                        recordGitMove(opts.backupDir, { from: plan.abs, to: target });
-                    }
-
                     fs.writeFileSync(target, plan.after ?? "");
                 } else {
                     // The plan proved a created file and a non-overwriting rename target absent.

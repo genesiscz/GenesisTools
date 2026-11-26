@@ -176,7 +176,7 @@ const readFields = (value: unknown, path: string, known: readonly string[], what
 
 const opFromJson = (value: unknown, path: string): Op => {
     const kind = objectAt(value, path).kind;
-    const what = `a "${String(kind ?? "replace")}" op`;
+    const what = `an op with kind ${typeof kind === "string" ? JSON.stringify(kind) : describeValue(kind)}`;
     const fieldsFor = (keys: readonly string[]) => readFields(value, path, ["kind", "label", ...keys], what);
     switch (kind) {
         case undefined:

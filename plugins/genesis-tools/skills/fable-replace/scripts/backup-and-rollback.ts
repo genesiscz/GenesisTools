@@ -19,7 +19,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -46,6 +46,10 @@ interface BackupManifestEntry {
 interface GitMove {
     from: string;
     to: string;
+    root?: string;
+    indexPaths?: [string, string];
+    indexBefore?: string;
+    indexAfter?: string;
 }
 
 interface BackupManifest {
@@ -56,6 +60,18 @@ interface BackupManifest {
 }
 
 const MANIFEST_NAME = "fable-replace-manifest.json";
+
+const updateManifest = (manifestPath: string, value: BackupManifest): void => {
+    const temp = `${manifestPath}.${randomBytes(6).toString("hex")}.tmp`;
+    try {
+        fs.writeFileSync(temp, stringifyJson(value, 2), { flag: "wx", mode: 0o600 });
+        fs.renameSync(temp, manifestPath);
+    } finally {
+        if (fs.existsSync(temp)) {
+            fs.unlinkSync(temp);
+        }
+    }
+};
 
 const hashOf = (file: string): string | null => {
     if (!fs.existsSync(file)) {
@@ -134,11 +150,11 @@ export const recordPostWriteHashes = (dir: string): void => {
             // right default for a path this run can no longer describe.
             entry.hashAfter = undefined;
             console.error(
-                `⚠ could not hash ${entry.original} after the write (${String(err)}); its rollback skips the drift check`
+                `! could not hash ${entry.original} after the write (${String(err)}); its rollback skips the drift check`
             );
         }
     }
-    fs.writeFileSync(manifestPath, stringifyJson(manifest, 2));
+    updateManifest(manifestPath, manifest);
 };
 
 /**
@@ -153,8 +169,41 @@ export const recordGitMove = (backupDir: string, move: { from: string; to: strin
     }
 
     const manifest = parseJson(fs.readFileSync(manifestPath, "utf8")) as BackupManifest;
-    manifest.gitMoves = [...(manifest.gitMoves ?? []), { from: path.resolve(move.from), to: path.resolve(move.to) }];
-    fs.writeFileSync(manifestPath, stringifyJson(manifest, 2));
+    const root = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: path.dirname(move.from),
+        encoding: "utf8",
+        timeout: 30_000,
+    });
+    if (root.status !== 0) {
+        throw new Error(`Cannot locate the git move repository: ${root.stderr}`);
+    }
+    const cwd = root.stdout.trim();
+    const canonical = (file: string) => path.join(fs.realpathSync(path.dirname(file)), path.basename(file));
+    const from = path.relative(cwd, canonical(move.from));
+    const to = path.relative(cwd, canonical(move.to));
+    const state = spawnSync("git", ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", from, to], {
+        cwd,
+        encoding: "utf8",
+        timeout: 30_000,
+    });
+    if (state.status !== 0) {
+        throw new Error(`Cannot record the index before moving ${move.from}: ${state.stderr || String(state.error)}`);
+    }
+
+    const indexBefore = state.stdout;
+    const indexAfter = indexBefore.replace(`\t${from}\0`, `\t${to}\0`);
+    manifest.gitMoves = [
+        ...(manifest.gitMoves ?? []),
+        {
+            from: path.resolve(move.from),
+            to: path.resolve(move.to),
+            root: cwd,
+            indexPaths: [from, to],
+            indexBefore,
+            indexAfter,
+        },
+    ];
+    updateManifest(manifestPath, manifest);
 };
 
 /** The nearest folder of `dir` that exists: a move can empty its source folder, and git removes it then. */
@@ -176,18 +225,68 @@ const unstageGitMoves = ({
     moves,
     wanted,
     report,
+    entries,
 }: {
     moves: GitMove[];
     wanted: Set<string> | null;
     report: RollbackReport;
-}): void => {
+    entries: BackupManifestEntry[];
+}): Set<string> => {
+    const blocked = new Set<string>();
     for (const move of moves) {
         if (wanted !== null && !wanted.has(path.resolve(move.from)) && !wanted.has(path.resolve(move.to))) {
             continue;
         }
 
-        const cwd = existingDir(path.dirname(move.from));
-        const result = spawnSync("git", ["-C", cwd, "reset", "-q", "--", move.from, move.to], { encoding: "utf8" });
+        const cwd = move.root ?? existingDir(path.dirname(move.from));
+        const relativeFrom = move.indexPaths?.[0] ?? path.relative(cwd, move.from);
+        const relativeTo = move.indexPaths?.[1] ?? path.relative(cwd, move.to);
+        const options = { cwd, encoding: "utf8" as const, timeout: 30_000 };
+        const index = spawnSync(
+            "git",
+            ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", relativeFrom, relativeTo],
+            options
+        );
+        const changedFiles = entries
+            .filter((entry) => entry.original === move.from || entry.original === move.to)
+            .some(
+                (entry) =>
+                    entry.hashAfter !== undefined &&
+                    hashOf(entry.original) !== entry.hashAfter &&
+                    (entry.stored !== null || fs.existsSync(entry.original))
+            );
+        if (
+            index.status !== 0 ||
+            (move.indexBefore !== undefined && index.stdout !== move.indexBefore && index.stdout !== move.indexAfter) ||
+            (changedFiles && index.stdout !== move.indexBefore)
+        ) {
+            for (const file of [move.from, move.to]) {
+                blocked.add(file);
+                report.drifted.push(file);
+            }
+            console.error(`! SKIPPED git move with later index or file changes: ${move.from} -> ${move.to}`);
+            continue;
+        }
+
+        if (move.indexBefore !== undefined && index.stdout === move.indexBefore) {
+            continue;
+        }
+
+        if (move.indexBefore === undefined) {
+            report.failed.push({
+                file: move.from,
+                error: "Legacy move has no recorded index ownership; refusing to reset later staged work",
+            });
+            blocked.add(move.from);
+            blocked.add(move.to);
+            continue;
+        }
+
+        const result = spawnSync(
+            "git",
+            ["--literal-pathspecs", "reset", "-q", "--", relativeFrom, relativeTo],
+            options
+        );
         if (result.status === 0) {
             console.log(`↩ unstaged the git move: ${move.from} -> ${move.to}`);
             continue;
@@ -196,7 +295,11 @@ const unstageGitMoves = ({
         const error = result.stderr?.trim() || String(result.error ?? `git exited ${result.status}`);
         report.failed.push({ file: move.from, error: `git reset of the move to ${move.to}: ${error}` });
         console.error(`✗ COULD NOT UNSTAGE the git move ${move.from} -> ${move.to}: ${error}`);
+        blocked.add(move.from);
+        blocked.add(move.to);
     }
+
+    return blocked;
 };
 
 /**
@@ -217,8 +320,12 @@ export const rollback = ({ backupDir, force = false, only }: RollbackParams): Ro
     const report: RollbackReport = { restored: [], drifted: [], failed: [] };
     const wanted = only === undefined ? null : new Set(only.map((file) => path.resolve(file)));
     // The index first: a rename staged with `git mv` would outlive the restored files as a staged rename.
-    unstageGitMoves({ moves: manifest.gitMoves ?? [], wanted, report });
+    const blocked = unstageGitMoves({ moves: manifest.gitMoves ?? [], wanted, report, entries: manifest.entries });
     for (const entry of manifest.entries) {
+        if (blocked.has(entry.original)) {
+            continue;
+        }
+
         if (wanted !== null && !wanted.has(path.resolve(entry.original))) {
             continue;
         }
@@ -240,7 +347,7 @@ export const rollback = ({ backupDir, force = false, only }: RollbackParams): Ro
                 // the sweep wrote nor the snapshot, so this file is not simply "drifted": a
                 // hand-edited manifest pointing somewhere else looks exactly the same, and the
                 // tool's own drift message invites the user to run `--force` next.
-                console.error(`⚠ FORCING over content this sweep never wrote: ${entry.original}`);
+                console.error(`! FORCING over content this sweep never wrote: ${entry.original}`);
             }
 
             if (entry.hashAfter !== undefined && !force) {
@@ -255,7 +362,7 @@ export const rollback = ({ backupDir, force = false, only }: RollbackParams): Ro
                         continue;
                     }
                     report.drifted.push(entry.original);
-                    console.log(`⚠ SKIPPED, changed since the sweep: ${entry.original}`);
+                    console.log(`! SKIPPED, changed since the sweep: ${entry.original}`);
                     continue;
                 }
             }
@@ -332,7 +439,7 @@ const namedHarness = (): Harness | undefined => {
     const harness = HARNESS_IDS.find((id) => id === named);
     if (named !== undefined && harness === undefined && warnedHarness !== named) {
         warnedHarness = named;
-        console.error(`⚠ FABLE_REPLACE_HARNESS=${named} is not one of ${HARNESS_IDS.join(", ")}; it is ignored`);
+        console.error(`! FABLE_REPLACE_HARNESS=${named} is not one of ${HARNESS_IDS.join(", ")}; it is ignored`);
     }
 
     return harness;
@@ -385,8 +492,8 @@ export const scratchSessionKey = (ctx: ScratchContext = {}): string => {
     const named =
         ctx.sessionId?.trim() ||
         process.env.FABLE_REPLACE_SESSION ||
-        process.env.CLAUDE_CODE_SESSION_ID ||
-        process.env.CODEX_THREAD_ID;
+        scratchHarnessSession(ctx)?.sessionId ||
+        process.env.GROK_SESSION_ID;
     const key = named && named.trim().length > 0 ? named.trim() : `ppid-${process.ppid}`;
     if (SESSION_KEY_VERBATIM.test(key)) {
         return key;
@@ -606,7 +713,29 @@ export const pruneScratch = ({
     // a link's target and delete what lives there.
     const realRoot = realpathOrNull(root);
     const inRoot = (dir: string) => ({ dir, boundary: realRoot });
-    const realSession = isRealDir(sessionRoot) ? realpathOrNull(sessionRoot) : null;
+    const noLinkedAncestors = (dir: string): boolean => {
+        let current = path.resolve(dir);
+        const tmpRoot = path.resolve(os.tmpdir());
+        while (
+            path.dirname(current) !== current &&
+            current !== tmpRoot &&
+            current !== "/tmp" &&
+            current !== "/private/tmp" &&
+            current !== "/var"
+        ) {
+            try {
+                if (fs.lstatSync(current).isSymbolicLink()) {
+                    return false;
+                }
+            } catch {
+                return false;
+            }
+            current = path.dirname(current);
+        }
+
+        return true;
+    };
+    const realSession = isRealDir(sessionRoot) && noLinkedAncestors(sessionRoot) ? realpathOrNull(sessionRoot) : null;
     const ownSession = () =>
         realSession === null ? [] : listDirs(sessionRoot, () => true).map((dir) => ({ dir, boundary: realSession }));
     // A harness session's folder lies under /tmp/<agent dir>, outside the shared root.

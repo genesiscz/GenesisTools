@@ -79,7 +79,7 @@ beforeAll(() => {
     put("wrapped/wrap.ts", 'import { Foo as Base } from "./Foo";\n\nexport const Foo = Base + 1;\n');
     // Two modules named Foo: the specifier "../legacy/Foo" would become "../legacy/Bar" with no such file.
     put("twins/Foo.ts", "export const Foo = 1;\n");
-    put("twins/legacy/Foo.ts", "export const Foo = 2;\n");
+    put("twins/legacy/Foo.ts", "export default 2;\n");
     put("twins/use.ts", 'import { Foo } from "./legacy/Foo";\n\nexport const use = Foo;\n');
 });
 
@@ -153,6 +153,7 @@ describe("renameModuleSymbol", () => {
         ["no root", { roots: [] }, "no root to search"],
         ["a new name that is not an identifier", { to: "Bar-Baz" }, 'to "Bar-Baz" is not an identifier'],
         ["the same name twice", { to: "Foo" }, "nothing to rename"],
+        ["a reserved binding", { to: "return" }, "is not an identifier"],
         ["a second file named after the symbol", { file: "twins/Foo.ts", roots: ["twins"] }, "is also named"],
     ])("refuses %s with code 2", (_name, change, message) => {
         const err = refusal(() =>
@@ -162,6 +163,14 @@ describe("renameModuleSymbol", () => {
         expect(err.code).toBe(2);
         expect(err.message).toContain(message);
     });
+});
+
+test("a missing symbol is refused before a move is planned", () => {
+    put("missing/Foo.ts", "export default 1;\n");
+    expect(() =>
+        renameModuleSymbol({ file: "missing/Foo.ts", symbol: "Foo", to: "Bar", roots: ["missing"], cwd: dir })
+    ).toThrow("does not contain the symbol");
+    expect(fs.existsSync(path.join(dir, "missing/Foo.ts"))).toBe(true);
 });
 
 describe("renameModuleParamsFromJson", () => {

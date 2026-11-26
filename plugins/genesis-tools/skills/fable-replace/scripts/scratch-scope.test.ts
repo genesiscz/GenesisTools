@@ -24,11 +24,12 @@ const ENV_KEYS = [
     "FABLE_REPLACE_SESSION",
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
+    "GROK_SESSION_ID",
     "FABLE_REPLACE_HOME",
     "FABLE_REPLACE_HARNESS",
     "FABLE_REPLACE_SCRATCH_ROOT",
 ];
-const SESSION_KEYS = ["FABLE_REPLACE_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"];
+const SESSION_KEYS = ["FABLE_REPLACE_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "GROK_SESSION_ID"];
 /** Past the 12 h prune TTL. */
 const OLD_MS = 25 * 60 * 60 * 1000;
 const CLI = path.join(import.meta.dir, "cli.ts");
@@ -219,6 +220,21 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         expect(folder()).toBe("claude-session-1");
         setEnv("CLAUDE_CODE_SESSION_ID", undefined);
         expect(folder()).toBe("codex-thread-1");
+        setEnv("CODEX_THREAD_ID", undefined);
+        setEnv("GROK_SESSION_ID", "grok-thread-1");
+        expect(folder()).toBe("grok-thread-1");
+    });
+
+    test("a linked ancestor of the session cannot redirect prune into another folder", () => {
+        const outside = path.join(base, "outside-parent");
+        const nested = path.join(outside, "root", "session-a");
+        fs.mkdirSync(nested, { recursive: true });
+        const backup = aged(finished(fs.mkdtempSync(path.join(nested, "cli-"))));
+        fs.symlinkSync(outside, path.join(base, "linked-parent"));
+        setEnv("FABLE_REPLACE_SCRATCH_ROOT", path.join(base, "linked-parent", "root"));
+        asSession("session-a");
+        expect(pruneScratch().removed).toBe(0);
+        expect(fs.existsSync(backup)).toBe(true);
     });
 
     test("FABLE_REPLACE_HOME alone moves the journal, never the scratch root", () => {
@@ -306,7 +322,11 @@ describe("fable-replace scratch follows a harness session into its session folde
         const proc = Bun.spawn(argv, {
             cwd,
             stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
-            env: env ?? process.env,
+            env: Object.fromEntries(
+                Object.entries(env ?? process.env).filter(
+                    ([key]) => !["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"].includes(key)
+                )
+            ),
             stdout: "pipe",
             stderr: "pipe",
             timeout: 30_000,
@@ -343,6 +363,9 @@ describe("fable-replace scratch follows a harness session into its session folde
             delete env[name];
         }
 
+        for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) {
+            delete env[key];
+        }
         return { ...env, ...extra };
     };
 
@@ -448,8 +471,8 @@ describe("fable-replace scratch follows a harness session into its session folde
         const to = path.join(repo, "new-name.ts");
         const backupDir = path.join(base, "backup");
         writeBackup({ dir: backupDir, files: [from, to] });
-        await git("mv", "old-name.ts", "new-name.ts");
         recordGitMove(backupDir, { from, to });
+        await git("mv", "old-name.ts", "new-name.ts");
         fs.writeFileSync(to, "export const renamed = 2;\n");
         recordPostWriteHashes(backupDir);
         // The positive control: the sweep left a staged rename with a changed target.

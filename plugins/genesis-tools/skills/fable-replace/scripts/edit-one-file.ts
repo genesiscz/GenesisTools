@@ -141,12 +141,13 @@ const applyRegex = (content: string, op: RegexOp): AppliedOp => {
     const desc = opDesc(op);
     const global = op.find.global ? op.find : new RegExp(op.find.source, `${op.find.flags}g`);
     // A fresh copy for the scan: matchAll starts at the regex's own lastIndex.
-    const matches = [...content.matchAll(new RegExp(global.source, global.flags))];
-    const found = matches.length;
-    const lines = linesAt(
-        content,
-        matches.map((match) => match.index ?? 0)
-    );
+    const offsets: number[] = [];
+    for (const match of content.matchAll(new RegExp(global.source, global.flags))) {
+        offsets.push(match.index ?? 0);
+    }
+
+    const found = offsets.length;
+    const lines = linesAt(content, offsets);
 
     if (found === 0) {
         return {
@@ -419,7 +420,7 @@ const applyInsertLines = (content: string, op: InsertLinesOp): AppliedOp => {
     const repeatsAnchor =
         textLines[0] === anchorLine[anchorLine.length - 1] || textLines[textLines.length - 1] === anchorLine[0];
     const desc = repeatsAnchor
-        ? `${opDesc(op)} ⚠ the inserted text starts or ends with the anchor line; before/after KEEP the anchor, so it will appear twice`
+        ? `${opDesc(op)} ! the inserted text starts or ends with the anchor line; before/after KEEP the anchor, so it will appear twice`
         : opDesc(op);
     if (found !== 1) {
         const reason =
@@ -469,12 +470,12 @@ const applyAppend = (content: string, op: AppendOp): AppliedOp => {
 const applyFuzzy = (content: string, op: FuzzyOp): AppliedOp => {
     const desc = op.label ?? `fuzzy "${op.find.replace(/\s+/g, " ").slice(0, 48)}"`;
     const rx = fuzzyWhitespaceRegex(op.find);
-    const matches = [...content.matchAll(rx)];
-    const found = matches.length;
-    const lines = linesAt(
-        content,
-        matches.map((match) => match.index ?? 0)
-    );
+    const offsets: number[] = [];
+    for (const match of content.matchAll(rx)) {
+        offsets.push(match.index ?? 0);
+    }
+    const found = offsets.length;
+    const lines = linesAt(content, offsets);
     const want = op.count ?? 1;
     if (found === 0) {
         return {

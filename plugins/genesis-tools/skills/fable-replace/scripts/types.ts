@@ -349,7 +349,7 @@ export interface RunReportJson {
     files: Array<{
         file: string;
         renamedTo?: string;
-        action: FileResult["action"];
+        action: "edited" | "created" | "deleted" | "renamed" | "unchanged" | "failed-read" | "refused";
         /** Why pre-flight refused the file (action "refused" only). */
         reason?: string;
         sha256Before?: string;
@@ -368,7 +368,7 @@ export interface RunReportJson {
     }>;
     verify?: {
         command: string;
-        status: VerifyResult["status"];
+        status: "pass" | "fail" | "unknown";
         exitCode: number | null;
         timedOut: boolean;
         control?: "caught" | "missed";

@@ -63,6 +63,14 @@ describe("runVerifyCommand with a control", () => {
         expect(probeIn(dir)).toBe(false);
     });
 
+    test("a relative cwd with no probeDir resolves the folder once", () => {
+        const cwd = path.relative(process.cwd(), dir);
+        const checked = runVerifyCommand({ command: "ls", cwd, control: CONTROL });
+        expect(checked.control).toBe("caught");
+        expect(checked.status).toBe("pass");
+        expect(probeIn(dir)).toBe(false);
+    });
+
     test("the probe goes into probeDir: a check of another folder misses it", () => {
         const pkg = path.join(dir, "pkg");
         fs.mkdirSync(pkg);

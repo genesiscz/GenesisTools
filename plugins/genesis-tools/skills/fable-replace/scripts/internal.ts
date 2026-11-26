@@ -88,8 +88,18 @@ export const occurrenceOffsets = (haystack: string, needle: string): number[] =>
     return offsets;
 };
 
-export const countOccurrences = (haystack: string, needle: string): number =>
-    occurrenceOffsets(haystack, needle).length;
+export const countOccurrences = (haystack: string, needle: string): number => {
+    if (needle.length === 0) {
+        return 0;
+    }
+
+    let count = 0;
+    for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + needle.length)) {
+        count += 1;
+    }
+
+    return count;
+};
 
 /** The 1-based line of each offset, in one pass over `content`. The offsets must ascend. */
 export const linesAt = (content: string, offsets: number[]): number[] => {

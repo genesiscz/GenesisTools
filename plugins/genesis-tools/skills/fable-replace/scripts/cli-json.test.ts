@@ -12,7 +12,17 @@ import type { ReconReport, RunReportJson } from "./types";
 // child is awaited.
 
 const CLI = path.join(import.meta.dir, "cli.ts");
-const SESSION_KEYS = ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "FABLE_REPLACE_SESSION", "FABLE_REPLACE_HARNESS"];
+const SESSION_KEYS = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "GROK_SESSION_ID",
+    "FABLE_REPLACE_SESSION",
+    "FABLE_REPLACE_HARNESS",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+];
 const USE_TS = 'import { Foo } from "./Foo";\n\nexport const made = new Foo();\n';
 
 interface Child {
@@ -88,6 +98,23 @@ afterAll(() => {
 });
 
 describe("--edits - --json", () => {
+    test("a find cannot invoke housekeeping and a JSON find preserves slash literals and comma roots", async () => {
+        put("find,a/a.ts", "const a = '/utils/(old)';\n");
+        const input = { pattern: "/utils/(old)", roots: ["find,a"] };
+        const found = await cli(["--find-json", "-", "--json", "--cwd", base], {
+            cwd: base,
+            stdin: JSON.stringify(input),
+        });
+        expect(found.status).toBe(0);
+        expect(JSON.parse(found.stdout)).toMatchObject({ pattern: "/utils/(old)", total: 1 });
+        const refused = await cli(["--find", "a", "--prune"], { cwd: base });
+        expect(refused.status).toBe(2);
+        expect(refused.stderr).toContain("Nothing was done");
+        const literal = await cli(["--find", "--json", "--cwd", path.join(base, "find,a")], { cwd: base });
+        expect(literal.status).toBe(0);
+        expect(literal.stdout).toContain("--json:");
+    });
+
     test("a dry literal edit answers one JSON object with ok true, and a report over 64 KB parses whole", async () => {
         put("edits/a.ts", "const x = 1;\n");
         put("edits/big.ts", `export const big = "${"a".repeat(70_000)}";\n`);
@@ -111,6 +138,7 @@ describe("--edits - --json", () => {
     });
 
     test("an absent needle is ok false with exit 1 and its reason; --quiet alone gives each file a stat and no diff", async () => {
+        put("edits/a.ts", "const x = 1;\n");
         put("edits/b.ts", "const b = 1;\n");
         const edits = [
             { file: "a.ts", ops: [{ find: "absent-needle", replace: "y" }] },
@@ -296,7 +324,7 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
 
     test("--rename-module - renames the symbol, the file and every …/Foo specifier, staged as a git rename", async () => {
         const params = { file: "Foo.ts", symbol: "Foo", to: "Bar", roots: ["."] };
-        const child = await cli(["--rename-module", "-", "--json", "--cwd", repo], {
+        let child = await cli(["--rename-module", "-", "--json", "--cwd", repo], {
             cwd: base,
             stdin: JSON.stringify(params),
         });
@@ -324,15 +352,41 @@ describe("a git fixture: --find, --rename-module, --rollback and an untracked gi
         expect(fs.readdirSync(backupDir)).toEqual(
             expect.arrayContaining(["fable-replace-manifest.json", "0000-Foo.ts"])
         );
-    });
-
-    test("--rollback of that run unstages the git rename and restores every file", async () => {
-        const child = await cli(["--rollback", backupDir], { cwd: repo });
+        child = await cli(["--rollback", backupDir], { cwd: repo });
 
         expect(child.status).toBe(0);
         expect(await git("status", "--porcelain")).toBe("");
         expect(read("repo/use.ts")).toBe(USE_TS);
         expect(fs.existsSync(path.join(repo, "Bar.ts"))).toBe(false);
+    });
+
+    test("rollback preserves a later staged version of a renamed file", async () => {
+        const original = read("repo/Foo.ts");
+        const renamed = await cli(["--rename-module", "-", "--json", "--cwd", repo], {
+            cwd: base,
+            stdin: JSON.stringify({ file: "Foo.ts", symbol: "Foo", to: "Bar", roots: ["."] }),
+        });
+        expect(renamed.status).toBe(0);
+        const backup = reportOf(renamed).backupDir ?? "";
+        try {
+            put("repo/Bar.ts", "export const laterChange = 2;\n");
+            await git("add", "Bar.ts");
+            const index = await git("ls-files", "--stage");
+            const undone = await cli(["--rollback", backup], { cwd: repo });
+            expect(undone.status).toBe(1);
+            expect(await git("ls-files", "--stage")).toBe(index);
+            expect(read("repo/Bar.ts")).toBe("export const laterChange = 2;\n");
+            expect(fs.existsSync(path.join(repo, "Foo.ts"))).toBe(false);
+        } finally {
+            await git("reset", "-q", "--", "Foo.ts", "Bar.ts");
+            fs.renameSync(path.join(repo, "Bar.ts"), path.join(repo, "Foo.ts"));
+            put("repo/Foo.ts", original);
+            put("repo/use.ts", USE_TS);
+            put(
+                "repo/lib/deep.ts",
+                'import { Foo } from "../Foo";\n\nexport const kind = (value: Foo): string => value.name;\n'
+            );
+        }
     });
 
     test("an untracked file with gitMove is renamed as before, and its WARNING is in the report, not on stderr", async () => {

@@ -1620,7 +1620,7 @@ console.log("cli.ts");
         bad.status === 2 && bad.out.includes("SPEC ERROR") && bad.out.includes("line 2")
     );
     const verify = runCli("@@ t.ts\n<<<\nconst b = 2;\n===\nconst b = 3;\n>>>\n", "--verify", "exit 1");
-    const undoLine = verify.out.match(/--rollback "([^"]+)"/)?.[1];
+    const undoLine = verify.out.match(/--rollback'\s+'([^']+)'/)?.[1];
     check(
         "cli: a red --verify keeps the write, exits 3 and prints the undo command",
         verify.status === 3 &&
@@ -1738,7 +1738,7 @@ console.log("round 2: ops");
     check(
         "repeating the anchor inside the inserted text is flagged in the report",
         r4.results[0].status === "OK" &&
-            r4.results[0].desc.includes("⚠") &&
+            r4.results[0].desc.includes("!") &&
             r4.results[0].desc.includes("KEEP the anchor"),
         r4.results[0].desc
     );
@@ -1960,10 +1960,23 @@ console.log("round 2: cli");
     const apiLines = api.stdout.split("\n");
     check(
         "cli: --api has no duplicate entries and no function bodies",
-        apiLines.filter((l) => l.startsWith("scratchDir = ")).length === 1 &&
-            !api.stdout.includes("mkdtempSync") &&
-            // A leaked function body adds hundreds of lines; the whole API printed 1012 lines on 2026-11-25.
-            apiLines.length < 1200,
+        (() => {
+            const entries = collectApi(path.dirname(cli));
+            const names = entries.map((entry) => `${entry.module}/${entry.name}`);
+            const fixture = path.join(dir, "api-fixture");
+            fs.mkdirSync(fixture);
+            fs.writeFileSync(
+                path.join(fixture, "spec.ts"),
+                "export const first = (input: string): string => { return input.trim(); };\n" +
+                    "export const second = (value: number): number => value + 1;\n"
+            );
+            const signatures = collectApi(fixture).map((entry) => entry.signature);
+            return (
+                new Set(names).size === names.length &&
+                entries.every((entry) => api.stdout.includes(entry.signature)) &&
+                signatures.join("\n") === "first = (input: string): string\nsecond = (value: number): number"
+            );
+        })(),
         String(apiLines.length)
     );
     const apiQ = spawnSync("bun", [cli, "--api", "rollback"], { encoding: "utf8" });
@@ -2655,7 +2668,7 @@ console.log("review round 1 regressions");
         encoding: "utf8",
         env: { ...hermeticEnv, TMPDIR: spaceTmp, FABLE_REPLACE_SCRATCH_ROOT: path.join(spaceTmp, "fable-replace") },
     });
-    const quoted = `${red.stdout}\n${red.stderr}`.match(/--rollback "([^"]+)"/)?.[1];
+    const quoted = `${red.stdout}\n${red.stderr}`.match(/--rollback'\s+'([^']+)'/)?.[1];
     const undone =
         quoted === undefined
             ? null
@@ -2922,19 +2935,19 @@ console.log("review round 3 (PR #371)");
 {
     const manifestFile = write("manifest-a.ts", "const m = 1;\n");
     const manifestDir = scratchDir("manifest");
-    const manifestPath = path.join(manifestDir, "fable-replace-manifest.json");
+
     let failure: FableReplaceError | undefined;
     try {
         await run({
             edits: [{ file: manifestFile, ops: [{ find: "= 1", replace: "= 2" }] }],
             backupDir: manifestDir,
             verbose: false,
-            verifyCommand: `chmod 444 "${manifestPath}"`,
+            verifyCommand: `chmod 555 "${manifestDir}"`,
         });
     } catch (err) {
         failure = err instanceof FableReplaceError ? err : undefined;
     }
-    fs.chmodSync(manifestPath, 0o644);
+    fs.chmodSync(manifestDir, 0o755);
     check(
         "a manifest the disk refuses after the write is a code-3 written-sweep failure carrying the report and backup dir",
         failure?.code === 3 &&

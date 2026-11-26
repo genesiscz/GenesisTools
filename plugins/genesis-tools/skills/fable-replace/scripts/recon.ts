@@ -132,7 +132,7 @@ export const leftovers = ({ names: needles, dirs, quiet = false }: LeftoversPara
     }
     if (!quiet && report.docs.length > 0) {
         console.log(
-            `\n⚠ ${report.docs.length} PROSE mention(s) of ${needles.join(", ")} survive the sweep — the docs now name something that does not exist:`
+            `\n! ${report.docs.length} PROSE mention(s) of ${needles.join(", ")} survive the sweep — the docs now name something that does not exist:`
         );
         for (const hit of report.docs.slice(0, 20)) {
             console.log(`  ${hit}`);
@@ -150,6 +150,48 @@ export const leftovers = ({ names: needles, dirs, quiet = false }: LeftoversPara
         }
     }
     return report;
+};
+
+/** JSON input for the read-only find door. */
+export const reconParamsFromJson = (
+    value: unknown
+): { pattern: string | RegExp; roots?: string[]; exts?: string[] } => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new FableReplaceError("find JSON must be an object", 2);
+    }
+    const fields = new Map(Object.entries(value));
+    for (const key of fields.keys()) {
+        if (!["pattern", "regex", "flags", "roots", "exts"].includes(key)) {
+            throw new FableReplaceError(`find JSON: unknown key ${key}`, 2);
+        }
+    }
+    const pattern = fields.get("pattern");
+    if (typeof pattern !== "string" || !pattern.length) {
+        throw new FableReplaceError("find JSON: pattern must be a non-empty string", 2);
+    }
+    const regex = fields.get("regex");
+    const flags = fields.get("flags");
+    if (regex !== undefined && typeof regex !== "boolean") {
+        throw new FableReplaceError("find JSON: regex must be boolean", 2);
+    }
+    if (flags !== undefined && (regex !== true || typeof flags !== "string")) {
+        throw new FableReplaceError("find JSON: flags requires regex true and a string", 2);
+    }
+    const list = (key: string): string[] | undefined => {
+        const item = fields.get(key);
+        if (item === undefined) {
+            return undefined;
+        }
+        if (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.length)) {
+            throw new FableReplaceError(`find JSON: ${key} must be an array of non-empty strings`, 2);
+        }
+        return item;
+    };
+    return {
+        pattern: regex ? new RegExp(pattern, typeof flags === "string" ? flags : "") : pattern,
+        roots: list("roots"),
+        exts: list("exts"),
+    };
 };
 
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
@@ -209,7 +251,7 @@ export const countMatches = ({ files, pattern, quiet = false }: CountMatchesPara
         console.log(`};`);
         if (shadows.length > 0) {
             console.log(
-                `⚠ ${shadows.length} file(s) both IMPORT and DECLARE "${String(pattern)}" — a local wrapper. Renaming its declaration changes an unrelated helper:`
+                `! ${shadows.length} file(s) both IMPORT and DECLARE "${String(pattern)}" — a local wrapper. Renaming its declaration changes an unrelated helper:`
             );
             for (const file of shadows) {
                 console.log(`  ${file}`);
@@ -225,7 +267,7 @@ export const countMatches = ({ files, pattern, quiet = false }: CountMatchesPara
         }
         if (zero.length > 0) {
             console.log(
-                `⚠ ${zero.length} file(s) contain ZERO matches — a non-optional op on those is a guaranteed MISS:`
+                `! ${zero.length} file(s) contain ZERO matches — a non-optional op on those is a guaranteed MISS:`
             );
             for (const [file] of zero) {
                 console.log(`  ${file}`);

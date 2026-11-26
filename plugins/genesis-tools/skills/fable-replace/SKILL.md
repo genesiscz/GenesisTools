@@ -91,11 +91,12 @@ heredoc, and do not parse the printed lines.
    A regex field is `{ source, flags }`. An unknown key is refused (exit 2) and named by its
    path. A refusal is a report too: `ok: false`, `exitCode`, `error`.
 
-- **The report** of both doors: `ok`, `exitCode` (0 landed, 1 a MISS and nothing written, 2
+- **The report** of both doors: `ok`, `exitCode` (0 landed, 1 a MISS (with `--partial`, some files may already be written), 2
   refused, 3 written but the verify failed), `written`, `backupDir`, `verify`, `warnings`, and
   `files`. `written` holds plain paths: after a rename it names the new path, and the file's
   `renamedTo` carries the pair. `backupDir` is there only when the run backed a file up: a run
-  that writes nothing (a MISS, a refusal) has none and leaves no empty folder behind.
+  that writes nothing has none and leaves no empty folder behind. After exit 1 with `--partial`, inspect
+  `written` and `backupDir` before retrying.
 - **Each file** has `file`, `renamedTo` (the new path of a renamed file, relative like `file`),
   `action`, `sha256Before` (the hash of the content the run read), `diffStat`, `diff` and `ops`.
   A file that a pre-flight check refused (exit 2, for example a rewrite without `expectSha256` on

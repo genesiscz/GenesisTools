@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { FableReplaceError } from "./internal";
-import { mergeFileEdits, run } from "./sweep-many-files";
+import { mergeFileEdits, run, simpleDiff } from "./sweep-many-files";
 import type { FileEdit, RunParams, RunReport, VerifyControl } from "./types";
 
 // The runner's output levels and its new checks: "stat" prints one header line per file with +N -M, a FileEdit's own
@@ -73,6 +73,40 @@ beforeAll(() => {
 
 afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("new and deleted one-line files have zero phantom lines", () => {
+    expect(simpleDiff({ before: "", after: "hello" })).toContain("−0 +1");
+    expect(simpleDiff({ before: "hello", after: "" })).toContain("−1 +0");
+});
+
+test("deletion records the hash of the original binary bytes", async () => {
+    const file = "binary.bin";
+    const bytes = Buffer.from([255, 0, 254]);
+    fs.writeFileSync(path.join(dir, file), bytes);
+    const { value } = await captured(() => run({ cwd: dir, dryRun: true, edits: [{ file, delete: true }] }));
+    expect(value.files[0].sha256Before).toBe(createHash("sha256").update(bytes).digest("hex"));
+});
+
+test("multiline absence ignores unchanged repeated lines within a diff hunk", async () => {
+    put("multiline.txt", "old\nlegacy\nlegacy\nendOld\n");
+    const { value } = await captured(() =>
+        run({
+            cwd: dir,
+            dryRun: true,
+            edits: [
+                {
+                    file: "multiline.txt",
+                    absentInChange: ["legacy\nlegacy"],
+                    ops: [
+                        { find: "old", replace: "new" },
+                        { find: "endOld", replace: "endNew" },
+                    ],
+                },
+            ],
+        })
+    );
+    expect(value.ok).toBe(true);
 });
 
 describe("diff levels", () => {

@@ -312,7 +312,10 @@ const removeProbe = (probePath: string): void => {
 export const runVerifyControl = (params: RunVerifyControlParams): VerifyControlRun => {
     const { command, cwd, probeDir, control, timeoutMs = VERIFY_TIMEOUT_MS } = params;
     const refuse = (reason: string): VerifyControlRun => ({ state: "unknown", exitCode: null, outputTail: [], reason });
-    const { probeName, expectInOutput } = control;
+    const owner = process.env.FABLE_REPLACE_CONTROL_OWNER;
+    const owned = owner !== undefined && /^[A-Za-z0-9-]+$/.test(owner);
+    const probeName = owned ? control.probeName.replace(/(\.[^.]+)?$/, `-${owner}$1`) : control.probeName;
+    const expectInOutput = owned && control.expectInOutput === control.probeName ? probeName : control.expectInOutput;
     if (probeName === "" || probeName === "." || probeName === ".." || path.basename(probeName) !== probeName) {
         return refuse(`the verify control probe name ${stringifyJson(probeName)} is not a plain file name`);
     }
@@ -323,6 +326,12 @@ export const runVerifyControl = (params: RunVerifyControlParams): VerifyControlR
 
     const probePath = path.join(path.resolve(cwd, probeDir), probeName);
     try {
+        const receipt = process.env.FABLE_REPLACE_CONTROL_RECEIPT;
+        if (owned && receipt) {
+            fs.writeFileSync(receipt, stringifyJson({ probePath, probeContent: control.probeContent }), {
+                mode: 0o600,
+            });
+        }
         // "wx" fails on an existing file, so a file the user owns is never written over or removed.
         fs.writeFileSync(probePath, control.probeContent, { flag: "wx" });
     } catch (err) {
@@ -373,7 +382,7 @@ export const runVerifyCommand = ({
     }
 
     const started = Date.now();
-    const checked = runVerifyControl({ command, cwd, probeDir: probeDir ?? cwd, control, timeoutMs });
+    const checked = runVerifyControl({ command, cwd, probeDir: probeDir ?? ".", control, timeoutMs });
     if (checked.state === "caught") {
         return { ...runRealVerify({ command, cwd, backupDir, timeoutMs }), control: "caught" };
     }

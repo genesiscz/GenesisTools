@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { answerText } from "@genesiscz/utils/mcp/tool-entry";
+import type { RunReportJson } from "../../../../plugins/genesis-tools/skills/fable-replace/scripts/types";
 import {
     FABLE_REPLACE_CLI_PATH,
     handleGenesisReplace,
@@ -29,7 +30,7 @@ function fakeSpawner(result: Partial<ReplaceChildResult> = {}) {
     return { calls, spawn };
 }
 
-function runReport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function runReport(overrides: Record<string, unknown> = {}): RunReportJson {
     return {
         v: 1,
         ok: true,
@@ -40,9 +41,9 @@ function runReport(overrides: Record<string, unknown> = {}): Record<string, unkn
         files: [
             {
                 file: "a.ts",
-                action: "modified",
+                action: "edited",
                 diffStat: { added: 1, removed: 1 },
-                ops: [{ status: "OK", desc: "oldName" }],
+                ops: [{ status: "OK", desc: "oldName", expected: 1, found: 1, lines: [1] }],
                 postConditionFailures: [],
             },
         ],
@@ -90,7 +91,7 @@ describe("genesis_replace with a fake spawner", () => {
 
         expect(answer.structuredContent).toEqual(report);
         expect(answer.isError).toBe(false);
-        expect(answer.text).toBe("genesis_replace: ok, exit 0, dry run, 1 file(s), 0 MISS\n\nspec: 1 file(s)");
+        expect(SafeJSON.parse(answer.text, { strict: true })).toEqual(report);
     });
 
     test("a failed run answers isError with ONE text block: the report as JSON, its summary keeping the stderr tail", async () => {
@@ -145,7 +146,31 @@ describe("genesis_replace with a fake spawner", () => {
         // written is plain paths; the summary a person reads shows the rename as its pair.
         expect(String(written.summary)).toContain("keep the sweep: Foo.ts → Bar.ts, a.ts.");
         expect(String(written.summary)).toContain("verify fail (control caught)");
-        expect(String(written.summary)).toContain(`bun "${FABLE_REPLACE_CLI_PATH}" --rollback "/tmp/fixture-backup"`);
+        expect(String(written.summary)).toContain("'--rollback' '/tmp/fixture-backup'");
+    });
+
+    test("spawn failure and a file cwd produce parseable failures", async () => {
+        const fixture = mkdtempSync(join(tmpdir(), "replace-launch-"));
+        const file = join(fixture, "file");
+        writeFileSync(file, "fixture");
+        try {
+            const invalid = detailOf(await handleGenesisReplace({ cwd: file, edits: EDITS }));
+            expect(invalid.exitCode).toBe(2);
+        } finally {
+            rmSync(fixture, { recursive: true, force: true });
+        }
+        const failed = detailOf(
+            await handleGenesisReplace(
+                { cwd: CWD, edits: EDITS },
+                {
+                    spawn: async () => {
+                        throw new Error("fixture launch failure");
+                    },
+                }
+            )
+        );
+        expect(failed.ok).toBe(false);
+        expect(String(failed.summary)).toContain("outcome is unknown");
     });
 
     test("a stray stdout line before the report does not hide it", async () => {
@@ -224,11 +249,15 @@ describe("genesis_replace with a fake spawner", () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(runReport()) });
         const unnamed = { agent: "unknown" as const, sessionId: null, cwd: null };
         env.testing.set("CLAUDE_CODE_SESSION_ID", "session-of-the-gateway");
+        env.testing.set("FABLE_REPLACE_SESSION", "inherited-fable-session");
+        env.testing.set("FABLE_REPLACE_HARNESS", "codex");
         try {
             await runAsCaller(unnamed, () => handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn }));
             await handleGenesisReplace({ cwd: CWD, edits: EDITS }, { spawn });
         } finally {
             env.testing.unset("CLAUDE_CODE_SESSION_ID");
+            env.testing.unset("FABLE_REPLACE_SESSION");
+            env.testing.unset("FABLE_REPLACE_HARNESS");
         }
 
         expect(calls[0].env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
@@ -284,14 +313,17 @@ describe("genesis_replace_find with a fake spawner", () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(recon) });
         const answer = answerOf(await handleGenesisReplaceFind({ cwd: CWD, pattern: "Widget" }, { spawn }));
 
-        expect(calls[0].argv.slice(2)).toEqual(["--find", "Widget", "--roots", ".", "--cwd", CWD, "--json"]);
-        expect(calls[0].stdin).toBeUndefined();
+        expect(calls[0].argv.slice(2)).toEqual(["--find-json", "-", "--cwd", CWD, "--json"]);
+        expect(SafeJSON.parse(calls[0].stdin ?? "", { strict: true })).toMatchObject({
+            pattern: "Widget",
+            roots: ["."],
+        });
         expect(answer.structuredContent).toEqual(recon);
         expect(answer.isError).toBeUndefined();
-        expect(answerText(answer)).toBe("genesis_replace_find: 3 match(es) in 2 file(s)");
+        expect(SafeJSON.parse(answerText(answer), { strict: true })).toEqual(recon);
     });
 
-    test("a regex goes as /source/flags, and a literal that starts with a slash still matches only itself", async () => {
+    test("typed find input preserves regexes and slash-leading literals", async () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(recon) });
 
         await handleGenesisReplaceFind(
@@ -307,27 +339,25 @@ describe("genesis_replace_find with a fake spawner", () => {
         );
         await handleGenesisReplaceFind({ cwd: CWD, pattern: "/utils/(old)" }, { spawn });
 
-        const regexArg = calls[0].argv[3];
-        expect(calls[0].argv.slice(4)).toEqual(["--roots", "src,lib", "--ext", ".ts", "--cwd", CWD, "--json"]);
-        const literalArg = calls[1].argv[3];
-        for (const [arg, hit, miss] of [
-            [regexArg, 'FROM "./utils/Widget"', 'from "./lib/Widget"'],
-            [literalArg, "import x from '../utils/(old)'", "/utils/old"],
-        ]) {
-            const parts = /^\/(.*)\/([a-z]*)$/.exec(arg);
-            expect(parts).not.toBeNull();
-            const pattern = new RegExp(parts?.[1] ?? "", parts?.[2]);
-            expect(pattern.test(hit)).toBe(true);
-            expect(pattern.test(miss)).toBe(false);
-        }
+        expect(SafeJSON.parse(calls[0].stdin ?? "", { strict: true })).toEqual({
+            pattern: 'from "./utils/(\\w+)"',
+            regex: true,
+            flags: "i",
+            roots: ["src", "lib"],
+            exts: [".ts"],
+        });
+        expect(SafeJSON.parse(calls[1].stdin ?? "", { strict: true })).toMatchObject({
+            pattern: "/utils/(old)",
+            regex: false,
+        });
     });
 
-    test("flags without regex, a missing pattern and a root with a comma are refused before any spawn", async () => {
+    test("flags without regex, a missing pattern and a non-string root are refused before any spawn", async () => {
         const { calls, spawn } = fakeSpawner({ stdout: SafeJSON.stringify(recon) });
         const refusals: Array<[Record<string, unknown>, string]> = [
             [{ cwd: CWD, pattern: "x", flags: "i" }, "flags needs regex: true"],
             [{ cwd: CWD }, "pattern is required"],
-            [{ cwd: CWD, pattern: "x", roots: ["a,b"] }, "without a comma"],
+            [{ cwd: CWD, pattern: "x", roots: [5] }, "non-empty string"],
         ];
 
         for (const [args, message] of refusals) {
@@ -359,6 +389,77 @@ describe("genesis_replace_find with a fake spawner", () => {
 });
 
 describe("the default spawner", () => {
+    test("a cancelled CLI leaves no owned control probe in the worktree", async () => {
+        const fixture = mkdtempSync(join(tmpdir(), "replace-control-cancel-"));
+        writeFileSync(join(fixture, "a.ts"), "export const oldName = 1;\n");
+        try {
+            const ended = await spawnCli({
+                cwd: fixture,
+                env: { ...env.getProcessEnv(), FABLE_REPLACE_SCRATCH_ROOT: join(fixture, "backup") },
+                argv: [
+                    process.execPath,
+                    FABLE_REPLACE_CLI_PATH,
+                    "--edits",
+                    "-",
+                    "--json",
+                    "--verify",
+                    "sleep 30",
+                    "--verify-control",
+                    "ts",
+                ],
+                stdin: SafeJSON.stringify(EDITS),
+                timeoutMs: 1500,
+            });
+            expect(ended.stoppedBy).toBe("deadline");
+            expect(readFileSync(join(fixture, "a.ts"), "utf8")).toContain("newName");
+            expect(readdirSync(fixture).some((file) => file.startsWith("fable-replace-probe"))).toBe(false);
+        } finally {
+            rmSync(fixture, { recursive: true, force: true });
+        }
+    });
+
+    test("a deadline ends the verifier descendant as well as its shell", async () => {
+        const stopped = await spawnCli({
+            cwd: CWD,
+            env: env.getProcessEnv(),
+            timeoutMs: 100,
+            argv: ["sh", "-c", "sleep 30 & echo $!; wait"],
+        });
+        expect(stopped.stoppedBy).toBe("deadline");
+        const pid = Number(stopped.stdout.trim());
+        expect(pid).toBeGreaterThan(1);
+        const probe = Bun.spawn(["ps", "-p", String(pid), "-o", "stat="], {
+            env: env.getProcessEnv(),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const state = (await new Response(probe.stdout).text()).trim();
+        await probe.exited;
+        expect(state === "" || state.startsWith("Z")).toBe(true);
+    });
+
+    test("a pathological regex is interrupted by the independent child deadline", async () => {
+        const result = await spawnCli({
+            cwd: CWD,
+            env: env.getProcessEnv(),
+            timeoutMs: 100,
+            argv: [process.execPath, "-e", '/^(a+)+$/.test("a".repeat(100000) + "!");'],
+        });
+        expect(result.stoppedBy).toBe("deadline");
+        expect(result.exitCode).not.toBe(0);
+    });
+
+    test("an oversized child report ends with a bounded output-limit failure", async () => {
+        const result = await spawnCli({
+            cwd: CWD,
+            env: env.getProcessEnv(),
+            timeoutMs: 5000,
+            argv: [process.execPath, "-e", 'process.stdout.write("x".repeat(9 * 1024 * 1024));'],
+        });
+        expect(result.stoppedBy).toBe("output-limit");
+        expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    });
+
     test("feeds stdin, and ends the child on a cancel or at its deadline", async () => {
         const base = { cwd: CWD, env: env.getProcessEnv(), timeoutMs: 60_000 };
         const cancel = new AbortController();
@@ -378,49 +479,46 @@ describe("the default spawner", () => {
 });
 
 /** The CLI's JSON door lands with package P3; until then this case has nothing to call. */
-const cliHasJsonDoor = readFileSync(FABLE_REPLACE_CLI_PATH, "utf8").includes('"--edits"');
 
 describe("genesis_replace with the real CLI", () => {
-    test.skipIf(!cliHasJsonDoor)(
-        "one call writes a fixture, genesis_replace_find counts it, and a MISS and a red verify answer their report",
-        async () => {
-            const base = mkdtempSync(join(tmpdir(), "genesis-replace-"));
-            const repo = join(base, "repo");
-            mkdirSync(repo);
-            env.testing.set("FABLE_REPLACE_SCRATCH_ROOT", join(base, "scratch"));
-            try {
-                for (const name of ["a.ts", "b.ts", "c.ts"]) {
-                    writeFileSync(join(repo, name), `export const oldName = "${name}";\n`);
-                }
-
-                const edits = ["a.ts", "b.ts", "c.ts"].map((file) => ({
-                    file,
-                    ops: [{ find: "oldName", replace: "newName" }],
-                }));
-                const written = answerOf(await handleGenesisReplace({ cwd: repo, edits }));
-                expect(written.isError).toBe(false);
-                expect(written.structuredContent).toMatchObject({ v: 1, ok: true, exitCode: 0 });
-                expect(readFileSync(join(repo, "b.ts"), "utf8")).toBe('export const newName = "b.ts";\n');
-
-                const found = answerOf(await handleGenesisReplaceFind({ cwd: repo, pattern: "newName" }));
-                expect(found.structuredContent).toMatchObject({ v: 1, total: 3 });
-
-                // "e" occurs three times in "export const newName", so a one-letter replacement found by chance is no earlier run.
-                const missEdits = [{ file: "a.ts", ops: [{ find: "nope-not-there", replace: "e" }] }];
-                const miss = detailOf(await handleGenesisReplace({ cwd: repo, edits: missEdits }));
-                expect(miss).toMatchObject({ ok: false, exitCode: 1, written: [], files: [{ file: "a.ts" }] });
-                expect("backupDir" in miss).toBe(false);
-                expect(String(miss.summary)).toContain("needle not found");
-                expect(String(miss.summary)).not.toContain("REPLACEMENT");
-
-                const redEdits = [{ file: "c.ts", ops: [{ find: "newName", replace: "laterName" }] }];
-                const red = detailOf(await handleGenesisReplace({ cwd: repo, edits: redEdits, verify: "false" }));
-                expect(red).toMatchObject({ ok: false, exitCode: 3, written: ["c.ts"], verify: { status: "fail" } });
-                expect(existsSync(join(String(red.backupDir), "fable-replace-manifest.json"))).toBe(true);
-                expect(String(red.summary)).toContain(`--rollback "${String(red.backupDir)}"`);
-            } finally {
-                env.testing.unset("FABLE_REPLACE_SCRATCH_ROOT");
+    test("one call writes a fixture, genesis_replace_find counts it, and a MISS and a red verify answer their report", async () => {
+        const base = mkdtempSync(join(tmpdir(), "genesis-replace-"));
+        const repo = join(base, "repo");
+        mkdirSync(repo);
+        env.testing.set("FABLE_REPLACE_SCRATCH_ROOT", join(base, "scratch"));
+        try {
+            for (const name of ["a.ts", "b.ts", "c.ts"]) {
+                writeFileSync(join(repo, name), `export const oldName = "${name}";\n`);
             }
+
+            const edits = ["a.ts", "b.ts", "c.ts"].map((file) => ({
+                file,
+                ops: [{ find: "oldName", replace: "newName" }],
+            }));
+            const written = answerOf(await handleGenesisReplace({ cwd: repo, edits }));
+            expect(written.isError).toBe(false);
+            expect(written.structuredContent).toMatchObject({ v: 1, ok: true, exitCode: 0 });
+            expect(readFileSync(join(repo, "b.ts"), "utf8")).toBe('export const newName = "b.ts";\n');
+
+            const found = answerOf(await handleGenesisReplaceFind({ cwd: repo, pattern: "newName" }));
+            expect(found.structuredContent).toMatchObject({ v: 1, total: 3 });
+
+            // "e" occurs three times in "export const newName", so a one-letter replacement found by chance is no earlier run.
+            const missEdits = [{ file: "a.ts", ops: [{ find: "nope-not-there", replace: "e" }] }];
+            const miss = detailOf(await handleGenesisReplace({ cwd: repo, edits: missEdits }));
+            expect(miss).toMatchObject({ ok: false, exitCode: 1, written: [], files: [{ file: "a.ts" }] });
+            expect("backupDir" in miss).toBe(false);
+            expect(String(miss.summary)).toContain("needle not found");
+            expect(String(miss.summary)).not.toContain("REPLACEMENT");
+
+            const redEdits = [{ file: "c.ts", ops: [{ find: "newName", replace: "laterName" }] }];
+            const red = detailOf(await handleGenesisReplace({ cwd: repo, edits: redEdits, verify: "false" }));
+            expect(red).toMatchObject({ ok: false, exitCode: 3, written: ["c.ts"], verify: { status: "fail" } });
+            expect(existsSync(join(String(red.backupDir), "fable-replace-manifest.json"))).toBe(true);
+            expect(String(red.summary)).toContain(`'--rollback' '${String(red.backupDir)}'`);
+        } finally {
+            env.testing.unset("FABLE_REPLACE_SCRATCH_ROOT");
+            rmSync(base, { recursive: true, force: true });
         }
-    );
+    });
 });

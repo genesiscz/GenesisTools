@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rollback } from "./backup-and-rollback";
@@ -20,9 +20,17 @@ const NEW = "# Notes\n\nalpha line\ngamma line\n";
 
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 
+const fixtureRoots: string[] = [];
+afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 /** A work folder holding notes.md with OLD, and a separate backup folder beside it. */
 const fixture = (): { work: string; backupDir: string; target: string } => {
     const root = mkdtempSync(join(tmpdir(), "fr-rewrite-"));
+    fixtureRoots.push(root);
     const work = join(root, "work");
     mkdirSync(work);
     const target = join(work, "notes.md");

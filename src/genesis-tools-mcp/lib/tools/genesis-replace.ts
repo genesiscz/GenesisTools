@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmdirSync, statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import { currentCaller } from "@genesiscz/utils/agent/runtime";
 import { harnessDrivers, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { PLAIN_OUTPUT_ENV } from "@genesiscz/utils/cli/executor";
@@ -9,6 +10,7 @@ import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { ToolAnswer } from "@genesiscz/utils/mcp/tool-entry";
 import { endDetachedGroup, killProcessGroup } from "@genesiscz/utils/process/killWithEscalation";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 
 const log = logger.child({ component: "genesis-tools-mcp:replace" });
 
@@ -60,7 +62,7 @@ export interface ReplaceChildResult {
     stdout: string;
     stderr: string;
     /** Set when this side ended the child: its deadline passed, or the MCP call was cancelled. */
-    stoppedBy?: "deadline" | "cancelled";
+    stoppedBy?: "deadline" | "cancelled" | "output-limit";
 }
 
 export type ReplaceSpawner = (request: ReplaceChildRequest) => Promise<ReplaceChildResult>;
@@ -77,18 +79,27 @@ export interface GenesisReplaceDeps {
  */
 export async function spawnCli(request: ReplaceChildRequest): Promise<ReplaceChildResult> {
     request.signal?.throwIfAborted();
-    const child = Bun.spawn({
-        cmd: request.argv,
-        cwd: request.cwd,
-        env: request.env,
-        stdin: request.stdin === undefined ? "ignore" : new Blob([request.stdin]),
-        stdout: "pipe",
-        stderr: "pipe",
-        detached: true,
-    });
+    const receiptDir = mkdtempSync(join(tmpdir(), "fable-replace-control-"));
+    const receipt = join(receiptDir, "probe.json");
+    const owner = basename(receiptDir);
+    let child: Bun.Subprocess<"ignore" | Blob, "pipe", "pipe">;
+    try {
+        child = Bun.spawn({
+            cmd: request.argv,
+            cwd: request.cwd,
+            env: { ...request.env, FABLE_REPLACE_CONTROL_RECEIPT: receipt, FABLE_REPLACE_CONTROL_OWNER: owner },
+            stdin: request.stdin === undefined ? "ignore" : new Blob([request.stdin]),
+            stdout: "pipe",
+            stderr: "pipe",
+            detached: true,
+        });
+    } catch (error) {
+        rmdirSync(receiptDir);
+        throw error;
+    }
     let stoppedBy: ReplaceChildResult["stoppedBy"];
     let escalation: ReturnType<typeof setTimeout> | undefined;
-    const stop = (reason: "deadline" | "cancelled"): void => {
+    const stop = (reason: "deadline" | "cancelled" | "output-limit"): void => {
         stoppedBy ??= reason;
         killProcessGroup(child, "SIGTERM", CHILD_NAME);
         // Runs only while the reads below still hold the child's pipes, so the group id is still this child's.
@@ -98,10 +109,30 @@ export async function spawnCli(request: ReplaceChildRequest): Promise<ReplaceChi
     request.signal?.addEventListener("abort", onAbort, { once: true });
     const deadline = setTimeout(() => stop("deadline"), request.timeoutMs);
 
+    const capture = async (stream: ReadableStream<Uint8Array>, maxBytes: number, stopOnOverflow: boolean) => {
+        const reader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+        let bytes = 0;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            if (bytes + value.byteLength > maxBytes) {
+                if (stopOnOverflow) {
+                    stop("output-limit");
+                }
+                continue;
+            }
+            chunks.push(value);
+            bytes += value.byteLength;
+        }
+        return Buffer.concat(chunks).toString("utf8");
+    };
     try {
         const [stdout, stderr] = await Promise.all([
-            new Response(child.stdout).text(),
-            new Response(child.stderr).text(),
+            capture(child.stdout, 8 * 1024 * 1024, true),
+            capture(child.stderr, 256 * 1024, false),
             child.exited,
         ]);
         return { exitCode: child.exitCode, stdout, stderr, ...(stoppedBy ? { stoppedBy } : {}) };
@@ -109,6 +140,25 @@ export async function spawnCli(request: ReplaceChildRequest): Promise<ReplaceChi
         clearTimeout(deadline);
         clearTimeout(escalation);
         request.signal?.removeEventListener("abort", onAbort);
+        try {
+            if (existsSync(receipt)) {
+                const saved: unknown = SafeJSON.parse(readFileSync(receipt, "utf8"), { strict: true });
+                if (
+                    isJsonObject(saved) &&
+                    typeof saved.probePath === "string" &&
+                    typeof saved.probeContent === "string" &&
+                    basename(saved.probePath).includes(owner) &&
+                    existsSync(saved.probePath) &&
+                    readFileSync(saved.probePath, "utf8") === saved.probeContent
+                ) {
+                    unlinkSync(saved.probePath);
+                }
+                unlinkSync(receipt);
+            }
+            rmdirSync(receiptDir);
+        } catch (error) {
+            log.warn({ error, receipt }, "could not clean the owned verify-control probe");
+        }
     }
 }
 
@@ -122,6 +172,8 @@ function childEnv(sessionId: string | undefined): Record<string, string> {
     const caller = currentCaller();
     const variables: Record<string, string | undefined> = { ...env.getProcessEnv(), ...PLAIN_OUTPUT_ENV };
     if (caller) {
+        delete variables.FABLE_REPLACE_SESSION;
+        delete variables.FABLE_REPLACE_HARNESS;
         for (const driver of harnessDrivers()) {
             const { sessionEnvKey, rootSessionEnvKey } = driver.parts.host;
             delete variables[sessionEnvKey];
@@ -161,18 +213,25 @@ async function runCli(input: {
 }): Promise<ReplaceChildResult> {
     const argv = [process.execPath, FABLE_REPLACE_CLI_PATH, ...input.flags];
     const spawn = input.deps.spawn ?? spawnCli;
-    const result = await spawn({
-        argv,
-        cwd: input.cwd,
-        env: childEnv(input.sessionId),
-        stdin: input.stdin,
-        timeoutMs: CHILD_DEADLINE_MS,
-        signal: input.deps.signal,
-    });
+    let result: ReplaceChildResult;
+    try {
+        result = await spawn({
+            argv,
+            cwd: input.cwd,
+            env: childEnv(input.sessionId),
+            stdin: input.stdin,
+            timeoutMs: CHILD_DEADLINE_MS,
+            signal: input.deps.signal,
+        });
+    } catch (error) {
+        log.warn({ errorName: error instanceof Error ? error.name : typeof error }, "could not run fable-replace CLI");
+        return { exitCode: null, stdout: "", stderr: "The CLI invocation failed. Its filesystem outcome is unknown." };
+    }
     log.debug(
         {
             tool: input.tool,
-            flags: input.flags,
+            optionCount: input.flags.filter((arg) => arg.startsWith("--")).length,
+            argumentChars: input.flags.reduce((sum, arg) => sum + arg.length, 0),
             cwd: input.cwd,
             stdinChars: input.stdin?.length ?? 0,
             exitCode: result.exitCode,
@@ -202,7 +261,7 @@ function requireCwd(tool: string, args: Record<string, unknown>): string {
         throw new Error(`${tool}: cwd must be an absolute path, got "${cwd}". Nothing was run.`);
     }
 
-    if (!existsSync(cwd)) {
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
         throw new Error(`${tool}: cwd "${cwd}" does not exist on this machine. Nothing was run.`);
     }
 
@@ -250,7 +309,7 @@ function optionalChoice<T extends string>(
     return choice;
 }
 
-/** A list the CLI takes comma-joined (`--roots a,b`), so an item may not hold a comma. */
+/** String lists are passed as JSON, so every filename stays one item. */
 function optionalList(tool: string, args: Record<string, unknown>, key: string): string[] | undefined {
     const value = args[key];
     if (value === undefined) {
@@ -262,8 +321,8 @@ function optionalList(tool: string, args: Record<string, unknown>, key: string):
     }
 
     return value.map((item) => {
-        if (typeof item !== "string" || item.length === 0 || item.includes(",")) {
-            throw new Error(`${tool}: every ${key} item must be a non-empty string without a comma. Nothing was run.`);
+        if (typeof item !== "string" || item.length === 0) {
+            throw new Error(`${tool}: every ${key} item must be a non-empty string. Nothing was run.`);
         }
 
         return item;
@@ -344,6 +403,9 @@ function childReport(stdout: string): Record<string, unknown> | undefined {
 }
 
 function howItEnded(result: ReplaceChildResult): string {
+    if (result.stoppedBy === "output-limit") {
+        return "was stopped because its report exceeded 8 MiB";
+    }
     if (result.stoppedBy === "deadline") {
         return `was stopped after ${CHILD_DEADLINE_MS / 60_000} minutes`;
     }
@@ -465,7 +527,7 @@ function failureSummary(report: Record<string, unknown>, stderr: string[]): stri
         lines.push(`The ${written.length} written file(s) keep the sweep: ${written.join(", ")}.`);
         lines.push(
             typeof report.backupDir === "string"
-                ? `Undo everything with: bun "${FABLE_REPLACE_CLI_PATH}" --rollback "${report.backupDir}"`
+                ? `Undo everything with: ${shellCommandLine(["bun", FABLE_REPLACE_CLI_PATH, "--rollback", report.backupDir])}`
                 : "No backup was taken, so there is nothing to roll back."
         );
         lines.push("Fix forward with a new call, or roll back. Never resend the same edits.");
@@ -528,7 +590,7 @@ export async function handleGenesisReplace(
     }
 
     const result = await runCli({ tool, ...call, deps });
-    const report = childReport(result.stdout);
+    const report = result.stoppedBy === "output-limit" ? undefined : childReport(result.stdout);
     if (!report || typeof report.ok !== "boolean") {
         return childFailure(tool, result);
     }
@@ -538,24 +600,7 @@ export async function handleGenesisReplace(
         return failure(report, failureSummary(report, stderr));
     }
 
-    const text = stderr.length > 0 ? [runSummary(report), "", ...stderr].join("\n") : runSummary(report);
-    return { text, structuredContent: report, isError: false };
-}
-
-/**
- * A literal or `/source/flags` for `--find`. A literal that starts with "/" would read as a regex there, so it goes
- * as an escaped regex that matches exactly the literal.
- */
-function findArgument(pattern: string, regex: boolean, flags: string | undefined): string {
-    if (regex) {
-        return `/${pattern.replace(/(?<!\\)\//g, "\\/")}/${flags ?? ""}`;
-    }
-
-    if (pattern.startsWith("/")) {
-        return `/${pattern.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/`;
-    }
-
-    return pattern;
+    return { text: SafeJSON.stringify(report, { strict: true }), structuredContent: report, isError: false };
 }
 
 /** The CLI flags and cwd of one genesis_replace_find call; throws on an argument it refuses. */
@@ -576,16 +621,8 @@ function findCall(tool: string, args: Record<string, unknown>): CliCall {
     const roots = optionalList(tool, args, "roots") ?? ["."];
     const exts = optionalList(tool, args, "exts");
     return {
-        flags: [
-            "--find",
-            findArgument(pattern, regex, flags),
-            "--roots",
-            roots.join(","),
-            ...(exts ? ["--ext", exts.join(",")] : []),
-            "--cwd",
-            cwd,
-            "--json",
-        ],
+        flags: ["--find-json", "-", "--cwd", cwd, "--json"],
+        stdin: SafeJSON.stringify({ pattern, regex, flags, roots, exts }, { strict: true }),
         cwd,
     };
 }
@@ -607,7 +644,7 @@ export async function handleGenesisReplaceFind(
     }
 
     const result = await runCli({ tool, ...call, deps });
-    const report = childReport(result.stdout);
+    const report = result.stoppedBy === "output-limit" ? undefined : childReport(result.stdout);
     if (report?.ok === false) {
         return failure(report, `${tool}: FAILED, exit ${String(report.exitCode)}, error: ${String(report.error)}`);
     }
@@ -617,7 +654,7 @@ export async function handleGenesisReplaceFind(
     }
 
     return {
-        text: `${tool}: ${report.total} match(es) in ${report.files.length} file(s)`,
+        text: SafeJSON.stringify(report, { strict: true }),
         structuredContent: report,
     };
 }
@@ -703,6 +740,12 @@ export const GENESIS_REPLACE_INPUT_SCHEMA: Record<string, unknown> = {
         },
     },
     required: ["cwd"],
+    oneOf: REPLACE_DOORS.map((door) => ({
+        required: [door],
+        not: {
+            anyOf: REPLACE_DOORS.filter((other) => other !== door).map((other) => ({ required: [other] })),
+        },
+    })),
     additionalProperties: false,
 };
 
