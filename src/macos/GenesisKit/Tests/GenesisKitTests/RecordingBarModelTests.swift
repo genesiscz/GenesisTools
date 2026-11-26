@@ -104,8 +104,20 @@ final class RecordingBarModelTests: XCTestCase {
         engine.emit(.liveDisplay(side), take: "take-1")
         await fulfillment(of: [moved], timeout: 2)
         observation.cancel()
-        engine.emit(.liveDisplay(side), take: "take-0")
+        let stale = RecordingDisplay(index: 2, name: "Other", isPrimary: false, width: 1920, height: 1080)
+        let delivered = expectation(description: "the current take receives the event after the stale display")
+        let elapsedObservation = model.$elapsedMs.first(where: { $0 == 8 }).sink { _ in delivered.fulfill() }
+        engine.emit(.liveDisplay(stale), take: "take-0")
+        engine.emit(.elapsed(milliseconds: 8), take: "take-1")
+        await fulfillment(of: [delivered], timeout: 2)
+        elapsedObservation.cancel()
         XCTAssertEqual(model.liveDisplay, side, "another take's report changes nothing")
+        model.apply(.target(display))
+        await model.pendingCommand?.value
+        XCTAssertNil(model.liveDisplay, "a new target forgets the previous Follow display report")
+        model.apply(.target(.followDisplay))
+        await model.pendingCommand?.value
+        XCTAssertNil(model.liveDisplay, "returning to Follow display waits for a new engine report")
         model.discard()
         await model.pendingCommand?.value
         XCTAssertNil(model.liveDisplay, "a discarded take forgets its display")

@@ -12,8 +12,11 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { register as registerApply } from "@app/recorder/commands/registrars/apply";
+import { displayClock } from "@app/recorder/commands/registrars/displays";
 import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import exportLedgerCase from "@genesiscz/utils/recording-editor/__fixtures__/export-ledger.json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
@@ -33,6 +36,8 @@ import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { Command } from "commander";
+import * as displayOpsModule from "./display-ops";
 import { applyDisplayOps, displayOpOverrides, displayOpSchema, displayTimeline, isDisplayOp } from "./display-ops";
 import * as edits from "./edit";
 import {
@@ -380,6 +385,63 @@ describe("display ops: each display is a row, the movie shows one per segment", 
         );
     });
 
+    it("rejects displays without a frame in the interval and checks both neighbouring replacements", () => {
+        expect(() => displayOpOverrides(ranges, frames, [{ op: "switchDisplay", display: 3, from: 0, to: 5 }])).toThrow(
+            "display 3 has no frames before 5 s"
+        );
+        const lateFrames = [frame(1, 0), frame(2, 10)];
+        expect(() =>
+            displayOpOverrides(ranges, lateFrames, [{ op: "hideDisplay", display: 1, from: 0, to: 5 }])
+        ).toThrow("only display with frames");
+        const lastRange = [
+            { fromUs: 0, toUs: 5_000_000, displayId: 2 },
+            { fromUs: 5_000_000, toUs: 10_000_000, displayId: 1 },
+        ];
+        expect(() =>
+            displayOpOverrides(
+                lastRange,
+                [frame(1, 0), frame(2, 11)],
+                [{ op: "hideDisplay", display: 1, from: 5, to: 10 }]
+            )
+        ).toThrow("only display with frames");
+        expect(displayOpOverrides(ranges, frames, [{ op: "switchDisplay", display: 3, from: 14, to: 16 }])).toEqual([
+            { fromUs: 14_000_000, toUs: 16_000_000, displayId: 3 },
+        ]);
+    });
+
+    it("validates every edit before resolving a display recording or changing its proxy", async () => {
+        const folder = spyOn(displayOpsModule, "displayFramesFolder").mockImplementation(async () => {
+            throw new Error("must not resolve the recording before all ops parse");
+        });
+        const printed = spyOn(out, "printlnErr").mockImplementation(() => {});
+        const previousExitCode = process.exitCode;
+        try {
+            const program = new Command();
+            registerApply(program);
+            await program.parseAsync(
+                [
+                    "apply",
+                    "fixture",
+                    SafeJSON.stringify([{ op: "switchDisplay", display: 1, from: 0, to: 1 }, { op: "typo" }]),
+                ],
+                { from: "user" }
+            );
+            expect(folder).not.toHaveBeenCalled();
+            expect(process.exitCode).toBe(1);
+            expect(printed.mock.calls.flat().join("\n")).toContain("typo");
+        } finally {
+            folder.mockRestore();
+            printed.mockRestore();
+            process.exitCode = previousExitCode;
+        }
+    });
+
+    it("rounds a display time before carrying seconds into minutes", () => {
+        expect(displayClock(59.96)).toBe("1:00.0");
+        expect(displayClock(59.94)).toBe("0:59.9");
+        expect(displayClock(60)).toBe("1:00.0");
+    });
+
     it("splits from a mixed op list, and a call that changes nothing or has no plan is refused before a remake", async () => {
         const mixed = [
             { op: "cut", from: 1, to: 2 },
@@ -389,27 +451,31 @@ describe("display ops: each display is a row, the movie shows one per segment", 
         expect(() => displayOpSchema.parse({ op: "hideDisplay", display: 2, at: 4 })).toThrow();
 
         const folder = mkdtempSync(join(tmpdir(), "gt-display-ops-"));
-        await expect(applyDisplayOps(folder, [{ op: "hideDisplay", display: 2 }])).rejects.toThrow(
-            "has no display plan yet"
-        );
-        writeFileSync(
-            join(folder, "proxy.json"),
-            SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 10, ranges: ranges.slice(0, 1) })
-        );
-        writeFileSync(
-            join(folder, "recording.json"),
-            SafeJSON.stringify({
-                version: 1,
-                id: "two",
-                title: "Two displays",
-                startedAt: "2026-11-19T08:00:00.000Z",
-                displays: [{ id: 1, name: "Built-in" }],
-                frames: [{ file: "a.jpg", atMs: 0, displayId: 1 }],
-            })
-        );
-        await expect(applyDisplayOps(folder, [{ op: "switchDisplay", display: 1, from: 0, to: 4 }])).rejects.toThrow(
-            "change nothing"
-        );
+        try {
+            await expect(applyDisplayOps(folder, [{ op: "hideDisplay", display: 2 }])).rejects.toThrow(
+                "has no display plan yet"
+            );
+            writeFileSync(
+                join(folder, "proxy.json"),
+                SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 10, ranges: ranges.slice(0, 1) })
+            );
+            writeFileSync(
+                join(folder, "recording.json"),
+                SafeJSON.stringify({
+                    version: 1,
+                    id: "two",
+                    title: "Two displays",
+                    startedAt: "2026-11-19T08:00:00.000Z",
+                    displays: [{ id: 1, name: "Built-in" }],
+                    frames: [{ file: "a.jpg", atMs: 0, displayId: 1 }],
+                })
+            );
+            await expect(
+                applyDisplayOps(folder, [{ op: "switchDisplay", display: 1, from: 0, to: 4 }])
+            ).rejects.toThrow("change nothing");
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
     });
 });
 

@@ -73,8 +73,10 @@ struct DisplayPlan: Equatable {
                 return (id, entry["name"] as? String ?? "Display \(id)")
             }
             for frame in root["frames"] as? [[String: Any]] ?? [] {
-                guard let id = (frame["displayId"] as? NSNumber)?.intValue, let ms = (frame["atMs"] as? NSNumber)?.doubleValue else { continue }
-                firstFrameUs[id] = min(firstFrameUs[id] ?? .max, Int64((ms * 1000).rounded()))
+                guard let id = (frame["displayId"] as? NSNumber)?.intValue,
+                      let ms = (frame["atMs"] as? NSNumber)?.doubleValue,
+                      let atUs = Int64(exactly: (ms * 1000).rounded()) else { continue }
+                firstFrameUs[id] = min(firstFrameUs[id] ?? .max, atUs)
             }
         }
         for id in file.ranges.map(\.displayId) + firstFrameUs.keys.sorted() where !displays.contains(where: { $0.id == id }) {

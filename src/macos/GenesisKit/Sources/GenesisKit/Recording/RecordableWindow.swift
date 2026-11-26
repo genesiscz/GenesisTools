@@ -96,7 +96,7 @@ public enum RecordableWindow {
         if covers {
             let untitled = (window.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let dockApp = window.ownerKind == nil || window.ownerKind == .regular
-            if alpha < 1 || (untitled && !dockApp) { return .overlay }
+            if (!dockApp && (alpha < 1 || untitled)) || (untitled && alpha < 1) { return .overlay }
         }
         return nil
     }
@@ -106,13 +106,15 @@ public enum RecordableWindow {
         guard let pid = row[kCGWindowOwnerPID as String] as? Int32,
               let raw = row[kCGWindowBounds as String] as? NSDictionary,
               let frame = CGRect(dictionaryRepresentation: raw) else { return nil }
-        return Facts(app: row[kCGWindowOwnerName as String] as? String ?? "",
+        var candidate = Facts(app: row[kCGWindowOwnerName as String] as? String ?? "",
                      title: row[kCGWindowName as String] as? String,
                      bounds: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height),
                      layer: row[kCGWindowLayer as String] as? Int,
                      alpha: row[kCGWindowAlpha as String] as? Double,
-                     sharingState: row[kCGWindowSharingState as String] as? Int,
-                     ownerKind: ownerKind(pid))
+                     sharingState: row[kCGWindowSharingState as String] as? Int)
+        guard reason(candidate, displays: []) == nil else { return nil }
+        candidate.ownerKind = ownerKind(pid)
+        return candidate
     }
 
     /// The displays' frames in global CoreGraphics points (top-left origin of the first screen).

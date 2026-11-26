@@ -227,6 +227,8 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
             if event.target == .followDisplay, let display = event.display, let id = UInt32(exactly: display.id) {
                 emit(.liveDisplay(RecordingDisplay.connected(displayID: id, name: display.name)))
+            } else if event.target != nil {
+                emit(.liveDisplay(nil))
             }
         case "elapsed":
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }

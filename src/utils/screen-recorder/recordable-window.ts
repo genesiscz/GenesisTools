@@ -106,8 +106,8 @@ function coversDisplay(bounds: ScreenRect, displays: readonly ScreenRect[]): boo
  * Why `window` is not offered as a recording target, or `undefined` when it is a real app window. `displays` are the
  * connected displays' frames; without them no window can be told apart as an overlay.
  *
- * An overlay covers a whole display and is either see-through (alpha below 1) or untitled and owned by an app that
- * is not a Dock app. A Dock app's window in native full screen covers its display too and stays.
+ * An overlay covers a whole display and is untitled or translucent, with the owning app's kind distinguishing
+ * titled Dock app windows. A Dock app's window in native full screen stays available even with reduced opacity.
  */
 export function unrecordableReason(
     window: WindowFacts,
@@ -142,7 +142,7 @@ export function unrecordableReason(
         const untitled = (window.title ?? "").trim().length === 0;
         const dockApp = window.ownerKind === undefined || window.ownerKind === "regular";
 
-        if (alpha < 1 || (untitled && !dockApp)) {
+        if ((!dockApp && (alpha < 1 || untitled)) || (untitled && alpha < 1)) {
             return "overlay";
         }
     }
