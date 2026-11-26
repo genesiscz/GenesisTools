@@ -72,6 +72,7 @@ export async function syncShares(options: {
     slugs: readonly string[];
     all: boolean;
     targetNames: readonly string[];
+    pickFallback?: (candidates: string[]) => Promise<string | null>;
 }): Promise<Array<{ note: PublishedNote; outcomes: TargetOutcome[] }>> {
     await importLegacyShare();
     const [{ publishedNotes }, config, ledger] = await Promise.all([getConfig(), loadShareConfig(), md.list()]);
@@ -83,13 +84,28 @@ export async function syncShares(options: {
 
     const byId = new Map(ledger.map((entry) => [entry.id, entry]));
     const notes = options.all ? publishedNotes : publishedNotes.filter((note) => options.slugs.includes(note.slug));
+    const candidates = config.targets.map(({ name }) => name);
+    const previousTargets = (note: PublishedNote) =>
+        candidates.filter((name) => Object.hasOwn(byId.get(note.slug)?.syncs ?? {}, name));
+    let fallback: string[] = [];
+    if (!options.targetNames.length && !config.defaults.target && notes.some((note) => !previousTargets(note).length)) {
+        if (!options.pickFallback) {
+            throw new Error("Choose a share target for notes that have yet to be sent.");
+        }
+
+        const picked = await options.pickFallback(candidates);
+        if (!picked) {
+            return [];
+        }
+
+        fallback = [picked];
+    }
+
     const results: Array<{ note: PublishedNote; outcomes: TargetOutcome[] }> = [];
     for (const note of notes) {
-        const syncs = byId.get(note.slug)?.syncs ?? {};
-        const targetNames = options.targetNames.length
-            ? options.targetNames
-            : config.targets.map(({ name }) => name).filter((name) => Object.hasOwn(syncs, name));
-        results.push({ note, outcomes: targetNames.length ? await sendNote(note, targetNames) : [] });
+        const previous = previousTargets(note);
+        const targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
+        results.push({ note, outcomes: await sendNote(note, targetNames) });
     }
 
     return results;

@@ -1,7 +1,69 @@
 import { resolvePublishedSlug, shareNote } from "@app/dev-dashboard/lib/obsidian/share-note";
+import { loadSharePublishConfig } from "@app/dev-dashboard/lib/share/legacy-share";
 import { pruneTargets, syncShares, type TargetOutcome, unshareFromTargets } from "@app/dev-dashboard/lib/share/targets";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
+import { formatMissingEnumHelp, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { isInteractive } from "@genesiscz/utils/cli/is-interactive";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
+
+const SHARE_TOOL = "tools dev-dashboard";
+
+export function pickShareTarget(input: {
+    given: string | true;
+    candidates: readonly string[];
+    subcommand: string[];
+    all?: boolean;
+}): Promise<string | null> {
+    const values = [...input.candidates, ...(input.all === false ? [] : ["all"])];
+    const accepts = (value: string): value is string => values.includes(value);
+    if (input.given === true ? !isInteractive() : !accepts(input.given)) {
+        out.printlnErr(
+            formatMissingEnumHelp({
+                flag: "--target",
+                values,
+                given: typeof input.given === "string" ? input.given : undefined,
+                suggestion: suggestCommand(SHARE_TOOL, {
+                    replaceCommand: [...input.subcommand, "--target", values[0] ?? "<name>"],
+                }),
+            })
+        );
+        process.exitCode = 1;
+        return Promise.resolve(null);
+    }
+
+    return pickEnumFlag({
+        tool: SHARE_TOOL,
+        subcommand: input.subcommand,
+        flag: "--target",
+        given: input.given,
+        values,
+        fallback: values[0] ?? "all",
+        accepts,
+    });
+}
+
+export async function resolveShareTargetFlags(
+    values: Array<string | true>,
+    subcommand: string[]
+): Promise<string[] | null> {
+    if (!values.length) {
+        return [];
+    }
+
+    const candidates = (await loadSharePublishConfig()).targets.map(({ name }) => name);
+    const targets = new Set<string>();
+    for (const given of values) {
+        const target = await pickShareTarget({ given, candidates, subcommand });
+        if (!target) {
+            return null;
+        }
+
+        targets.add(target);
+    }
+
+    return [...targets];
+}
 
 export interface ShareCommandOptions {
     clipboard: boolean;
@@ -72,12 +134,30 @@ export async function runShareSync(
         let ok = true;
 
         if (opts.all || slugs.length > 0) {
-            for (const { note, outcomes } of await syncShares({ slugs, all: opts.all, targetNames: opts.targets })) {
-                out.printlnErr(`${note.vaultPath} (${note.slug})`);
+            let needsTarget = false;
+            const results = await syncShares({
+                slugs,
+                all: opts.all,
+                targetNames: opts.targets,
+                pickFallback: async (candidates) => {
+                    const subcommand = [
+                        "share",
+                        "sync",
+                        ...notes,
+                        ...(opts.all ? ["--all"] : []),
+                        ...(opts.prune ? ["--prune"] : []),
+                    ];
+                    const picked = await pickShareTarget({ given: true, candidates, subcommand });
+                    needsTarget = !picked;
+                    return picked;
+                },
+            });
+            if (needsTarget) {
+                return false;
+            }
 
-                if (outcomes.length === 0) {
-                    out.printlnErr("  sent to no target before; name one with --target <name>");
-                }
+            for (const { note, outcomes } of results) {
+                out.printlnErr(`${note.vaultPath} (${note.slug})`);
 
                 ok = printOutcomes(outcomes) && ok;
             }
