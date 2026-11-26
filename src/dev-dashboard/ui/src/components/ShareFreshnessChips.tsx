@@ -15,15 +15,16 @@ const TONE_COLOR: Record<FreshnessTone, string> = {
     stale: "var(--dd-tone-stale)",
 };
 
-/** The current time, moved once a minute: enough for "5 min ago", and no fast timer. */
-function useMinuteClock(): number {
+/** The current time: each second while the newest time is under a minute old ("25 s ago"), once a minute after. */
+function useAgeClock(newest: number | undefined): number {
     const [now, setNow] = useState(() => Date.now());
 
     useEffect(() => {
-        const id = setInterval(() => setNow(Date.now()), 60_000);
+        const age = newest === undefined ? Number.POSITIVE_INFINITY : now - newest;
+        const id = setTimeout(() => setNow(Date.now()), age < 60_000 ? 1000 : 60_000);
 
-        return () => clearInterval(id);
-    }, []);
+        return () => clearTimeout(id);
+    }, [now, newest]);
 
     return now;
 }
@@ -106,7 +107,8 @@ function CopyLink({ url, target }: { url: string; target: string }) {
 
 /** One chip per place a published note is served from, coloured by how fresh that place's copy is. */
 export function ShareFreshnessChips({ shares, editedAt }: { shares: ShareTargetStatusDto[]; editedAt: string | null }) {
-    const now = useMinuteClock();
+    const times = shares.flatMap((share) => (share.syncedAt ? [Date.parse(share.syncedAt)] : []));
+    const now = useAgeClock(times.length ? Math.max(...times) : undefined);
 
     return (
         <div className="flex min-w-0 shrink-0 items-center gap-1.5">

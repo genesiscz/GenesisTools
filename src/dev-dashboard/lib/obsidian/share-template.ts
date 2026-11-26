@@ -1160,7 +1160,8 @@ function buildFreshnessScript(): string {
     function ago(iso) {
         var ms = Math.max(0, Date.now() - Date.parse(iso));
         var min = 60000, hour = 60 * min, day = 24 * hour;
-        if (ms < min) { return "just now"; }
+        if (ms < 10000) { return "just now"; }
+        if (ms < min) { return Math.floor(ms / 1000) + " s ago"; }
         if (ms < hour) { return Math.floor(ms / min) + " min ago"; }
         if (ms < day) { return Math.floor(ms / hour) + " h ago"; }
         var days = Math.floor(ms / day);
@@ -1191,8 +1192,14 @@ function buildFreshnessScript(): string {
         if (edited) { lines.push("Edited " + local(edited)); }
         badge.title = lines.join("\\n");
     }
-    render();
-    setInterval(render, 60000);
+    // Seconds show during the first minute, so redraw each second then and once a minute after.
+    function tick() {
+        render();
+        var anchor = mode === "live" ? edited : (synced || edited);
+        var age = anchor ? Date.now() - Date.parse(anchor) : Infinity;
+        setTimeout(tick, age < 60000 ? 1000 : 60000);
+    }
+    tick();
 })();
 </script>`;
 }
