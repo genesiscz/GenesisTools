@@ -274,6 +274,14 @@ function boundedErrorSerializer(serialize: (err: Error) => unknown): (err: Error
         }
 
         for (const [key, value] of Object.entries(serialized)) {
+            // Bun's ResolveMessage and BuildMessage keep toJSON and toString as enumerable prototype methods,
+            // so pino's serializer copies them onto a plain object. The JSON writer then calls that native
+            // toJSON on the wrong receiver, it throws, and the whole field became "[unable to serialize, ...]".
+            if (typeof value === "function") {
+                Reflect.deleteProperty(serialized, key);
+                continue;
+            }
+
             if (key !== "stack" && typeof value === "string" && value.length > ERROR_FIELD_LOG_CHARS) {
                 Object.assign(serialized, {
                     [key]: `${value.slice(0, ERROR_FIELD_LOG_CHARS)}…`,

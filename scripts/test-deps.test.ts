@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import * as XLSX from "xlsx";
 import { CANARY_PACKAGES, diagnose, lockStamp, missingCanaries } from "./test-deps";
 
@@ -119,5 +120,29 @@ describe("xlsx CE pin", () => {
 
         expect(range.e.r).toBe(1);
         expect(String(sheet[addr].v)).toBe("Praha 3");
+    });
+});
+
+interface BunLock {
+    workspaces: Record<string, { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>;
+    packages: Record<string, unknown[]>;
+}
+
+describe("bun.lock: platform-only packages", () => {
+    // bun warns "skipping fsevents@2.3.3: unsupported platform" on every Linux install for a REQUIRED
+    // dependency restricted to another os or cpu; an optional one it skips silently.
+    test("no root dependency is restricted to one os or cpu unless it is optional", () => {
+        const lock: BunLock = SafeJSON.parse(readFileSync(join(import.meta.dir, "..", "bun.lock"), "utf8"));
+        const root = lock.workspaces[""];
+        const required = [...Object.keys(root?.dependencies ?? {}), ...Object.keys(root?.devDependencies ?? {})];
+        const restricted = required.filter((name) => {
+            const meta = lock.packages[name]?.find(
+                (part): part is { os?: unknown; cpu?: unknown } =>
+                    typeof part === "object" && part !== null && !Array.isArray(part)
+            );
+            return meta?.os !== undefined || meta?.cpu !== undefined;
+        });
+
+        expect(restricted).toEqual([]);
     });
 });

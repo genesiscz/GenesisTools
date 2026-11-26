@@ -13,16 +13,20 @@ export type UpdateMode = "default" | "dev";
 
 export interface UpdateOptions {
     plugins: boolean;
+    /** Reinstall the Claude Code plugin and refresh the marketplace even when nothing changed. */
+    forcePlugins?: boolean;
 }
 
 /** Shared command definition so option routing is exercised without running an update. */
 export function createUpdateProgram(action: (mode: UpdateMode, opts: UpdateOptions) => Promise<void>): Command {
     const flagHelp = "Skip the Claude Code marketplace and plugin step";
+    const forceHelp = "Reinstall the Claude Code plugin even when its version and source are unchanged";
     const program = new Command()
         .name("update")
         .description("Update GenesisTools to the latest version")
         .enablePositionalOptions()
         .option("--no-plugins", flagHelp)
+        .option("--force-plugins", forceHelp)
         .action(async (opts: UpdateOptions) => action("default", opts));
 
     program
@@ -31,8 +35,12 @@ export function createUpdateProgram(action: (mode: UpdateMode, opts: UpdateOptio
             `Switch to the newest feat/<date>-enhancements-unified branch; the next plain ${toolCommand("update")} switches back`
         )
         .option("--no-plugins", flagHelp)
+        .option("--force-plugins", forceHelp)
         .action(async (opts: UpdateOptions) =>
-            action("dev", { plugins: opts.plugins && program.opts<UpdateOptions>().plugins })
+            action("dev", {
+                plugins: opts.plugins && program.opts<UpdateOptions>().plugins,
+                forcePlugins: opts.forcePlugins === true || program.opts<UpdateOptions>().forcePlugins === true,
+            })
         );
 
     return program;
@@ -55,6 +63,7 @@ const UNIFIED_REF = /^origin\/(feat\/(\d{4}-\d{2}-\d{2})-enhancements-unified)$/
 /** Older update code cannot honor the handoff or --no-plugins, so it must not be launched. */
 export function postPullInvocation(opts: {
     plugins: boolean;
+    forcePlugins?: boolean;
     source: string;
 }): { args: string[]; env: Record<string, string> } | null {
     if (!opts.source.includes("env.tools.isUpdatePostPull()")) {
@@ -62,7 +71,12 @@ export function postPullInvocation(opts: {
     }
 
     return {
-        args: ["update", ...(opts.plugins ? [] : ["--no-plugins"])],
+        args: [
+            "update",
+            ...(opts.plugins ? [] : ["--no-plugins"]),
+            // Pulled code that predates the flag would reject it as an unknown option.
+            ...(opts.forcePlugins && opts.source.includes("forcePlugins") ? ["--force-plugins"] : []),
+        ],
         env: { GENESIS_TOOLS_UPDATE_POST_PULL: "1" },
     };
 }

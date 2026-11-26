@@ -36,8 +36,8 @@ export interface MarketplaceEntry {
  * CLI error re-run `marketplace add`, which overwrites a perfectly good registration.
  */
 export type MarketplaceLookup =
-    | { status: "found"; entry: MarketplaceEntry }
-    | { status: "absent" }
+    | { status: "found"; entry: MarketplaceEntry; entries?: MarketplaceEntry[] }
+    | { status: "absent"; entries?: MarketplaceEntry[] }
     | { status: "unknown" };
 
 export type MarketplaceAction = "add-checkout" | "add-fallback" | "refresh";
@@ -52,6 +52,66 @@ export interface MarketplacePlan {
 
 function pointsAtCheckout(entry: MarketplaceEntry, checkout: string, resolvePath: (p: string) => string): boolean {
     return entry.source === "directory" && entry.path !== undefined && resolvePath(entry.path) === checkout;
+}
+
+/** True when the entry is a directory marketplace whose path resolves to this checkout. */
+export function marketplacePointsAtCheckout(args: {
+    entry: MarketplaceEntry;
+    checkout: string;
+    resolvePath: (p: string) => string;
+}): boolean {
+    return pointsAtCheckout(args.entry, args.checkout, args.resolvePath);
+}
+
+/**
+ * Other marketplaces registered for this same checkout under another name (an old install named it
+ * `genesis-tools-plugins`). Claude Code 2.1.305 answers `marketplace add <checkout>` with "Marketplace
+ * 'genesis-tools-plugins' already on disk", exits 0 and leaves `genesis-tools` on its git source, so the
+ * update re-pointed and reinstalled the plugin on every run. They must go before the add can take effect.
+ */
+export function blockingMarketplaceAliases(args: {
+    entries: MarketplaceEntry[];
+    name: string;
+    checkout: string;
+    resolvePath: (p: string) => string;
+}): string[] {
+    return args.entries
+        .filter((entry) => entry.name !== undefined && entry.name !== args.name)
+        .filter((entry) => pointsAtCheckout(entry, args.checkout, args.resolvePath))
+        .map((entry) => entry.name ?? "");
+}
+
+/** What `claude plugin list --json` says about the plugin. "unknown": the listing failed. */
+export type InstalledPlugin = { status: "installed"; version?: string } | { status: "absent" } | { status: "unknown" };
+
+export type PluginAction = "install" | "reinstall" | "update" | "skip";
+
+/**
+ * Step 4's plugin work. The plugin is reinstalled only when its source changed (a re-point) or on
+ * `--force-plugins`; a plugin already at the checkout's version is left alone, and so is the
+ * marketplace refresh, so an update with nothing new runs no claude command at all.
+ */
+export function planPluginAction(args: {
+    installed: InstalledPlugin;
+    checkoutVersion: string | undefined;
+    repointed: boolean;
+    force: boolean;
+}): PluginAction {
+    const { installed, checkoutVersion, repointed, force } = args;
+
+    if (installed.status === "absent") {
+        return "install";
+    }
+
+    if (installed.status === "installed" && (repointed || force)) {
+        return "reinstall";
+    }
+
+    if (installed.status === "installed" && checkoutVersion !== undefined && installed.version === checkoutVersion) {
+        return "skip";
+    }
+
+    return "update";
 }
 
 /**

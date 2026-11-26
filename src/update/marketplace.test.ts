@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
-import { planMarketplaceAction, pluginStepDecision } from "./marketplace";
+import { blockingMarketplaceAliases, planMarketplaceAction, planPluginAction, pluginStepDecision } from "./marketplace";
 
 const CHECKOUT = "/Users/me/GenesisTools";
 
@@ -95,5 +95,95 @@ describe("planMarketplaceAction", () => {
         expect(plan({ isCheckout: false, checkout: "/tmp/elsewhere", lookup: { status: "unknown" } }).action).toBe(
             "refresh"
         );
+    });
+});
+
+describe("blockingMarketplaceAliases", () => {
+    // The shape a Linux server held: `genesis-tools` on git, and an old `genesis-tools-plugins` on the checkout.
+    const entries = [
+        { name: "genesis-tools-plugins", source: "directory" as const, path: CHECKOUT },
+        { name: "genesis-tools", source: "git" as const },
+        { name: "claude-plugins-official", source: "github" as const },
+    ];
+
+    it("names another marketplace that already holds this checkout", () => {
+        expect(
+            blockingMarketplaceAliases({ entries, name: "genesis-tools", checkout: CHECKOUT, resolvePath: resolve })
+        ).toEqual(["genesis-tools-plugins"]);
+    });
+
+    it("ignores the marketplace itself and folders elsewhere", () => {
+        expect(
+            blockingMarketplaceAliases({
+                entries: [
+                    { name: "genesis-tools", source: "directory", path: CHECKOUT },
+                    { name: "other", source: "directory", path: "/tmp/elsewhere" },
+                ],
+                name: "genesis-tools",
+                checkout: CHECKOUT,
+                resolvePath: resolve,
+            })
+        ).toEqual([]);
+    });
+});
+
+describe("planPluginAction", () => {
+    it("skips when the installed plugin is already at the checkout's version", () => {
+        expect(
+            planPluginAction({
+                installed: { status: "installed", version: "1.0.210" },
+                checkoutVersion: "1.0.210",
+                repointed: false,
+                force: false,
+            })
+        ).toBe("skip");
+    });
+
+    it("updates when the version moved, and installs when the plugin is missing", () => {
+        expect(
+            planPluginAction({
+                installed: { status: "installed", version: "1.0.113" },
+                checkoutVersion: "1.0.210",
+                repointed: false,
+                force: false,
+            })
+        ).toBe("update");
+        expect(
+            planPluginAction({
+                installed: { status: "absent" },
+                checkoutVersion: "1.0.210",
+                repointed: false,
+                force: false,
+            })
+        ).toBe("install");
+    });
+
+    it("reinstalls only after a re-point or with --force-plugins", () => {
+        const installed = { status: "installed" as const, version: "1.0.210" };
+        expect(planPluginAction({ installed, checkoutVersion: "1.0.210", repointed: true, force: false })).toBe(
+            "reinstall"
+        );
+        expect(planPluginAction({ installed, checkoutVersion: "1.0.210", repointed: false, force: true })).toBe(
+            "reinstall"
+        );
+    });
+
+    it("never skips when the listing failed or the checkout version is unknown", () => {
+        expect(
+            planPluginAction({
+                installed: { status: "unknown" },
+                checkoutVersion: "1.0.210",
+                repointed: false,
+                force: false,
+            })
+        ).toBe("update");
+        expect(
+            planPluginAction({
+                installed: { status: "installed", version: "1.0.210" },
+                checkoutVersion: undefined,
+                repointed: false,
+                force: false,
+            })
+        ).toBe("update");
     });
 });
