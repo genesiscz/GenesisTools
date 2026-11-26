@@ -10,6 +10,7 @@ import {
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
 import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
 import { shareInBackground, unshareInBackground } from "@app/dev-dashboard/lib/share/targets";
 import { bindHandler } from "@app/dev-dashboard/server/bind";
@@ -77,8 +78,7 @@ export function obsidianRoutes(): RouteDef[] {
                 const published = await listPublished();
                 const publishedNote = published.find((note) => note.vaultPath === path);
                 const publishedSlug = publishedNote?.slug ?? null;
-                const { share } = await getConfig();
-                const shares = publishedNote ? await shareStatusFor(publishedNote, share) : [];
+                const shares = publishedNote ? await shareStatusFor(publishedNote) : [];
                 const info = await stat(resolve(obsidianVault, path)).catch((err: unknown) => {
                     log.debug({ err, path }, "note has no readable mtime");
                     return null;
@@ -118,6 +118,7 @@ export function obsidianRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "path required" } };
                 }
 
+                await importLegacyShare();
                 const note = await publishNote(path);
                 shareInBackground(note);
 
@@ -134,6 +135,7 @@ export function obsidianRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "slug required" } };
                 }
 
+                await importLegacyShare();
                 const note = await findPublishedBySlug(slug);
                 await unpublishNote(slug);
 

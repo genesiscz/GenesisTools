@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { PublishedNote } from "@app/dev-dashboard/config";
 import {
@@ -10,16 +10,15 @@ import {
     type ShareAssetIndex,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SHARE_SLUG_RE, type ShareSource, shareTitle } from "@app/dev-dashboard/lib/share/source";
-import type { ZipEntry } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { makeTempDir } from "@genesiscz/utils/paths";
+import { SNAPSHOT_MANIFEST } from "@genesiscz/utils/publish/snapshot-store";
 import { z } from "zod";
 
 const { log } = logger.scoped("share-snapshot");
 
 export const SHARE_SNAPSHOT_VERSION = 1;
-export const SNAPSHOT_MANIFEST = "manifest.json";
+export { SNAPSHOT_MANIFEST };
 
 const SHARE_ASSET_KINDS = [
     "image",
@@ -209,41 +208,6 @@ export async function writeShareSnapshot(options: {
     return manifest;
 }
 
-/** Run `fn` on a fresh snapshot of `note` in a temp folder (mode 755, files 644), removed afterwards. */
-export async function withShareSnapshot<T>(options: {
-    source: ShareSource;
-    note: PublishedNote;
-    fn: (dir: string, manifest: ShareSnapshotManifest) => Promise<T>;
-}): Promise<T> {
-    const dir = makeTempDir("share-snapshot-");
-
-    try {
-        const manifest = await writeShareSnapshot({ source: options.source, note: options.note, dir });
-        await chmod(dir, 0o755);
-        await chmod(join(dir, "assets"), 0o755);
-
-        return await options.fn(dir, manifest);
-    } finally {
-        // Our own temp folder, made above: nothing of the user's lives in it.
-        await rm(dir, { recursive: true, force: true });
-    }
-}
-
-/** The snapshot folder as zip entries (an upload to a paired share server). */
-export async function snapshotEntries(dir: string): Promise<ZipEntry[]> {
-    const entries: ZipEntry[] = [];
-
-    for (const name of [SNAPSHOT_MANIFEST, ...(await readdir(dir)).filter((n) => NOTE_FILE_RE.test(n))]) {
-        entries.push({ name, data: await readFile(join(dir, name)) });
-    }
-
-    for (const name of await readdir(join(dir, "assets"))) {
-        entries.push({ name: `assets/${name}`, data: await readFile(join(dir, "assets", name)) });
-    }
-
-    return entries;
-}
-
 /** Parse a manifest, or null when it is missing or not a manifest this version reads. */
 export async function readSnapshotManifest(dir: string): Promise<ShareSnapshotManifest | null> {
     try {
@@ -268,8 +232,6 @@ function noteOf(manifest: ShareSnapshotManifest): PublishedNote {
         slug: manifest.slug,
         vaultPath: manifest.vaultPath,
         publishedAt: manifest.publishedAt,
-        targets: [],
-        syncs: {},
     };
 }
 

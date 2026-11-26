@@ -15,6 +15,7 @@ import {
     type ShareEmbedPanels,
     vaultAssetReader,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
 import { snapshotShareSource, writeShareSnapshot } from "@app/dev-dashboard/lib/share/snapshot";
 import type { ShareSource } from "@app/dev-dashboard/lib/share/source";
 import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
@@ -26,6 +27,7 @@ import { unzip } from "@genesiscz/utils/fs/unzip";
 import * as zipFunctions from "@genesiscz/utils/fs/zip";
 import { zip, zipAsync } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { startPublishServer } from "@genesiscz/utils/publish/server";
 
 const PIC = Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBPVP8 fake-webp-bytes");
 const SHOT = Buffer.from("\u0089PNG fake-png-found-by-name");
@@ -197,7 +199,8 @@ describe("GET /share/:slug assets", () => {
     }
 
     test("a snapshot renders the same page, assets and zip as the vault, from a folder with no vault", async () => {
-        const data = join(dir, "snapshots");
+        const dataDir = join(dir, "snapshots");
+        const data = join(dataDir, "md");
         const vault = vaultShareSource();
 
         for (const target of [slug, pubSlug]) {
@@ -211,13 +214,28 @@ describe("GET /share/:slug assets", () => {
 
         const snapshots = snapshotShareSource({ dataDir: data, publicOrigin: "https://share.example.com" });
         const live = await get({}, "text/html");
-        const served = await get({}, "text/html", slug, {}, snapshots);
+        const server = await startPublishServer({
+            kinds: Object.values(PUBLISH_KIND_SERVERS),
+            dataDir,
+            stateDir: join(dir, "snapshot-state"),
+            publicBase: "https://share.example.com/md",
+            port: 0,
+            host: "127.0.0.1",
+        });
+        let servedHtml: string;
+        try {
+            const served = await fetch(`${server.url}/md/${slug}`, { headers: { accept: "text/html" } });
+            expect(served.status).toBe(200);
+            expect(served.headers.get("x-share-server")).toBe("genesis-tools");
+            servedHtml = await served.text();
+        } finally {
+            await server.stop();
+        }
 
         // Only the freshness badge differs: the vault page is live, the snapshot page says when it was synced.
         const BADGE_RE = /<div class="dd-share-freshness"[^>]*>[\s\S]*?<\/div>/;
         const liveHtml = live.kind === "raw" ? live.body : "missing";
-        const servedHtml = served.kind === "raw" ? served.body : "";
-        expect(servedHtml.replace(BADGE_RE, "")).toBe(liveHtml.replace(BADGE_RE, ""));
+        expect(servedHtml.replace(BADGE_RE, "")).toBe(liveHtml.replace(BADGE_RE, "").replaceAll("/share/", "/md/"));
 
         const mtime = statSync(join(dir, "vault", "Notes/sub/Run.md")).mtime.toISOString();
         expect(

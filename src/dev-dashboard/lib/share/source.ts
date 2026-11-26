@@ -31,5 +31,4 @@ export function shareTitle(vaultPath: string): string {
     return (vaultPath.split("/").pop() ?? vaultPath).replace(/\.md$/, "");
 }
 
-/** A slug as `publishNote` makes it (base64url), so it is always one safe path segment. */
-export const SHARE_SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export { SNAPSHOT_ID_RE as SHARE_SLUG_RE } from "@genesiscz/utils/publish/ids";

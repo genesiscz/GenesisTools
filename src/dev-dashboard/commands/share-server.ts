@@ -3,13 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
-import { ADMIN_API, DeviceListSchema, PairCodeResponseSchema } from "@app/dev-dashboard/lib/share/server/api";
-import {
-    adminRequest,
-    parsePublicBase,
-    SHARE_SERVER_HEADER,
-    startShareServer,
-} from "@app/dev-dashboard/lib/share/server/app";
+import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
+import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
 import {
     cloudflaredConfig,
     HOSTNAME_RE,
@@ -18,11 +13,16 @@ import {
     tunnelConfigPath,
     tunnelSetupSteps,
 } from "@app/dev-dashboard/lib/share/server/tunnel";
-import { listSnapshotSlugs } from "@app/dev-dashboard/lib/share/server/upload";
 import { Executor, isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { PairCodeResponseSchema } from "@genesiscz/utils/device-pairing/types";
+import { PUBLISH_KIND_IDS } from "@genesiscz/utils/genesis-tools/publish/kinds";
+import { shareTargetAddCommand } from "@genesiscz/utils/genesis-tools/tools/publish";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { ADMIN_API, DeviceListSchema, PUBLISH_SERVER_HEADER } from "@genesiscz/utils/publish/api";
+import { adminRequest, parsePublicOrigin, startPublishServer } from "@genesiscz/utils/publish/server";
+import { listSnapshotIds } from "@genesiscz/utils/publish/snapshot-store";
 import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import { z } from "zod";
@@ -67,18 +67,16 @@ async function printPairCode(stateDir: string, publicBase: string): Promise<void
         await adminRequest({ stateDir, path: ADMIN_API.pairCode, method: "POST" })
     );
     out.println(`pairing code: ${code} (valid until ${new Date(expiresAt).toLocaleString()})`);
-    out.println(
-        `on the Mac: tools dev-dashboard share target add <name> --driver paired --url ${publicBase} --code ${code}`
-    );
+    out.println(`On the client: ${shareTargetAddCommand({ url: publicBase, code })}`);
 }
 
 /** `share-server serve`: run the share server in the foreground (what the service unit runs). */
 export async function runShareServerServe(opts: ShareServerServeOptions): Promise<void> {
     const { dataDir, stateDir } = shareServerDirs(opts);
-    const publicBase = opts.publicBase ?? `http://${opts.host}:${opts.port}/md`;
+    const publicBase = opts.publicBase ?? `http://${opts.host}:${opts.port}`;
 
     try {
-        parsePublicBase(publicBase);
+        parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
     } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
     }
@@ -96,13 +94,21 @@ export async function runShareServerServe(opts: ShareServerServeOptions): Promis
         }
     }
 
-    const server = await startShareServer({ dataDir, stateDir, publicBase, port: opts.port, host: opts.host });
+    const server = await startPublishServer({
+        kinds: Object.values(PUBLISH_KIND_SERVERS),
+        legacyFlatKind: "md",
+        dataDir,
+        stateDir,
+        publicBase,
+        port: opts.port,
+        host: opts.host,
+    });
     out.println(
-        `share server on ${server.url}${server.context.pagePath}/<slug> (data ${dataDir}, public ${publicBase})`
+        `Publish server on ${server.url} (data ${dataDir}, public ${server.context.origin}; kinds ${PUBLISH_KIND_IDS.join(", ")})`
     );
 
     if (opts.pair) {
-        await printPairCode(stateDir, publicBase);
+        await printPairCode(stateDir, server.context.origin);
     }
 
     if (opts.tunnel && configFile) {
@@ -123,9 +129,11 @@ export async function runShareServerStatus(opts: ShareServerPaths & { port: numb
         log.debug({ err, url }, "share server did not answer");
         return null;
     });
-    const ours = res?.headers.get(SHARE_SERVER_HEADER) !== null && res !== null;
+    const ours = res?.headers.get(PUBLISH_SERVER_HEADER) !== null && res !== null;
     out.println(`server:    ${ours ? "up" : res ? "another server holds the port" : "down"} (${url})`);
-    out.println(`snapshots: ${(await listSnapshotSlugs(dataDir)).length} in ${dataDir}`);
+    for (const kind of PUBLISH_KIND_IDS) {
+        out.println(`${kind} snapshots: ${(await listSnapshotIds({ dataDir, kind })).length} in ${dataDir}`);
+    }
 
     if (ours) {
         const devices = await adminRequest({ stateDir, path: ADMIN_API.devices }).catch((err: unknown) => {
@@ -149,7 +157,10 @@ export async function runShareServerPair(opts: ShareServerPaths & { publicBase?:
     const { stateDir } = shareServerDirs(opts);
 
     try {
-        await printPairCode(stateDir, opts.publicBase ?? "<server public base, e.g. https://share.example.com/md>");
+        await printPairCode(
+            stateDir,
+            opts.publicBase ? parsePublicOrigin(opts.publicBase, PUBLISH_KIND_IDS) : "https://share.example.com"
+        );
     } catch (err) {
         fail(`${err instanceof Error ? err.message : String(err)} (is the share server up, with this --state?)`);
     }
@@ -396,10 +407,7 @@ async function ask(message: string, given: string | undefined, initial?: string)
  * prints the unit for the host's own config management (GenesisInfra on the vpn host).
  */
 async function setupServer(opts: ShareServerSetupOptions): Promise<boolean> {
-    const publicBase = await ask(
-        "Public base of the pages (origin + one path, e.g. https://share.example.com/md)",
-        opts.publicBase
-    );
+    const publicBase = await ask("Public origin of the pages (e.g. https://share.example.com)", opts.publicBase);
 
     if (!publicBase) {
         fail(
@@ -411,7 +419,7 @@ async function setupServer(opts: ShareServerSetupOptions): Promise<boolean> {
         return false;
     }
 
-    parsePublicBase(publicBase);
+    parsePublicOrigin(publicBase, PUBLISH_KIND_IDS);
     const { dataDir, stateDir } = shareServerDirs(opts);
     const unit = shareServerUnit({
         root: opts.root,
@@ -477,6 +485,7 @@ export async function runShareServerSetup(opts: ShareServerSetupOptions): Promis
     }
 
     try {
+        await importLegacyShare();
         if (mode !== "client" && !(await setupServer(opts))) {
             process.exitCode = 1;
             return;
