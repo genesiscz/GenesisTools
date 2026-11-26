@@ -82,6 +82,7 @@ describe("captureContext git fields", () => {
         repo.write({ file: "docs/Guide.md", content: "guide v2\n" });
         repo.write({ file: "src/app/Widget.tsx", content: "widget v2\n" });
         await repo.git(["add", "src/app/Widget.tsx"]);
+        await repo.git(["config", "status.renames", "true"]);
         await repo.git(["mv", "src/app/Old.tsx", "src/app/New.tsx"]);
         repo.write({ file: "notes/Příklad soubor.md", content: "x\n" });
     });

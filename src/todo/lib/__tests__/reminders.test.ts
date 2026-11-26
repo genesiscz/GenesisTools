@@ -79,6 +79,13 @@ describe("alertsForStart", () => {
         expect(alertsForStart({ reminders: [] })).toEqual([]);
     });
 
+    it("adds a timed alert beside a receipt from an untimed reminder sync", () => {
+        const receipt = { at: "", synced: "reminders" as const, syncId: "REM-1" };
+        const alerts = alertsForStart({ reminders: [receipt], at: START });
+        expect(alerts).toEqual([receipt, { at: START, label: "event start", synced: null }]);
+        expect(alertsForStart({ reminders: alerts, previousAt: START, at: START })).toEqual(alerts);
+    });
+
     it("keeps the alerts a user gave", () => {
         const given = [{ at: "2026-11-27T11:00:00.000Z", synced: null }];
 

@@ -68,8 +68,8 @@ export function alertsForStart({
         return reminders;
     }
 
-    if (reminders.length === 0) {
-        return [{ at, label: EVENT_START_LABEL, synced: null }];
+    if (!reminders.some((reminder) => Number.isFinite(Date.parse(reminder.at)))) {
+        return [...reminders, { at, label: EVENT_START_LABEL, synced: null }];
     }
 
     return reminders.map((reminder) =>
