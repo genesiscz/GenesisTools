@@ -1,208 +1,121 @@
-import type { PublishedNote } from "@app/dev-dashboard/config";
-import { getConfig } from "@app/dev-dashboard/config";
-import {
-    findPublishedBySlug,
-    listPublished,
-    publishNote,
-    setPublishedTargets,
-    unpublishNote,
-} from "@app/dev-dashboard/lib/obsidian/publish";
-import { driverFor } from "@app/dev-dashboard/lib/share/drivers";
-import type { ShareConfig, ShareTarget } from "@app/dev-dashboard/lib/share/drivers/options";
+import { getConfig, type PublishedNote } from "@app/dev-dashboard/config";
+import { findPublishedBySlug, publishNote, unpublishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import { mdKind } from "@app/dev-dashboard/lib/share/kind";
+import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
+import { writeShareSnapshot } from "@app/dev-dashboard/lib/share/snapshot";
+import { shareTitle } from "@app/dev-dashboard/lib/share/source";
 import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
+import { publisher, type TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
+import { loadPublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveTargets } from "@genesiscz/utils/publish/targets";
+
+export type { TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
+export { ALL_TARGETS } from "@genesiscz/utils/publish/targets";
 
 const { log } = logger.scoped("share-targets");
+const md = publisher(mdKind);
 
-/** `--target all` names every configured target. */
-export const ALL_TARGETS = "all";
+async function sendNote(note: PublishedNote, targetNames: readonly string[]): Promise<TargetOutcome[]> {
+    const source = vaultShareSource();
+    const { outcomes } = await md.publish({
+        id: note.slug,
+        source: note.vaultPath,
+        title: shareTitle(note.vaultPath),
+        sourceModifiedAt: (await source.freshness(note)).editedAt,
+        targetNames,
+        build: async ({ dir }) => {
+            if (!(await findPublishedBySlug(note.slug))) {
+                throw new Error(`Note is no longer published: ${note.slug}`);
+            }
 
-export interface TargetOutcome {
-    target: string;
-    url?: string;
-    error?: string;
-}
-
-/** The targets `names` picks: none given is the default target, "all" is every target. Unknown names throw. */
-export function resolveTargets(share: ShareConfig, names: readonly string[]): ShareTarget[] {
-    const wanted = names.length === 0 ? [share.defaults.target] : names;
-
-    if (wanted.includes(ALL_TARGETS)) {
-        return share.targets;
-    }
-
-    return wanted.map((name) => {
-        const target = share.targets.find((entry) => entry.name === name);
-
-        if (!target) {
-            const known = share.targets.map((entry) => entry.name).join(", ");
-            throw new Error(`no share target "${name}" (configured: ${known || "none"})`);
-        }
-
-        return target;
+            await writeShareSnapshot({ source, note, dir });
+        },
     });
-}
-
-async function sendTo(targets: ShareTarget[], note: PublishedNote): Promise<TargetOutcome[]> {
-    const outcomes: TargetOutcome[] = [];
-
-    const syncs: PublishedNote["syncs"] = {};
-    // The version every target gets is the file as it is now; its mtime tells a later edit apart.
-    const editedAt = (await vaultShareSource().freshness(note)).editedAt ?? new Date().toISOString();
-
-    for (const target of targets) {
-        const driver = driverFor(target);
-
-        try {
-            await driver.sync(target, note);
-            outcomes.push({ target: target.name, url: await driver.pageUrl(target, note.slug) });
-            syncs[target.name] = { syncedAt: new Date().toISOString(), sourceModifiedAt: editedAt };
-        } catch (err) {
-            log.warn({ err, target: target.name, slug: note.slug }, "share target sync failed");
-            outcomes.push({ target: target.name, error: err instanceof Error ? err.message : String(err) });
-        }
-    }
-
-    const reached = outcomes.filter((outcome) => !outcome.error).map((outcome) => outcome.target);
-    await setPublishedTargets(note.slug, { targets: [...note.targets, ...reached], syncs });
 
     return outcomes;
 }
 
-/** The UI publish button: send the note to the default target without making the page wait; failures are logged. */
+/** Send the UI's newly published note without making the page wait. */
 export function shareInBackground(note: PublishedNote): void {
     void (async () => {
-        const { share } = await getConfig();
-        await sendTo(resolveTargets(share, []), note);
+        await importLegacyShare();
+        await sendNote(note, []);
     })().catch((err: unknown) => {
         log.warn({ err, slug: note.slug }, "background share failed");
     });
 }
 
-/** The UI unpublish button: the note is already unpublished; take it off the targets it was sent to. */
+/** The UI has already removed the live slug. Remove the copies tracked in the ledger. */
 export function unshareInBackground(note: PublishedNote): void {
     void (async () => {
-        const { share } = await getConfig();
-
-        for (const target of share.targets.filter((entry) => note.targets.includes(entry.name))) {
-            await driverFor(target).remove(target, note.slug);
-        }
+        await importLegacyShare();
+        await md.unpublish({ id: note.slug, targetNames: [] });
     })().catch((err: unknown) => {
-        log.warn({ err, slug: note.slug }, "background unshare failed; `share sync --prune` removes it later");
+        log.warn({ err, slug: note.slug }, "background unshare failed");
     });
 }
 
-/** Publish a vault note and send it to the targets `names` picks. */
 export async function shareToTargets(options: {
     vaultPath: string;
     targetNames: readonly string[];
 }): Promise<{ note: PublishedNote; outcomes: TargetOutcome[] }> {
-    const { share } = await getConfig();
-    const targets = resolveTargets(share, options.targetNames);
+    await importLegacyShare();
+    const { client } = await loadPublishConfig();
+    resolveTargets({ targets: client.targets, defaultTarget: client.defaults.target, names: options.targetNames });
     const note = await publishNote(options.vaultPath);
 
-    return { note, outcomes: await sendTo(targets, note) };
+    return { note, outcomes: await sendNote(note, options.targetNames) };
 }
 
-/**
- * Send published notes again: the given slugs, or every published note. With no target names each note goes to the
- * targets it was sent to before; with names, to those targets.
- */
 export async function syncShares(options: {
     slugs: readonly string[];
     all: boolean;
     targetNames: readonly string[];
 }): Promise<Array<{ note: PublishedNote; outcomes: TargetOutcome[] }>> {
-    const { share, publishedNotes } = await getConfig();
-    const notes = options.all ? publishedNotes : publishedNotes.filter((note) => options.slugs.includes(note.slug));
-    const missing = options.slugs.filter((slug) => !publishedNotes.some((note) => note.slug === slug));
-
+    await importLegacyShare();
+    const [{ publishedNotes }, { client }, ledger] = await Promise.all([getConfig(), loadPublishConfig(), md.list()]);
+    const published = new Set(publishedNotes.map((note) => note.slug));
+    const missing = options.slugs.filter((slug) => !published.has(slug));
     if (missing.length > 0) {
         throw new Error(`not published: ${missing.join(", ")}`);
     }
 
+    const byId = new Map(ledger.map((entry) => [entry.id, entry]));
+    const notes = options.all ? publishedNotes : publishedNotes.filter((note) => options.slugs.includes(note.slug));
     const results: Array<{ note: PublishedNote; outcomes: TargetOutcome[] }> = [];
-
     for (const note of notes) {
-        const targets =
-            options.targetNames.length > 0
-                ? resolveTargets(share, options.targetNames)
-                : share.targets.filter((target) => note.targets.includes(target.name));
-        results.push({ note, outcomes: await sendTo(targets, note) });
+        const syncs = byId.get(note.slug)?.syncs ?? {};
+        const targetNames = options.targetNames.length
+            ? options.targetNames
+            : client.targets.map(({ name }) => name).filter((name) => Object.hasOwn(syncs, name));
+        results.push({ note, outcomes: targetNames.length ? await sendNote(note, targetNames) : [] });
     }
 
     return results;
 }
 
-/**
- * Remove folders a target holds for notes that are no longer published there (an unshare while it was offline).
- * Returns the slugs removed per target; a driver that cannot list is skipped.
- */
 export async function pruneTargets(
     targetNames: readonly string[]
 ): Promise<Array<{ target: string; removed: string[] }>> {
-    const { share } = await getConfig();
-    const published = await listPublished();
-    const results: Array<{ target: string; removed: string[] }> = [];
-
-    for (const target of resolveTargets(share, targetNames.length > 0 ? targetNames : [ALL_TARGETS])) {
-        const driver = driverFor(target);
-        const held = await driver.listSlugs(target);
-
-        if (held === null) {
-            continue;
-        }
-
-        const keep = new Set(published.filter((note) => note.targets.includes(target.name)).map((note) => note.slug));
-        const stale = held.filter((slug) => !keep.has(slug));
-
-        for (const slug of stale) {
-            await driver.remove(target, slug);
-        }
-
-        results.push({ target: target.name, removed: stale });
-    }
-
-    return results;
+    await importLegacyShare();
+    return md.prune(targetNames);
 }
 
-/**
- * Take a note off targets. With target names, only those (the note stays published elsewhere); without, off every
- * target it was sent to, and unpublished on the Mac too.
- */
+/** Remove the live slug only after the last tracked target is gone. */
 export async function unshareFromTargets(options: {
     slug: string;
     targetNames: readonly string[];
 }): Promise<TargetOutcome[]> {
-    const { share } = await getConfig();
+    await importLegacyShare();
     const note = await findPublishedBySlug(options.slug);
-
     if (!note) {
         throw new Error(`not published: ${options.slug}`);
     }
 
-    const everything = options.targetNames.length === 0;
-    const targets = everything
-        ? share.targets.filter((target) => note.targets.includes(target.name))
-        : resolveTargets(share, options.targetNames);
-    const outcomes: TargetOutcome[] = [];
-
-    for (const target of targets) {
-        try {
-            await driverFor(target).remove(target, note.slug);
-            outcomes.push({ target: target.name });
-        } catch (err) {
-            log.warn({ err, target: target.name, slug: note.slug }, "share target removal failed");
-            outcomes.push({ target: target.name, error: err instanceof Error ? err.message : String(err) });
-        }
-    }
-
-    const removed = new Set(outcomes.filter((outcome) => !outcome.error).map((outcome) => outcome.target));
-
-    if (everything && removed.size === targets.length) {
+    const outcomes = await md.unpublish({ id: note.slug, targetNames: options.targetNames });
+    if (!outcomes.some((outcome) => outcome.error) && !(await md.find({ id: note.slug }))) {
         await unpublishNote(note.slug);
-    } else {
-        await setPublishedTargets(note.slug, { targets: note.targets.filter((name) => !removed.has(name)) });
     }
 
     return outcomes;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
+import { findPublication } from "@genesiscz/utils/genesis-tools/publish/store";
 import { shareNote, toVaultRelativePath } from "./share-note";
 
 describe("toVaultRelativePath", () => {
@@ -76,9 +77,13 @@ describe("shareNote", () => {
         const shared = await shareNote("Widgets/Design/Note.md", ["mac"]);
         const config = await getDevDashboardStorage().getConfig<{ publishedNotes: Array<{ targets?: string[] }> }>();
 
-        expect(config?.publishedNotes[0]?.targets).toEqual(["mac"]);
+        expect(config?.publishedNotes[0]?.targets).toBeUndefined();
+        const tracked = await findPublication({ kind: "md", id: shared.slug });
+        expect(Object.keys(tracked?.syncs ?? {})).toEqual(["mac"]);
         expect(shared.outcomes[0]?.url).toContain("/share/");
-        await expect(shareNote("Widgets/Design/Note.md", ["nowhere"])).rejects.toThrow('no share target "nowhere"');
+        await expect(shareNote("Widgets/Design/Note.md", ["nowhere"])).rejects.toThrow(
+            'unknown publish target "nowhere"'
+        );
     });
 
     test("fails when the note is missing", async () => {

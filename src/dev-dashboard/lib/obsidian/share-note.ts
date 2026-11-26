@@ -40,7 +40,7 @@ export function toVaultRelativePath(input: string, vaultRoot: string): string {
 }
 
 /**
- * Publish a vault note and send it to the share targets `targetNames` picks (none: `share.defaults.target`;
+ * Publish a vault note and send it to the share targets `targetNames` picks (none: the publish default;
  * "all": every target). Each target answers with its link or its error.
  */
 export async function shareNote(

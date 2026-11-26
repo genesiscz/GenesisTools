@@ -5,7 +5,7 @@ import { out } from "@genesiscz/utils/logger";
 
 export interface ShareCommandOptions {
     clipboard: boolean;
-    /** `--target` values; empty is `share.defaults.target`, "all" every target. */
+    /** `--target` values; empty uses the publish default, "all" every target. */
     targets: string[];
 }
 
