@@ -37,6 +37,9 @@ tools artifact build dashboard.tsx     # → dist/dashboard.html, opens from fil
   library. Use it when the user asks "show me the kit components" or what a component looks like.
 - `build --watch` keeps the single-file output fresh on every edit. Single-file builds embed
   ONLY data the entry references — never the surrounding folder.
+- `tools artifact publish report.html --target relay` builds and sends a snapshot to a paired publish server.
+  Republishing the same entry keeps its `/artifact/<id>` link. Use `tools artifact published` to check its sync
+  times, and `tools artifact unpublish <id>` to remove it.
 
 ## Imports that just work (no tsconfig)
 

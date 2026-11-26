@@ -387,8 +387,8 @@ export type DashboardKey = keyof typeof DASHBOARDS;
 export const WEB_SERVICES = {
     "dev-dashboard-share-server": {
         key: "dev-dashboard-share-server",
-        name: "Share Server",
-        description: "Public /share/<slug> pages from note snapshots, on a host without the vault (Bun).",
+        name: "Publish server",
+        description: "Publish server for note snapshots at /md/<id> and artifacts at /artifact/<id>.",
         port: 3044,
         launch: null,
         portOverride: { flag: "--port" },

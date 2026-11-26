@@ -102,6 +102,22 @@ server the first one started, instead of starting another one. The server that `
 - A file over a cap is not embedded, and the build prints a `NOT embedded` warning for it.
 - The build is idempotent: run it again and it overwrites the same output file.
 
+### Publish an artifact
+
+Use a paired publish target set up with `tools dev-dashboard share-server setup --mode client`. The publish
+command builds a self-contained HTML file and sends it as a snapshot. Publishing the same entry again keeps its
+URL and updates the snapshot.
+
+```bash
+tools artifact publish ./report.html --target relay --title "Weekly report"
+```
+
+| Command | What it does |
+|---|---|
+| `publish [target] [-e <entry>] [--target <name>]...` | Build and send. Omit `--target` to use the configured default or pass `--target all`. Use `--no-clipboard` to skip copying the first link and `--json` for the ID and outcome per target. |
+| `published [--json]` | List each publication, its targets and sync times, and whether the entry changed since a sync. |
+| `unpublish <id\|target> [--target <name>]...` | Remove the snapshot from the requested targets, or from all recorded targets by default. |
+
 ### The library and the kit gallery
 
 | Command | What it does |
