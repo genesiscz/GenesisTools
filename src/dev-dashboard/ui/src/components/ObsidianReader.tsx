@@ -7,6 +7,7 @@ import { Copy, Globe, GlobeLock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { ReadingColumn } from "@/components/ReadingColumn";
+import { ShareFreshnessChips } from "@/components/ShareFreshnessChips";
 import { dashboard } from "@/lib/dashboard-client";
 import { useRevealFragment } from "./obsidian-fragment";
 
@@ -88,13 +89,18 @@ export function ObsidianReader({ path }: Props) {
         );
     }
 
-    const shareUrl = data.publishedSlug ? `${window.location.origin}/share/${data.publishedSlug}` : null;
+    // The link to hand out: the default target's when it holds the note, else the first place that does.
+    const primaryShare = data.shares.find((share) => share.isDefault) ?? data.shares[0];
+    const shareUrl = data.publishedSlug ? (primaryShare?.url ?? null) : null;
 
     return (
         <div className="dd-panel flex h-full flex-col overflow-hidden">
             <div className="flex items-center justify-between gap-2 border-b border-[var(--dd-border)] px-3 py-2 text-[11px]">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                     <QaSourceToggle mode={viewMode} onChange={setViewMode} />
+                    {data.shares.length > 0 ? (
+                        <ShareFreshnessChips shares={data.shares} editedAt={data.editedAt} />
+                    ) : null}
                     <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
                 </div>
                 {shareUrl ? (

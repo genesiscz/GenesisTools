@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, jest, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
@@ -213,7 +213,32 @@ describe("GET /share/:slug assets", () => {
         const live = await get({}, "text/html");
         const served = await get({}, "text/html", slug, {}, snapshots);
 
-        expect(served.kind === "raw" && served.body).toBe(live.kind === "raw" ? live.body : "missing");
+        // Only the freshness badge differs: the vault page is live, the snapshot page says when it was synced.
+        const BADGE_RE = /<div class="dd-share-freshness"[^>]*>[\s\S]*?<\/div>/;
+        const liveHtml = live.kind === "raw" ? live.body : "missing";
+        const servedHtml = served.kind === "raw" ? served.body : "";
+        expect(servedHtml.replace(BADGE_RE, "")).toBe(liveHtml.replace(BADGE_RE, ""));
+
+        const mtime = statSync(join(dir, "vault", "Notes/sub/Run.md")).mtime.toISOString();
+        expect(
+            await vault.freshness({ slug, vaultPath: "Notes/sub/Run.md", publishedAt: "", targets: [], syncs: {} })
+        ).toEqual({
+            mode: "live",
+            editedAt: mtime,
+        });
+        const snapshotFreshness = await snapshots.freshness({
+            slug,
+            vaultPath: "Notes/sub/Run.md",
+            publishedAt: "",
+            targets: [],
+            syncs: {},
+        });
+        expect(snapshotFreshness.mode).toBe("snapshot");
+        expect(snapshotFreshness.editedAt).toBe(mtime);
+        expect(Date.parse(snapshotFreshness.syncedAt ?? "")).toBeGreaterThan(0);
+        expect(liveHtml).toContain(`data-mode="live" data-tone="fresh" data-edited="${mtime}"`);
+        expect(servedHtml).toContain('data-mode="snapshot"');
+        expect(servedHtml).toContain(`data-edited="${mtime}"`);
 
         const picture = await get({ asset: sha(PIC) }, "image/*", slug, {}, snapshots);
         expect(picture.kind === "binary" && Buffer.from(picture.body).equals(PIC)).toBe(true);

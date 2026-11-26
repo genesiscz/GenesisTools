@@ -409,8 +409,14 @@ export function shareRoutes(source: ShareSource = vaultShareSource(), options: S
                     });
                     const localAssets =
                         embed || rendered.hasMermaid ? await offlineShareAssets(rendered.hasMermaid) : undefined;
+                    // The badge is extra: a page whose freshness cannot be read still renders, without it.
+                    const freshness = await source.freshness(note).catch((err: unknown) => {
+                        log.warn({ err, slug }, "share page freshness is not readable");
+                        return undefined;
+                    });
                     const page = renderSharePage({
                         title,
+                        freshness,
                         rendered,
                         source: text,
                         sourcePath: note.vaultPath,

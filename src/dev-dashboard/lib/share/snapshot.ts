@@ -56,6 +56,8 @@ export const ShareSnapshotManifestSchema = z.object({
     vaultPath: z.string(),
     publishedAt: z.string(),
     snapshotAt: z.string(),
+    /** The note file's mtime when the snapshot was taken. Optional, so a server older than this field still reads it. */
+    sourceModifiedAt: z.string().optional(),
     noteFile: z.string().regex(NOTE_FILE_RE),
     /** Published notes this note links to, when the snapshot was taken. */
     links: z.array(z.object({ slug: z.string().regex(SHARE_SLUG_RE), vaultPath: z.string() })),
@@ -192,6 +194,7 @@ export async function writeShareSnapshot(options: {
         vaultPath: note.vaultPath,
         publishedAt: note.publishedAt,
         snapshotAt: new Date().toISOString(),
+        sourceModifiedAt: (await source.freshness(note)).editedAt,
         noteFile,
         links: published
             .filter((other) => other.slug !== note.slug && linkedPaths.has(other.vaultPath))
@@ -261,7 +264,13 @@ export async function readSnapshotManifest(dir: string): Promise<ShareSnapshotMa
 
 /** A published note as the snapshot records it. */
 function noteOf(manifest: ShareSnapshotManifest): PublishedNote {
-    return { slug: manifest.slug, vaultPath: manifest.vaultPath, publishedAt: manifest.publishedAt, targets: [] };
+    return {
+        slug: manifest.slug,
+        vaultPath: manifest.vaultPath,
+        publishedAt: manifest.publishedAt,
+        targets: [],
+        syncs: {},
+    };
 }
 
 /**
@@ -349,6 +358,11 @@ export function snapshotShareSource(options: { dataDir: string; publicOrigin: st
             }
 
             return readFile(path);
+        },
+        freshness: async (note) => {
+            const manifest = await loadOrThrow(note.slug);
+
+            return { mode: "snapshot", syncedAt: manifest.snapshotAt, editedAt: manifest.sourceModifiedAt };
         },
         publicOrigin: async () => publicOrigin,
     };

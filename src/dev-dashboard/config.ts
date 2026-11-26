@@ -35,6 +35,8 @@ const PublishedNoteSchema = z.object({
     publishedAt: z.string(),
     /** The share targets this note was sent to (`share.targets` names); the Mac's own page serves every note. */
     targets: z.array(z.string()).default([]),
+    /** The last successful send to each target, by target name (the badge and the reader chips read it). */
+    syncs: z.record(z.string(), z.object({ syncedAt: z.string(), sourceModifiedAt: z.string() })).default({}),
 });
 
 const TtydSessionSchema = z.object({

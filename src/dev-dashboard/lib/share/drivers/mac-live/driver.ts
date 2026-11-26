@@ -18,6 +18,7 @@ const { log } = logger.scoped("share-mac-live");
 export const macLiveDriver: ShareDriver = {
     kind: "mac-live",
     summary: "this Mac's dashboard serves the page live from the vault (needs the Mac on)",
+    live: true,
     pageUrl: async (target, slug) => {
         const { publicBase } = targetOf(target, "mac-live");
 

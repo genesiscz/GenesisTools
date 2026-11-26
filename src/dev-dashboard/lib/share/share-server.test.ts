@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SHARE_DRIVERS } from "@app/dev-dashboard/lib/share/drivers";
 import { ShareConfigSchema, ShareTargetSchema } from "@app/dev-dashboard/lib/share/drivers/options";
 import { createPairedDriver } from "@app/dev-dashboard/lib/share/drivers/paired/driver";
+import { formatAgo, freshnessTone, isEditedAfterSync } from "@app/dev-dashboard/lib/share/freshness";
 import { ADMIN_API, SHARE_API } from "@app/dev-dashboard/lib/share/server/api";
 import {
     createShareServerContext,
@@ -69,6 +70,31 @@ function snapshotZip(
 
     return zip(entries.filter((entry) => entry.name !== options.skip));
 }
+
+describe("share freshness", () => {
+    const at = (iso: string) => Date.parse(iso);
+
+    test("the colour follows the age: green under an hour, blue under a day, amber under a week, grey after", () => {
+        expect(freshnessTone(59 * 60_000)).toBe("fresh");
+        expect(freshnessTone(2 * 3_600_000)).toBe("recent");
+        expect(freshnessTone(3 * 86_400_000)).toBe("aging");
+        expect(freshnessTone(8 * 86_400_000)).toBe("stale");
+        expect(formatAgo(30_000)).toBe("just now");
+        expect(formatAgo(5 * 60_000)).toBe("5 min ago");
+        expect(formatAgo(86_400_000)).toBe("1 day ago");
+        expect(formatAgo(21 * 86_400_000)).toBe("3 weeks ago");
+        expect(at("2026-01-01T00:00:00Z")).toBeGreaterThan(0);
+    });
+
+    test("a note is stale on a target only when it was edited after the version that target holds", () => {
+        const sync = { syncedAt: "2026-01-02T10:00:00Z", sourceModifiedAt: "2026-01-02T09:00:00Z" };
+
+        expect(isEditedAfterSync("2026-01-02T09:00:00.400Z", sync)).toBe(false);
+        expect(isEditedAfterSync("2026-01-02T09:30:00Z", sync)).toBe(true);
+        expect(isEditedAfterSync(undefined, sync)).toBe(false);
+        expect(isEditedAfterSync("2026-01-02T09:30:00Z", undefined)).toBe(false);
+    });
+});
 
 describe("share drivers", () => {
     test("every driver kind the target schema knows has a driver of that kind", () => {

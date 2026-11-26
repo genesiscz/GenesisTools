@@ -157,7 +157,7 @@ describe("dev-dashboard config that exists but cannot be used", () => {
 
         const saved = SafeJSON.parse(readFileSync(configPath, "utf8"), { strict: true });
         expect(saved.auth.passwordHash).toBe(AUTH.passwordHash);
-        expect(saved.publishedNotes).toEqual(NOTES.map((note) => ({ ...note, targets: [] })));
+        expect(saved.publishedNotes).toEqual(NOTES.map((note) => ({ ...note, targets: [], syncs: {} })));
         expect(saved.ttydSessions).toHaveLength(1);
 
         if (process.platform !== "win32") {

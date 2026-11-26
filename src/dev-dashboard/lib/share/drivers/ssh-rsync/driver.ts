@@ -57,6 +57,7 @@ function rsync(from: string, host: string, to: string): Promise<string> {
 export const sshRsyncDriver: ShareDriver = {
     kind: "ssh-rsync",
     summary: "rsync each snapshot over ssh into the data folder of a share server you can ssh to",
+    live: false,
     pageUrl: async (target, slug) => pageUrlUnder(targetOf(target, "ssh-rsync").publicBase, slug),
     sync: async (target, note) => {
         const { host, dataDir } = targetOf(target, "ssh-rsync");

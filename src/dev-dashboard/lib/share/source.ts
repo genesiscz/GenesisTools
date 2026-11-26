@@ -1,5 +1,6 @@
 import type { PublishedNote } from "@app/dev-dashboard/config";
 import type { ShareAssetIndex, ShareAssetReader } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import type { ShareFreshness } from "@app/dev-dashboard/lib/share/freshness";
 
 /**
  * Every read the public share page makes. The Mac reads the Obsidian vault live (`vaultShareSource`), the share
@@ -16,6 +17,8 @@ export interface ShareSource {
     /** Forget a cached index, because one of its assets no longer reads under its hash. */
     forgetAssetIndex(slug: string): void;
     assetReader(note: PublishedNote): Promise<ShareAssetReader>;
+    /** How fresh the page is: live from the vault (the file's mtime), or a snapshot (when it was taken). */
+    freshness(note: PublishedNote): Promise<ShareFreshness>;
     /** The origin a saved (offline) copy of the page links other shared notes to: `https://host`, no path. */
     publicOrigin(): Promise<string>;
 }
