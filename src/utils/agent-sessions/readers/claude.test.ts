@@ -18,7 +18,17 @@ import { claudeHistoryReader, grokHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
+import {
+    appendClaudeCodeModePin,
+    checkCodeModePair,
+    claudeCodeModePin,
+    copySourceOf,
+    writeSessionCopy,
+} from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
+import { claudeSessionHolders } from "./claude-peer";
+import { claudeResumeModel } from "./claude-tail-usage";
+import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
 import { SESSION_MODEL_FIRST_TAIL_BYTES, SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const MAIN_ID = "11111111-2222-4333-8444-555555555555";
@@ -995,4 +1005,178 @@ test("readToolCalls: a transcript that shrank is read from its start, its first 
     const after = claudeHistoryReader.readToolCalls(file, before.offset);
     expect(after.supported && after.calls.map((call) => call.input)).toEqual([{ file_path: "src/d.ts" }]);
     expect(after.supported && after.offset).toBe(readFileSync(file).length);
+});
+
+const FORK_SOURCE = "aaaaaaaa-1111-4222-8333-444444444444";
+const FORK_ID = "bbbbbbbb-1111-4222-8333-444444444444";
+const OTHER_SESSION = "cccccccc-1111-4222-8333-444444444444";
+
+test("moving a session into Code Mode: the session keeps its id and gets the pin, a copy keeps the rest", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-fork-"));
+    const sourcePath = join(directory, `${FORK_SOURCE}.jsonl`);
+    const copyPath = join(directory, `${FORK_ID}.jsonl`);
+    const rows = [
+        { type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } },
+        // A JSON string carries U+2028 raw; node:readline ended the line there and broke the row (2026-11-23).
+        { type: "user", sessionId: FORK_SOURCE, message: { content: "first line\u2028second line" } },
+        { type: "repl-mode", replMode: false, sessionId: FORK_SOURCE },
+        { type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE },
+        { type: "agent-name", agentName: "Invoice rounding", sessionId: FORK_SOURCE },
+        { type: "ai-title", aiTitle: "Invoice fix", sessionId: FORK_SOURCE },
+        { type: "user", sessionId: OTHER_SESSION, message: { content: "a teammate row" } },
+    ];
+    writeFileSync(sourcePath, `${rows.map((row) => SafeJSON.stringify(row, { strict: true })).join("\n")}\nnot json`);
+
+    expect(claudeCodeModePin(sourcePath)).toBe(false);
+    expect(lastClaudeAiTitleIn(sourcePath)).toBe("Invoice fix");
+
+    const scan = await writeSessionCopy({
+        sourceId: FORK_SOURCE,
+        copyId: FORK_ID,
+        sourcePath,
+        copyPath,
+        title: "Invoice rounding-without-codemode",
+    });
+    appendClaudeCodeModePin(sourcePath, FORK_SOURCE);
+
+    const copyLines = readFileSync(copyPath, "utf8").trimEnd().split("\n");
+    const parsed = copyLines
+        .filter((line) => line !== "not json")
+        .map((line) => SafeJSON.parse(line, { strict: true }));
+    expect(scan).toEqual({ rows: 5, droppedPins: 1, droppedTitles: 2, unreadableRows: 1, cwd: "/work/shop" });
+    expect(copyLines).toContain("not json");
+    expect(parsed.filter((row) => row.sessionId === FORK_SOURCE)).toEqual([]);
+    expect(parsed.filter((row) => row.sessionId === OTHER_SESSION)).toHaveLength(1);
+    expect(parsed.some((row) => row.message?.content === "first line\u2028second line")).toBe(true);
+    expect(parsed.filter((row) => row.type === "repl-mode")).toEqual([]);
+    expect(claudeCodeModePin(copyPath)).toBeNull();
+    expect(parsed.filter((row) => row.type === "agent-name")).toEqual([
+        { type: "agent-name", agentName: "Invoice rounding-without-codemode", sessionId: FORK_ID },
+    ]);
+    expect(lastClaudeTitleIn(copyPath)).toBe("Invoice rounding-without-codemode");
+
+    expect(claudeCodeModePin(sourcePath)).toBe(true);
+    expect(lastClaudeTitleIn(sourcePath)).toBe("Invoice rounding");
+    expect(readFileSync(sourcePath, "utf8").split("\n").slice(-3)).toEqual([
+        "not json",
+        `{"type":"repl-mode","replMode":true,"sessionId":"${FORK_SOURCE}"}`,
+        "",
+    ]);
+
+    appendClaudeTitle(sourcePath, FORK_SOURCE, "Invoice totals");
+    expect(readFileSync(sourcePath, "utf8").split("\n").slice(-3, -1)).toEqual([
+        `{"type":"custom-title","customTitle":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
+        `{"type":"agent-name","agentName":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
+    ]);
+});
+
+test("the pair check passes a clean move and fails a changed row and REPL in the copy", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-pair-"));
+    const sessionPath = join(directory, `${FORK_SOURCE}.jsonl`);
+    const copyPath = join(directory, `${FORK_ID}.jsonl`);
+    const line = (row: object) => SafeJSON.stringify(row, { strict: true });
+    const tool = (name: string) => ({
+        type: "assistant",
+        sessionId: FORK_SOURCE,
+        message: { content: [{ type: "tool_use", name, input: {} }] },
+    });
+    writeFileSync(
+        sessionPath,
+        `${[
+            line({ type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } }),
+            line({ type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE }),
+            line({ type: "agent-name", agentName: "Invoice rounding", sessionId: FORK_SOURCE }),
+            line(tool("Read")),
+        ].join("\n")}\n`
+    );
+    await writeSessionCopy({
+        sourceId: FORK_SOURCE,
+        copyId: FORK_ID,
+        sourcePath: sessionPath,
+        copyPath,
+        title: "Invoice rounding-without-codemode",
+    });
+    appendClaudeCodeModePin(sessionPath, FORK_SOURCE);
+    appendFileSync(sessionPath, `${line(tool("REPL"))}\n`);
+    const ids = { sourceId: FORK_SOURCE, copyId: FORK_ID };
+    const run = async () =>
+        Object.fromEntries(
+            (await checkCodeModePair({ ids, sessionPath, copyPath, suffix: "-without-codemode" })).map((c) => [
+                c.name,
+                c.status,
+            ])
+        );
+
+    expect(await copySourceOf(copyPath, FORK_ID)).toBe(FORK_SOURCE);
+    expect(await run()).toEqual({
+        "copy names the session": "ok",
+        "conversation copied whole": "ok",
+        "session has the Code Mode marker": "ok",
+        "copy has no Code Mode marker": "ok",
+        "session name": "ok",
+        "copy name": "ok",
+        "session runs in Code Mode": "ok",
+        "copy runs without Code Mode": "info",
+        "API errors after the move": "ok",
+    });
+
+    appendFileSync(copyPath, `${line({ ...tool("REPL"), sessionId: FORK_ID })}\n`);
+    expect((await run())["copy runs without Code Mode"]).toBe("fail");
+
+    writeFileSync(copyPath, readFileSync(copyPath, "utf8").replace("fix the invoice", "fix the receipt"));
+    expect((await run())["conversation copied whole"]).toBe("fail");
+});
+
+test("a session's holders are only the running processes its registry files were written for", () => {
+    const registryDir = mkdtempSync(join(tmpdir(), "gt-claude-registry-"));
+    const procStart = "Mon Nov 23 11:27:09 2026";
+    const startSec = Date.parse(`${procStart} UTC`) / 1000;
+    const file = (pid: number, sessionId: string) =>
+        writeFileSync(
+            join(registryDir, `${pid}.json`),
+            SafeJSON.stringify({ pid, sessionId, procStart }, { strict: true })
+        );
+    file(111, FORK_SOURCE);
+    file(222, FORK_SOURCE);
+    file(333, OTHER_SESSION);
+    file(444, FORK_SOURCE);
+    writeFileSync(join(registryDir, "111.d3ce7c.key"), "");
+
+    const processes = new Map([
+        [111, { pid: 111, startSec }],
+        [333, { pid: 333, startSec }],
+        [444, { pid: 444, startSec: startSec + 3_600 }],
+    ]);
+    const processOf = (pid: number) => processes.get(pid) ?? null;
+
+    expect(claudeSessionHolders(FORK_SOURCE, { registryDir, processOf })).toEqual([111]);
+    expect(claudeSessionHolders(OTHER_SESSION, { registryDir, processOf })).toEqual([333]);
+    expect(claudeSessionHolders(FORK_SOURCE, { registryDir: join(registryDir, "missing"), processOf })).toEqual([]);
+});
+
+test("a resume keeps the last real turn's model, with [1m] when that turn read more than 200k tokens", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-resume-model-"));
+    const transcript = (name: string, rows: object[]) => {
+        const path = join(directory, name);
+        writeFileSync(path, `${rows.map((row) => SafeJSON.stringify(row, { strict: true })).join("\n")}\n`);
+        return path;
+    };
+    const turn = (model: string, cacheRead: number) => ({
+        type: "assistant",
+        message: {
+            model,
+            usage: { input_tokens: 5, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 100 },
+        },
+    });
+    const notice = { type: "assistant", message: { model: "<synthetic>", usage: { input_tokens: 0 } } };
+
+    expect(claudeResumeModel(transcript("big.jsonl", [turn("claude-opus-5-5", 250_000), notice]))).toBe(
+        "claude-opus-5-5[1m]"
+    );
+    expect(
+        claudeResumeModel(
+            transcript("small.jsonl", [turn("claude-opus-5-5", 250_000), turn("claude-haiku-5-5", 40_000)])
+        )
+    ).toBe("claude-haiku-5-5");
+    expect(claudeResumeModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
 });

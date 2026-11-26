@@ -60,7 +60,7 @@ import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
-import { commandDirs, namedArguments } from "./command-paths";
+import { commandDirs, namedArguments, programDirs, workDirs } from "./command-paths";
 import { writeFullDiff } from "./full";
 import { activeSessions, covers, fileTimesOf, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
@@ -712,6 +712,88 @@ describe("a command that edits a sibling repository", () => {
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(join(other, "sibling.ts"));
         expect(decision.message).toContain("TWO-IN-SIBLING");
+    });
+
+    // Session a1523c66, 2026-11-24: from a cwd in one checkout, `fable-replace … --cwd <second checkout>` and then
+    // `bun renames.ts '<second checkout>' …` edited the second one, and the hook watched only the first.
+    it("finds the repository the command hands a program through a folder flag", () => {
+        const current = begin({ command: `bun /opt/none/edit.ts --spec /opt/none/a.frspec --cwd '${other}' --quiet` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-CWD-FLAG\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-CWD-FLAG");
+    });
+
+    it("finds the repository a script runner gets as its top folder", () => {
+        const current = begin({ command: `bun '/opt/none/renames.ts' '${other}' '[{"from":"A","to":"B"}]'` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-ARGUMENT\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-ARGUMENT");
+    });
+
+    it("finds the repository a script runner gets a folder inside of", () => {
+        mkdirSync(join(other, "packages", "a"), { recursive: true });
+
+        const current = begin({ command: `bun '/opt/none/codemod.ts' '${other}/packages/a'` });
+
+        writeFileSync(join(other, "sibling.ts"), "one\nTWO-VIA-SUBFOLDER\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toEqual([join(other, "sibling.ts")]);
+        expect(stripAnsi(decision.message ?? "")).toContain("+TWO-VIA-SUBFOLDER");
+    });
+
+    it("reads a folder flag or a repository argument as a program folder, and nothing else", () => {
+        const parent = dirname(other);
+        const leaf = basename(other);
+
+        expect(programDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([other]);
+        expect(programDirs(`bun x.ts --cwd='${other}'`, repo)).toEqual([other]);
+        expect(programDirs(`git -C "${other}" apply fix.patch`, repo)).toEqual([other]);
+        expect(programDirs(`make --directory ${other} build`, repo)).toEqual([other]);
+        // A relative value is read from the folder the command is in at that point.
+        expect(programDirs(`cd ${parent} && bun x.ts --cwd ${leaf}`, repo)).toEqual([other]);
+        expect(programDirs(`O=${other}; bun x.ts --cwd "$O"`, repo)).toEqual([other]);
+        // `grep -C 3` names a number; the cwd is no program folder of its own; a file is no top folder.
+        expect(programDirs("grep -C 3 needle kept.ts", repo)).toEqual([]);
+        expect(programDirs(`bun x.ts --cwd ${repo}`, repo)).toEqual([]);
+        expect(programDirs(`bun x.ts ${other}/sibling.ts`, repo)).toEqual([]);
+        // Only a script runner's argument counts, and only a folder inside a repository, as that repository's top.
+        expect(programDirs(`cp -R ${other} /opt/none/copy`, repo)).toEqual([]);
+        expect(programDirs(`bun x.ts ${parent}`, repo)).toEqual([]);
+        mkdirSync(join(other, "packages", "a"), { recursive: true });
+        mkdirSync(join(repo, "out"), { recursive: true });
+        expect(programDirs(`bun x.ts ${other}/packages/a`, repo)).toEqual([other]);
+        expect(programDirs(`cd ${parent} && bun x.ts ${leaf}/packages`, repo)).toEqual([other]);
+        expect(programDirs(`cp -R ${other}/packages/a /opt/none/copy`, repo)).toEqual([]);
+        // A folder inside the repository the command already works in (an output folder) costs no second root.
+        expect(programDirs(`bun x.ts ${repo}/out`, repo)).toEqual([]);
+        expect(programDirs("bun x.ts out", repo)).toEqual([]);
+        // The `cd` folders stay where they were: the shell moves there, no program is handed one.
+        expect(commandDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([repo]);
+        // The pre phase and the post phase read a named path against the same folders.
+        expect(workDirs(`bun x.ts --cwd ${other} src/a.ts`, repo, false)).toEqual([repo, other]);
+        expect(workDirs(`bun x.ts --cwd ${other} src/a.ts`, repo, true)).toEqual([repo]);
+    });
+
+    it("gives a command that only reads no program folder, so `git -C <dir> log` costs no second root", () => {
+        expect(
+            captureRoots({ ...payload(), command: `git -C ${other} log --oneline -3` }, DEFAULT_HOOKS_CONFIG.diff)
+        ).toEqual([repo]);
+        expect(
+            captureRoots({ ...payload(), command: `git -C ${other} apply fix.patch` }, DEFAULT_HOOKS_CONFIG.diff)
+        ).toEqual([repo, other]);
     });
 });
 
@@ -5383,6 +5465,36 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(
             modDrawsDiffs({ config: on, harness: "claude", sessionId: "s-1", isEnabled: (id) => id === "s-1" })
         ).toBe(true);
+        // A code-mode script's shell call is left to the mod only in a session where the mod marked that script calls
+        // draw as rows; the mod sets that mark with its session mark, so it exists from the session's first script on.
+        // Without the mark (a mod older than it) the hook shows its diff (session a1523c66, 2026-11-24: a fable-replace
+        // sweep of 8 files was logged "the full-diff mod draws the diff" and nothing drew it).
+        expect(modDrawsDiffs({ config: on, harness: "claude", toolUseId: "repl_0f3c2a9e-1", isEnabled: yes })).toBe(
+            false
+        );
+        // With the mark, the mod draws it under the script call's own row, folded like a Bash call's (session a1523c66,
+        // 2026-11-25: a fable-replace run in a REPL script printed the hook's text diff under that row).
+        expect(
+            modDrawsDiffs({
+                config: on,
+                harness: "claude",
+                sessionId: "s-1",
+                toolUseId: "repl_0f3c2a9e-1",
+                isEnabled: yes,
+                scriptRows: (id) => id === "s-1",
+            })
+        ).toBe(true);
+        expect(
+            modDrawsDiffs({
+                config: on,
+                harness: "claude",
+                sessionId: "s-2",
+                toolUseId: "repl_0f3c2a9e-1",
+                isEnabled: yes,
+                scriptRows: (id) => id === "s-1",
+            })
+        ).toBe(false);
+        expect(modDrawsDiffs({ config: on, harness: "claude", toolUseId: "toolu_01AbC", isEnabled: yes })).toBe(true);
     });
 
     it("renders a file once when the command names it through another path to the same folder", () => {

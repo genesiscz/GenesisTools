@@ -22,6 +22,8 @@ export interface PinnedAccount {
     name: string;
     label?: string;
     token: string;
+    /** The scopes the server granted `token` (`credentials.longLivedTokenScopes`); absent for a pasted token. */
+    tokenScopes?: string[];
 }
 
 export interface SpawnWorkerOptions {
@@ -206,7 +208,10 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
         // the parent's session.
         const childEnv: Record<string, string | undefined> = {
             ...env.getProcessEnv(),
-            ...pinnedLaunchEnv({ name: account.name, label: account.label }, account.token),
+            ...pinnedLaunchEnv(
+                { name: account.name, label: account.label },
+                { value: account.token, scopes: account.tokenScopes }
+            ),
         };
         if (meta.sourceHome) {
             if (meta.usesDefaultConfig) {

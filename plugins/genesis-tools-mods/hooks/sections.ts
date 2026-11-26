@@ -159,11 +159,124 @@ export async function fromTop(
     await change();
 }
 
-/** `mods.diff.bottomRow` and `mods.diff.filesOnly` of the hooks file: the second button row, and blocks that start folded. */
-export function diffRowSettings(hooksFile: string | undefined): { bottomRow: boolean; filesOnly: boolean } {
-    const { bottomRow, filesOnly } = modsSettings(hooksFile).diff;
+/**
+ * `mods.diff.bottomRow`, `mods.diff.filesOnly` and `mods.diff.foldAfterLines` of the hooks file: the second button
+ * row, blocks that start folded, and the line count past which an open file draws its first lines only.
+ */
+export function diffRowSettings(hooksFile: string | undefined): {
+    bottomRow: boolean;
+    filesOnly: boolean;
+    foldAfterLines: number;
+} {
+    const { bottomRow, filesOnly, foldAfterLines } = modsSettings(hooksFile).diff;
 
-    return { bottomRow, filesOnly };
+    return { bottomRow, filesOnly, foldAfterLines };
+}
+
+/** `@@ -a,b +c,d @@ rest`: a hunk header, its two starts and what follows the second `@@` (git's function context). */
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+
+/** A patch's lines, without the empty one a closing newline leaves. */
+function patchLines(patch: string): string[] {
+    return (patch.endsWith("\n") ? patch.slice(0, -1) : patch).split("\n");
+}
+
+/** The lines a patch's hunks draw: every line under a hunk header but `\ No newline at end of file`. */
+export function diffLines(patch: string): number {
+    let isInHunk = false;
+    let count = 0;
+
+    for (const line of patchLines(patch)) {
+        if (HUNK_HEADER.test(line)) {
+            isInHunk = true;
+        } else if (isInHunk && !line.startsWith("\\")) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+interface OpenHunk {
+    oldStart: string;
+    newStart: string;
+    rest: string;
+    body: string[];
+    oldLines: number;
+    newLines: number;
+}
+
+/**
+ * The first `limit` lines of a patch's hunks (`mods.diff.foldAfterLines`), the cut hunk's header counting only the
+ * lines it keeps: the Code element does not parse a hunk cut mid-way. The whole patch at or under the limit, and
+ * when `limit` is 0.
+ */
+export function foldedPatch(patch: string, limit: number): string {
+    if (limit <= 0 || diffLines(patch) <= limit) {
+        return patch;
+    }
+
+    const out: string[] = [];
+    let kept = 0;
+    let hunk: OpenHunk | undefined;
+    const close = () => {
+        if (hunk && hunk.body.length > 0) {
+            out.push(
+                `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${hunk.rest}`,
+                ...hunk.body
+            );
+        }
+
+        hunk = undefined;
+    };
+
+    for (const line of patchLines(patch)) {
+        const header = HUNK_HEADER.exec(line);
+
+        if (header) {
+            close();
+
+            if (kept >= limit) {
+                break;
+            }
+
+            hunk = {
+                oldStart: header[1] ?? "0",
+                newStart: header[2] ?? "0",
+                rest: header[3] ?? "",
+                body: [],
+                oldLines: 0,
+                newLines: 0,
+            };
+            continue;
+        }
+
+        if (!hunk) {
+            continue;
+        }
+
+        // `\ No newline at end of file` belongs to the line above it, so it stays when that line stays.
+        if (line.startsWith("\\")) {
+            if (hunk.body.length > 0) {
+                hunk.body.push(line);
+            }
+
+            continue;
+        }
+
+        if (kept >= limit) {
+            break;
+        }
+
+        hunk.body.push(line);
+        hunk.oldLines += line.startsWith("+") ? 0 : 1;
+        hunk.newLines += line.startsWith("-") ? 0 : 1;
+        kept += 1;
+    }
+
+    close();
+
+    return out.join("\n");
 }
 
 /** `mods.diff.collapseGitSync` of the hooks file (the flat `mods.collapseGitSync` of before still counts). */

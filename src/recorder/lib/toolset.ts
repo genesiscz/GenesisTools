@@ -84,6 +84,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
+import { applyDisplayOps, displayFramesFolder, readDisplayTimeline } from "./display-ops";
 import { duplicateRecording } from "./duplicate";
 import {
     audioFactsOf,
@@ -104,7 +105,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { withEditSession } from "./edit-session";
-import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
+import { stepDisplaySwitch } from "./frames-movie";
 import {
     cachedScreenText,
     eventsOf,
@@ -271,6 +272,9 @@ const layerAddFields = opParams("layerAdd");
 type LayerAddOptions = Omit<Extract<EditOp, { op: "layerAdd" }>, "op" | "file" | "kind"> & {
     kind?: MediaLayer["kind"];
 };
+
+const displayOpsResult =
+    "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] }, displays: { displays, segments, switches } }";
 
 const movieMethods = [
     defineMethod({
@@ -751,13 +755,46 @@ const movieMethods = [
         effect: "read",
     }),
     defineMethod({
+        name: "displays",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName:
+            "{ policy, displays: { id, name, firstSec, shownSec, segments }[], segments: { from, to, display, name }[], switches: number[] } | null",
+        doc: `A frames recording of several displays (a meeting, a library frames recording): which display its proxy movie shows when, in SOURCE seconds. displays: every display with frames (firstSec its first frame, shownSec how long the movie shows it); segments: the movie from start to end, one display each; switches: where the picture changes display. null for a recording with one display or no proxy yet. The same as ${toolCommand("recorder displays")} <rec>; the editor draws each display as its own row with these segments and switch lines.`,
+        effect: "read",
+    }),
+    defineMethod({
         name: "switchDisplay",
         params: z
             .object({ from: sourceTimeSchema, to: sourceTimeSchema, display: z.number().int().nonnegative() })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
-        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane. undoDisplaySwitch() takes it back.`,
+        resultName: displayOpsResult,
+        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The answer's displays is the new timeline, as displays() gives it. The same as the op {"op":"switchDisplay","display":2,"from":10,"to":20} in ${toolCommand("recorder apply")}, ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display rows. undoDisplaySwitch() takes it back.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "hideDisplay",
+        params: z
+            .object({
+                display: z.number().int().nonnegative(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
+            })
+            .strict(),
+        positional: ["display", "from", "to"],
+        result: z.unknown(),
+        resultName: displayOpsResult,
+        doc: `Clips a display out of a frames recording's proxy movie: wherever \`display\` shows between \`from\` and \`to\` (source seconds; both absent: the whole recording), the display shown next to that segment shows instead (before it, else after it, else any other display with frames). Refused when no other display has frames there. The same as the op {"op":"hideDisplay","display":2,"from":10,"to":20} in ${toolCommand("recorder apply")}, and "Hide … Here" on a display's row in the editor. undoDisplaySwitch() takes it back.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "moveDisplaySwitch",
+        params: z.object({ at: sourceTimeSchema, to: sourceTimeSchema }).strict(),
+        positional: ["at", "to"],
+        result: z.unknown(),
+        resultName: displayOpsResult,
+        doc: `Moves the switch between two displays that is at \`at\` (source seconds, within 0.5 s; displays().switches lists them) to \`to\`: the display before it shows longer, or the one after it starts earlier. The same as the op {"op":"moveDisplaySwitch","at":10,"to":12.5} in ${toolCommand("recorder apply")}, and a drag of a switch line in the editor. undoDisplaySwitch() takes it back.`,
         effect: "reversible",
     }),
     defineMethod({
@@ -1274,7 +1311,7 @@ export const moviesApi = defineApi({
             params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, keepOverlays (keep screen dimmers such as HazeOver, left out by default), camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows. It starts at once unless countdown is given (true is 3 s), and a red border marks what it records unless indicator is false. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer and the focus from display to display; display: "follow" says so explicitly, as --display follow does), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, keepOverlays (keep screen dimmers such as HazeOver, left out by default), camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows. It starts at once unless countdown is given (true is 3 s), and a red border marks what it records unless indicator is false. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
             effect: "reversible",
             reaches: ["user"],
         }),
@@ -1305,7 +1342,7 @@ export const moviesApi = defineApi({
             positional: ["path", "options"],
             result: z.unknown(),
             resultName: "Movie",
-            doc: `Makes a library recording of a movie file that exists already (a render, an export, a movie from another app: .mp4, .m4v or .mov) and returns it as a Movie to edit, as open() does: info() gives its title and folder, the folder's name is its library id. The library gets an APFS clone of the file where the disk can make one (no extra disk), else a whole copy; the file stays as it is. It is titled options.title or the file's name. options.markers ([{ at: SourceTime, label }]) are moments of the movie as it plays: movie.markers() lists them and the editor shows them; a marker outside the movie is refused. A movie with sound keeps it (the editor plays, exports and transcribes it). A file the editor does not play is refused with the reason (and a way to convert it where ffmpeg has one), and nothing is made: another extension, a video codec AVFoundation does not decode (vp9, or HEVC tagged hev1), HDR, a turn that is not a quarter turn, and a movie over the editor's limits. ${toolCommand("recorder trash")} <id> removes the recording again.`,
+            doc: `Makes a library recording of a movie file that exists already (a render, an export, a movie from another app: .mp4, .m4v or .mov) and returns it as a Movie to edit, as open() does: info() gives its title and folder, the folder's name is its library id. The library gets an APFS clone of the file where the disk can make one (no extra disk), else a whole copy; the file stays as it is. It is titled options.title or the file's name. options.markers ([{ at: SourceTime, label }]) are moments of the movie as it plays: movie.markers() lists them and the editor shows them; a marker outside the movie is refused. A movie with sound keeps it (the editor plays, exports and transcribes it). An HDR movie (PQ or HLG, such as an iPhone's HDR video; HDR is a wider range of brightness, not more pixels) is taken as it is, and the turn's text says so: the editor plays it, an H.264 export of it is SDR (AVFoundation maps the tones) and an HEVC export (the exportSettings op, codec "hevc") keeps HDR. A file the editor does not play is refused with the reason (and a way to convert it where ffmpeg has one), and nothing is made: another extension, a video codec AVFoundation does not decode (vp9, or HEVC tagged hev1), a turn that is not a quarter turn, and a movie over the editor's limits. ${toolCommand("recorder trash")} <id> removes the recording again.`,
             effect: "reversible",
         }),
     ],
@@ -2277,7 +2314,8 @@ export class Movie {
             throw new Error(answer.error ?? "the export failed without a reason");
         }
 
-        const info = await probeVideo({ input: answer.path });
+        // An HEVC export of an HDR movie is HDR itself.
+        const info = await probeVideo({ input: answer.path, hdr: "allow" });
         // outputSeconds is the movie as info() names it (without its cards, or the part asked); exportSeconds is the
         // file's own length, intro and end cards included (a part has none).
         const movieUs = outputDurationUs(opened.project);
@@ -2664,14 +2702,20 @@ export class Movie {
         );
     }
 
-    async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
-        const folder = await this.framesFolder("switch between");
+    async displays() {
+        return readDisplayTimeline(await this.framesFolder("read")) ?? null;
+    }
 
-        return switchDisplay(folder, {
-            fromUs: timeToUs(input.from),
-            toUs: timeToUs(input.to),
-            displayId: input.display,
-        });
+    async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
+        return applyDisplayOps(await this.framesFolder("switch between"), [{ op: "switchDisplay", ...input }]);
+    }
+
+    async hideDisplay(display: number, from?: z.infer<typeof timeSchema>, to?: z.infer<typeof timeSchema>) {
+        return applyDisplayOps(await this.framesFolder("hide"), [{ op: "hideDisplay", display, from, to }]);
+    }
+
+    async moveDisplaySwitch(at: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return applyDisplayOps(await this.framesFolder("move a switch of"), [{ op: "moveDisplaySwitch", at, to }]);
     }
 
     async undoDisplaySwitch() {
@@ -2683,24 +2727,8 @@ export class Movie {
     }
 
     /** The frames folder of this recording; a plain movie has no displays to switch. */
-    private async framesFolder(doing: string): Promise<string> {
-        const opened = await openProject(this.recording);
-        const folder = recordingFolderOf(opened);
-
-        if (!folder) {
-            throw new Error(
-                `${opened.project.source.video} is a plain movie: it has no displays, so nothing to ${doing}`
-            );
-        }
-
-        // A video recording has a folder but no frames, and the error was "has no frames to make a movie of" (NR35).
-        if (readRecordingManifest(folder)?.settings?.kind === "video") {
-            throw new Error(
-                `this is a video recording: it has no display frames to ${doing}; only a frames recording (a meeting or a library frames recording) has them`
-            );
-        }
-
-        return folder;
+    private framesFolder(doing: string): Promise<string> {
+        return displayFramesFolder(this.recording, doing);
     }
 
     async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHitWithOps[]> {
@@ -3261,6 +3289,13 @@ export class MoviesToolset extends ReplToolset {
                 // The recording the import made, as open() gives it: the next call is an edit.
                 import: async (path: string, options: ImportMovieOptions = {}) => {
                     const imported = await importMovie(path, options);
+
+                    if (imported.hdr) {
+                        ctx.write(
+                            `The movie is HDR (${imported.hdr}), taken as it is: an H.264 export of it is SDR, an HEVC export keeps HDR.`
+                        );
+                    }
+
                     return recordingMovie(imported.folder, ctx);
                 },
                 search: (text: string) => searchLibrary(text),

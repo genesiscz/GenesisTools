@@ -8,6 +8,7 @@ import { appendEntry } from "./log-store";
 import { insertForm, listFormsSnapshot, openPendingStore } from "./pending/store";
 import {
     getEntryById,
+    getEntryByIdSnapshot,
     getStoredEntryById,
     markEntriesRead,
     markEntriesUnread,
@@ -370,6 +371,23 @@ it("the newest unread entry joins the window when newer read entries pushed it o
         ).toEqual(["old-unread", "n1", "n2", "n3"]);
     } finally {
         db.close();
+    }
+});
+
+it("one entry by id reads an entry that is still only in today's log file, and writes no store", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-snapshot-by-id-"));
+    const dbPath = join(root, "qa.db");
+    const logBase = join(root, "log");
+    appendEntry(e("first", { ts: 1_779_000_000_000 }), logBase);
+    try {
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase } }).map((row) => row.id)).toEqual(["first"]);
+        appendEntry(e("just-sent", { ts: 1_779_000_010_000 }), logBase);
+        const before = directoryBytes(root);
+        expect(getEntryByIdSnapshot({ dbPath, id: "just-sent", logBase })?.id).toBe("just-sent");
+        expect(getEntryByIdSnapshot({ dbPath, id: "never-sent", logBase })).toBeNull();
+        expect(directoryBytes(root)).toEqual(before);
+    } finally {
+        clearDatabaseReadSnapshots();
     }
 });
 

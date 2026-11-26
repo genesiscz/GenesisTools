@@ -2,7 +2,26 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { runShare } from "@app/dev-dashboard/commands/share";
+import { resolveShareTargetFlags, runShare, runShareSync, runUnshare } from "@app/dev-dashboard/commands/share";
+import { runShareAutoSync } from "@app/dev-dashboard/commands/share-auto-sync";
+import {
+    runShareServerAudit,
+    runShareServerDevices,
+    runShareServerPair,
+    runShareServerServe,
+    runShareServerService,
+    runShareServerSetup,
+    runShareServerStatus,
+    runShareServerTunnel,
+    runShareServerUnit,
+    SHARE_SERVER_PORT,
+} from "@app/dev-dashboard/commands/share-server";
+import {
+    runTargetAdd,
+    runTargetDefault,
+    runTargetList,
+    runTargetRemove,
+} from "@app/dev-dashboard/commands/share-target";
 import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
@@ -15,6 +34,8 @@ import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
 import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { isInteractive, runTool } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { stopUiServerOnPort } from "@genesiscz/utils/DashboardApp";
 import { openBrowserWhenDashboardEnv } from "@genesiscz/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@genesiscz/utils/DashboardApp/readiness";
@@ -24,7 +45,7 @@ import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
-import { Command } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 
 export async function killChild(child: ChildProcess | Subprocess, opts: { graceMs?: number } = {}): Promise<boolean> {
     return killWithEscalation(child, opts);
@@ -240,14 +261,244 @@ program
         });
     });
 
-program
+const targetOption = (description: string) =>
+    new Option("--target [name]", description)
+        .preset(true)
+        .default([])
+        .argParser((value: string | true, previous: Array<string | true>) => [...previous, value]);
+const portOption = (value: string): number => Number.parseInt(value, 10);
+const minFreeOption = (value: string): number => {
+    const gb = Number(value);
+    if (!value.trim() || !Number.isFinite(gb) || gb < 0 || gb * 1024 ** 3 > Number.MAX_SAFE_INTEGER) {
+        throw new InvalidArgumentError("Enter a non-negative number of GiB.");
+    }
+
+    return gb;
+};
+
+const AUTO_SYNC_STATES = ["status", "on", "off"] as const;
+
+function isAutoSyncState(value: string): value is (typeof AUTO_SYNC_STATES)[number] {
+    return (AUTO_SYNC_STATES as readonly string[]).includes(value);
+}
+
+const share = program
     .command("share")
-    .description("Publish an Obsidian note to /share/<slug> (same as the UI publish button) and copy the public URL")
+    .description("Publish an Obsidian note to /share/<slug> on your share targets and copy the link")
     .argument("<path>", "Vault-relative or absolute path to a .md note")
+    .addOption(targetOption('share target (repeatable, or "all"); uses the configured default when omitted'))
     .option("--no-clipboard", "Print the URL without copying it")
-    .action(async (path: string, opts: { clipboard?: boolean }) => {
-        await runShare(path, { clipboard: opts.clipboard !== false });
+    .action(async (path: string, opts: { clipboard?: boolean; target: Array<string | true> }) => {
+        const targets = await resolveShareTargetFlags(opts.target, ["share", path]);
+        if (targets) {
+            await runShare(path, { clipboard: opts.clipboard !== false, targets });
+        }
     });
+
+share
+    .command("sync")
+    .description("Send published notes to their targets again (after an edit, or a target that was offline)")
+    .argument("[notes...]", "notes (vault paths) or slugs")
+    .option("--all", "every published note")
+    .addOption(targetOption('send to this target instead (repeatable, or "all")'))
+    .option("--prune", "also remove snapshots a target holds for notes no longer shared there")
+    .option("--changed", "only notes edited since their last sync (what auto-sync runs)")
+    .action(
+        async (
+            notes: string[],
+            opts: { all?: boolean; target: Array<string | true>; prune?: boolean; changed?: boolean }
+        ) => {
+            const targets = await resolveShareTargetFlags(shareTargets(opts.target), [
+                "share",
+                "sync",
+                ...notes,
+                ...(opts.all ? ["--all"] : []),
+                ...(opts.prune ? ["--prune"] : []),
+                ...(opts.changed ? ["--changed"] : []),
+            ]);
+            if (targets) {
+                await runShareSync(notes, {
+                    all: opts.all === true,
+                    targets,
+                    prune: opts.prune === true,
+                    changed: opts.changed === true,
+                });
+            }
+        }
+    );
+
+share
+    .command("auto-sync")
+    .description("Send published notes edited since their last sync every N minutes, through a tools daemon task")
+    .argument("[state]", "on, off or status (default: status)")
+    .option("--every <minutes>", "how often, in minutes (default 10)", (value) => Number.parseInt(value, 10))
+    .action(async (state: string | undefined, opts: { every?: number }) => {
+        const picked = await pickEnumFlag({
+            tool: toolCommand("dev-dashboard", "share auto-sync"),
+            subcommand: ["share", "auto-sync"],
+            flag: "state",
+            given: state,
+            values: AUTO_SYNC_STATES,
+            fallback: "status",
+            accepts: isAutoSyncState,
+        });
+        if (picked) {
+            await runShareAutoSync({ state: picked, everyMinutes: opts.every });
+        }
+    });
+
+share
+    .command("unshare")
+    .description("Take a note off share targets (all of them, and unpublish, when no --target is given)")
+    .argument("<note>", "note (vault path) or slug")
+    .addOption(targetOption("only this target (repeatable)"))
+    .action(async (input: string, opts: { target: Array<string | true> }) => {
+        const targets = await resolveShareTargetFlags(shareTargets(opts.target), ["share", "unshare", input]);
+        if (targets) {
+            await runUnshare(input, { targets });
+        }
+    });
+
+/** Commander can assign a subcommand's --target to share itself. */
+function shareTargets(own: Array<string | true>): Array<string | true> {
+    const parent = share.opts<{ target: Array<string | true> }>().target;
+    return [...new Set([...own, ...parent])];
+}
+
+const shareTarget = share.command("target").description("Manage share targets (where shared notes are served)");
+
+shareTarget
+    .command("add")
+    .description("Add a share target with the driver's guided setup (mac-live, paired, ssh-rsync)")
+    .argument("<name>", "target name, e.g. home or public")
+    .option("--driver [kind]", "mac-live | paired | ssh-rsync")
+    .option("--url <url>", "paired: publish server origin (https://share.example.com)")
+    .option("--code <code>", "paired: the one-time code from `share-server pair`")
+    .option("--device-name <name>", "paired: how the server lists this Mac (default: host name)")
+    .option("--host <user@host>", "ssh-rsync: ssh destination")
+    .option("--data-dir <dir>", "ssh-rsync: snapshot folder on the host")
+    .option("--public-base <url>", "the base of the links people get (https://host/share)")
+    .option("--default", "make it the default target")
+    .action(async (name: string, opts: Record<string, string | boolean | undefined>) => {
+        await runTargetAdd(name, {
+            driver: typeof opts.driver === "string" ? opts.driver : undefined,
+            url: typeof opts.url === "string" ? opts.url : undefined,
+            code: typeof opts.code === "string" ? opts.code : undefined,
+            deviceName: typeof opts.deviceName === "string" ? opts.deviceName : undefined,
+            host: typeof opts.host === "string" ? opts.host : undefined,
+            dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
+            publicBase: typeof opts.publicBase === "string" ? opts.publicBase : undefined,
+            default: opts.default === true,
+        });
+    });
+
+shareTarget.command("list").description("List share targets (* marks the default)").action(runTargetList);
+shareTarget.command("remove").argument("<name>").description("Remove a share target").action(runTargetRemove);
+shareTarget.command("default").argument("<name>").description("Set the default share target").action(runTargetDefault);
+
+const shareServer = program
+    .command("share-server")
+    .description("Serve note and artifact snapshots and manage paired devices");
+
+const serverPaths = (command: Command): Command =>
+    command
+        .option("--data <dir>", "snapshot folder (one <kind>/<id>/ per publication)")
+        .option("--state <dir>", "state folder: paired devices, the admin socket, tunnel configs");
+
+serverPaths(shareServer.command("serve"))
+    .description("Run a configured share server in the foreground")
+    .option("--server <name>", "configured server (defaults to the configured default)")
+    .option("--port <port>", "override the listen port", portOption)
+    .option("--host <host>", "override the bind address")
+    .option("--public-base <url>", "public origin, e.g. https://share.example.com")
+    .option("--min-free-gb <n>", "minimum free disk space in GiB after upload (default: 2)", minFreeOption)
+    .option("--pair", "print a one-time pairing code once it is up")
+    .option("--tunnel <name>", "also run the cloudflared connector set up by `share-server tunnel`")
+    .action(runShareServerServe);
+
+serverPaths(shareServer.command("setup"))
+    .description("Configure a publish server, pair this computer, or do both")
+    .option("--role [role]", "server | client | both")
+    .option("--mode [mode]", "alias for --role")
+    .option("--server <name>", "server name")
+    .option("--target [name]", "client target name or picker")
+    .option("--yes", "use defaults and authorize service installation")
+    .option("--public-origin <url>", "public origin of the server")
+    .option("--public-base <url>", "alias for --public-origin")
+    .option("--port <port>", "listen port", portOption)
+    .option("--host <host>", "listen host")
+    .option("--data-dir <dir>", "snapshot directory")
+    .option("--state-dir <dir>", "device and socket directory")
+    .option("--exposure <kind>", "reverse-proxy | cloudflared | local")
+    .option("--proxy <proxy>", "apache | nginx | caddy | other")
+    .option("--tunnel <name>", "cloudflared tunnel name")
+    .option("--service <manager>", "systemd | launchd | none")
+    .option("--service-user <name>", "systemd service account")
+    .option("--user <name>", "alias for --service-user")
+    .option("--adopt-unit <path>", "adopt an existing flag-based systemd unit")
+    .option("--root <dir>", "GenesisTools checkout", PROJECT_ROOT)
+    .option("--bun <path>", "Bun executable", process.execPath)
+    .option("--pair", "print a pairing code when the server is ready")
+    .option("--url <url>", "client: publish server URL")
+    .option("--code <code>", "client: one-time pairing code")
+    .option("--default", "make the client target the default")
+    .action(runShareServerSetup);
+
+shareServer
+    .command("up")
+    .description("Enable and restart the configured service")
+    .option("--server <name>", "server to restart")
+    .action((opts: { server?: string }) => runShareServerService("up", opts));
+shareServer
+    .command("down")
+    .description("Stop the configured service")
+    .option("--server <name>", "server to stop")
+    .action((opts: { server?: string }) => runShareServerService("down", opts));
+
+serverPaths(shareServer.command("status"))
+    .description("Check servers, disk space and configured client targets")
+    .option("--server <name>", "check this configured server")
+    .option("--port <port>", "override the listen port", portOption)
+    .option("--public-base <url>", "override the public health origin")
+    .option("--min-free-gb <n>", "override the minimum free disk space in GiB", minFreeOption)
+    .option("--json", "print check results as JSON")
+    .action(runShareServerStatus);
+
+shareServer
+    .command("audit")
+    .description("Read publish access records")
+    .option("--server <name>", "read the named server's access log")
+    .option("--client", "read this computer's publishing log")
+    .option("--since <time>", "filter by an ISO time or a duration such as 7d")
+    .option("--device <id>", "filter by device id")
+    .option("--json", "print records as JSON")
+    .action(runShareServerAudit);
+
+serverPaths(shareServer.command("pair"))
+    .description("Print a one-time pairing code (valid for 10 minutes)")
+    .option("--server <name>", "server to pair with")
+    .option("--public-base <url>", "override the origin in the pairing command")
+    .action(runShareServerPair);
+
+serverPaths(shareServer.command("devices"))
+    .description("List server and client devices, or revoke a server device")
+    .option("--server <name>", "server to read or change")
+    .option("--revoke <id>", "revoke a device's upload token")
+    .action(runShareServerDevices);
+
+serverPaths(shareServer.command("tunnel"))
+    .description("Guided Cloudflare tunnel setup, so the share server needs no web server in front")
+    .option("--name <tunnel>", "tunnel name")
+    .option("--hostname <host>", "public host name, e.g. share.example.com")
+    .option("--port <port>", "share server port", portOption, SHARE_SERVER_PORT)
+    .action(runShareServerTunnel);
+
+serverPaths(shareServer.command("unit"))
+    .description("Print the configured server's systemd unit or launchd plist")
+    .option("--server <name>", "configured server")
+    .option("--root <dir>", "GenesisTools checkout", PROJECT_ROOT)
+    .option("--bun <path>", "Bun executable", process.execPath)
+    .action(runShareServerUnit);
 
 const tunnel = program.command("tunnel").description("Manage remote access tunnels");
 

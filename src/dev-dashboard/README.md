@@ -96,9 +96,40 @@ tools dev-dashboard share ~/Notes/Vault/Note.md --no-clipboard
 `share <path>` does the same as the publish and copy buttons in the Obsidian reader. The path is vault-relative or
 absolute, and must stay inside the vault. It also takes a source file that sits beside a report, such as
 `Report.ts`, and keeps its extension. A path that ends in neither `.md` nor a known source extension gets `.md`
-added. `--no-clipboard` prints the URL without copying it. The URL starts with the first entry of `allowedHosts`
-(over https), or `http://localhost:<port>` when there is none. Unpublish a note from the dashboard's Obsidian page
-(`POST /api/obsidian/unpublish`).
+added. `--no-clipboard` prints the URL without copying it. The Mac's live target uses the first configured
+`allowedHosts` entry over HTTPS, or `http://localhost:<port>`. Use `--target <name>` to select another target.
+
+### Publish server
+
+The same server hosts note snapshots under `/md/<id>` and built artifacts under `/artifact/<id>`. Pair each
+computer once. The client saves a vault reference to its token and uses the target name for subsequent sends.
+
+```bash
+# On the server
+tools dev-dashboard share-server setup
+
+# On the computer that publishes, replace ABCD-EFGH with the code from the server
+tools dev-dashboard share-server setup --role client --target relay --url https://share.example.com --code ABCD-EFGH
+tools dev-dashboard share "Notes/Weekly.md" --target relay
+tools dev-dashboard share sync "Notes/Weekly.md" --target relay
+tools dev-dashboard share unshare "Notes/Weekly.md" --target relay
+```
+
+`share target list` shows the targets and marks the default. Use `share target default relay` to select the
+paired server for commands without `--target`. `share sync --all` uses each note's previous targets and sends
+never-sent notes to the default target. `share sync --prune` removes stale server copies. The Mac serves
+live pages under `/share/<id>`.
+
+Setup saves servers and publishing targets together in `~/.genesis-tools/share/config.json`. It can install a
+systemd service on Linux or a launchd agent on macOS. For a reverse proxy it prints the routing snippet and
+checks the origin. `share-server status --json` checks each configured listener, admin socket, snapshot count,
+free space, and target. `share-server up` enables and restarts the selected service, and `share-server down`
+stops it. `share-server serve` runs the default server in the foreground. Use `--server <name>` to select
+another. The serve flags override saved settings, including the 2 GiB default upload reserve.
+`share-server pair` prints a fresh code, and `share-server devices --revoke <id>` revokes an upload token.
+Use `share-server audit --server <name> --since 1d --json` to read server access records and
+`share-server audit --client` to read this computer's publishing records. Each audit file is private to
+the account that runs it. Status also shows the most recent pairing attempt and failed token check when recorded.
 
 ### Remote access and the phone: `tunnel setup`, `pair`, `agent`
 

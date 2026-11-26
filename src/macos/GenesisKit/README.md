@@ -6939,6 +6939,7 @@ See `src/recorder/README.md` for the start options and their CLI flags.
 | `recorder.picker.frontChosenWindow` | `true` | Bring a selected background window forward. |
 | `recorder.picker.focusLoss` | `stayOpen` | Use `close` to close the picker when it loses focus. |
 | `recorder.bar.placement` | `nearTarget` | Use the saved placement from `recording.panelPlacement` if the bar has no setting. |
+| `recorder.bar.look` | `dark` | Use `glass` for the bar's earlier look: the system glass and the app's own control style (Settings → Recorder → Recording bar). |
 | `recorder.bar.expandedByDefault` | `false` | Start with the extra rows closed. |
 | `recorder.bar.startWaitSeconds` | `5` | Show “Still waiting” after this many seconds without a first frame. |
 | `recorder.bar.noticeSeconds` | `4` | Clear a temporary notice after this many seconds. A Stop failure keeps its retry action. |
@@ -10594,7 +10595,7 @@ Methods:
 - `editOutgoing(_ message: WidgetOutgoing)`: takes a queued message back and restores its text and attachments as the draft. It refuses while the current draft holds text or attachments.
 - `ledger(_ card: WidgetCard, state: String)`: sets the ledger state of a decision card. `"drafted"` also stores the draft text.
 - `destination(_ mode: String)`: `"resume"` opens the session through `openDestination`. `"new"` writes a handoff file and passes its path to `openDestination`. Any other mode saves the handoff and opens the file.
-- `openCard(_ card: WidgetCard)`, `markAllRead()`, `openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil)`: open an inbox card, clear the badges, or jump to the newest waiting or unread item.
+- `openCard(_ card: WidgetCard)`, `foldCard(_ card: WidgetCard)`, `markAllRead()`, `openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil)`: open or fold an inbox card (either click marks an unread answer or result read), clear the badges, or jump to the newest waiting or unread item. Opening the panel marks the answer on show read only while `preferences.markReadOn` is `"panel-open"`.
 - `inboxFor(_ key: String) -> WidgetInboxSession?`, `inboxPulseFor(_ key: String) -> Int`: the inbox entry and arrival count of one session.
 - `alertPopup: WidgetAlertPopup`: the alert popup, an observable object of its own: `item` (the alert shown), `queue` (the alerts waiting behind it), `outcome` (what a send from it did) and `many` (listed, one after another, or the newest replaces). Its events return the preview and the module the widget shows for it, and the model applies them at one hand-off. `dismissPeek(all:)` and `showWaitingPeek(_:)` are the actions a view calls.
 - `preferences: WidgetPreferences`: the stored settings on screen; the hub's defaults (`WidgetPreferences.hubDefaults`) until the first snapshot.
@@ -11139,6 +11140,7 @@ The inbox counts the badges show. `WidgetModel.inbox` holds it.
 - `unread: Int`, `needsAnswer: Int`: totals.
 - `complete: Bool`, `truncated: Bool`: whether the counts cover everything. An incomplete summary shows `+`.
 - `sessions: [WidgetInboxSession]`: per session `key`, `unread`, `needsAnswer`, and the items `latest`, `unreadItem`, `pendingItem` (`WidgetInboxItem`: `id`, `sourceId`, `kind`, `key`, `at`, `needsAnswer`).
+- `recentlyRead: [WidgetInboxItem]?`: the answers and messages already read in the last `preferences.previewReadHours` hours, each with `read` set. The hover list's Items view draws them dimmed below the unread entries; no count includes them. Nil from an older hub.
 - `profile: Profile?`: `hostId`.
 - `static let empty`: an empty, incomplete summary.
 

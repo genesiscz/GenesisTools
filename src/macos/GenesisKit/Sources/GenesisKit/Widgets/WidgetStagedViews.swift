@@ -494,51 +494,38 @@ struct WidgetStagedDecisionRow: View {
                 detail.padding(.horizontal, 10).padding(.bottom, 10).transition(.genReveal)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .background(Color.white.opacity(open ? 0.055 : 0), in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .modifier(RowHover())
+        // Every row of this list is staged, so the staged edge would say nothing here.
+        .decisionChrome(waiting: false, staged: false, open: open)
+        .contentShape(RoundedRectangle(cornerRadius: WidgetDecisionChrome.cornerRadius))
+        .modifier(RowHover(cornerRadius: WidgetDecisionChrome.cornerRadius))
     }
 
+    /// The decision on the shared decision body: the card's text when its session is cached, the options and this one
+    /// decision's Send and Unstage under them, and Open in its session as the footer.
     private var detail: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let body = model.card(for: item)?.fullText, !body.isEmpty {
-                WidgetMarkdown(text: body)
-            }
-            if let options = item.options, !options.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                        WidgetItemOptionButton(model: model, item: item, index: index, option: option)
-                    }
-                    // A set's clicks only tick, so this one decision's Send sits under its options too.
-                    if item.takesSeveral {
-                        WidgetSetSendBar(
-                            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-                            recommended: DecisionAnswering.recommendedSet(item.recommended, count: options.count),
-                            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                            identifier: "widget.staged.sendSet." + item.sourceId,
-                            pick: { model.pickSet(item, option: $0) },
-                            send: { model.sendStaged([item.sourceId], known: [item]) })
-                    }
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: model.card(for: item)), surface: .staged,
+            host: WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false),
+            ownAnswer: { EmptyView() },
+            footer: {
+                Button("Open in its session") {
+                    model.stagedLeavePrompt = false
+                    model.openInboxItem(item)
                 }
-            }
-            Button("Open in its session") {
-                model.stagedLeavePrompt = false
-                model.openInboxItem(item)
-            }
-            .buttonStyle(.genHoverPlain()).font(.system(size: 11))
-            .instantTooltip("Opens the decision in its session, with its own answer field")
-        }
+                .buttonStyle(.genHoverPlain()).font(.system(size: 11))
+                .instantTooltip("Opens the decision in its session, with its own answer field")
+            })
     }
 }
 
 /// The soft fill a list row gets under the pointer, for a row made of several buttons.
 private struct RowHover: ViewModifier {
+    var cornerRadius: CGFloat = 8
     @State private var hovered = false
 
     func body(content: Content) -> some View {
         content
-            .background(Color.white.opacity(hovered ? 0.04 : 0), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.white.opacity(hovered ? 0.04 : 0), in: RoundedRectangle(cornerRadius: cornerRadius))
             .onHover { hovered = $0 }
     }
 }

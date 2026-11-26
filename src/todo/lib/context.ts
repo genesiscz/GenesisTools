@@ -1,6 +1,8 @@
 import { hostname } from "node:os";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
+import { createGit, detectOrigin, type StatusSummary } from "@genesiscz/utils/git";
+import { logger } from "@genesiscz/utils/logger";
 import type { GitContext, TodoContext } from "./types";
 
 export { findProjectRoot };
@@ -36,77 +38,57 @@ export function defaultSessionId(value: string | undefined): string | undefined 
     return resolveSessionOption(value) ?? whoIsCallingHere().sessionId ?? undefined;
 }
 
-async function git(args: string[], cwd: string): Promise<string | null> {
-    try {
-        const proc = Bun.spawn(["git", ...args], {
-            cwd,
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-
-        const output = await new Response(proc.stdout).text();
-        const exitCode = await proc.exited;
-
-        if (exitCode !== 0) {
-            return null;
-        }
-
-        return output.trim();
-    } catch {
-        return null;
-    }
-}
-
 async function captureGitContext(cwd: string): Promise<GitContext | undefined> {
-    const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+    const git = createGit({ cwd });
+    let summary: StatusSummary;
 
-    if (branch === null) {
+    try {
+        summary = await git.status();
+    } catch (err) {
+        logger.debug({ err, cwd }, "todo context: no git status here, so the todo records no git context");
         return undefined;
     }
 
-    const [commitSha, commitMessage, remote, statusOutput] = await Promise.all([
-        git(["rev-parse", "HEAD"], cwd),
-        git(["log", "-1", "--format=%s"], cwd),
-        git(["remote", "get-url", "origin"], cwd),
-        git(["status", "--porcelain"], cwd),
+    const { branch } = summary;
+
+    if (!branch) {
+        return undefined;
+    }
+
+    const [commits, origin] = await Promise.all([
+        git.log({ range: "HEAD", limit: 1 }).catch((err: unknown) => {
+            logger.debug({ err, cwd }, "todo context: no commit to read (a branch with no commits yet)");
+            return [];
+        }),
+        detectOrigin(cwd, git.executor),
     ]);
 
     const staged: string[] = [];
     const unstaged: string[] = [];
     const untracked: string[] = [];
 
-    if (statusOutput) {
-        for (const line of statusOutput.split("\n")) {
-            if (!line) {
-                continue;
+    for (const entry of summary.entries) {
+        if (entry.kind === "untracked") {
+            untracked.push(entry.path);
+        } else if (entry.kind !== "ignored") {
+            if (entry.index !== ".") {
+                staged.push(entry.path);
             }
 
-            const x = line[0];
-            const y = line[1];
-            const file = line.slice(3);
-
-            if (x === "?") {
-                untracked.push(file);
-            } else {
-                if (x !== " " && x !== "?") {
-                    staged.push(file);
-                }
-
-                if (y !== " " && y !== "?") {
-                    unstaged.push(file);
-                }
+            if (entry.worktree !== ".") {
+                unstaged.push(entry.path);
             }
         }
     }
 
     return {
-        branch,
-        commitSha: commitSha ?? "",
-        commitMessage: commitMessage ?? "",
+        branch: branch.head === "(detached)" ? "HEAD" : branch.head,
+        commitSha: branch.oid === "(initial)" ? "" : branch.oid,
+        commitMessage: commits[0]?.subject ?? "",
         stagedFiles: staged,
         unstagedFiles: unstaged,
         untrackedFiles: untracked,
-        remote: remote ?? undefined,
+        remote: origin?.url,
     };
 }
 

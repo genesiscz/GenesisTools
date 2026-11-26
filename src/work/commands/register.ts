@@ -11,6 +11,7 @@ import type { FormatFlags } from "@genesiscz/utils/output/formats";
 import { defineFormatter, emit, type Formatter } from "@genesiscz/utils/output/formatter";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { WORK_CLI_POSITIONAL, type WorkMethodName, workApi, workMethods } from "@genesiscz/utils/work/api";
+import { callOptionsOf } from "@genesiscz/utils/work/door";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
 import { type MirrorReport, mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
 import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
@@ -40,6 +41,10 @@ const WRITE_OPTIONS = [
     {
         flags: "--owner-said <words>",
         description: "record the owner's words in the journal",
+    },
+    {
+        flags: "--override <why>",
+        description: "do a write that a role rule refuses; the journal keeps who did it and why",
     },
 ];
 
@@ -98,12 +103,7 @@ export async function runMethod(
         }
     }
 
-    const reply = await callWorkHere(method, params, {
-        ...(typeof extra.requestId === "string" ? { request: extra.requestId } : {}),
-        ...(extra.dryRun === true ? { dryRun: true } : {}),
-        ...(typeof extra.ownerSaid === "string" ? { ownerSaid: extra.ownerSaid } : {}),
-        quiet: false,
-    });
+    const reply = await callWorkHere(method, params, { ...callOptionsOf(extra), quiet: false });
     const formatters = workFormatters({
         ...(typeof params.section === "string" ? { section: params.section } : {}),
         ...(extra.explain === true ? { explain: true } : {}),

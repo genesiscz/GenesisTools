@@ -52,6 +52,7 @@
             "previewView": "sessions",
             "previewFilter": "needs-you",
             "previewSort": "attention",
+            "previewReadHours": 24,
             "alertAnswerSound": "same",
             "alertFlashSeconds": 5,
             "replyNames": "selected-or-newest",
@@ -70,6 +71,7 @@
             "inboxGrouping": "feed",
             "inboxFeedRuns": "session",
             "inboxFeedHeaders": "all",
+            "markReadOn": "click",
             "inboxFilter": "all",
             "overviewFilter": "all",
             "overviewSummary": true,
@@ -282,6 +284,22 @@
                 "draftOption": "ab",
                 "draft": "Start with these two.",
                 "draftedAt": 1767268200000
+            }
+        ],
+        "recentlyRead": [
+            {
+                "id": "answer:qa_message_fixture",
+                "sourceId": "qa_message_fixture",
+                "kind": "answer",
+                "key": "local:claude:fixture-work:",
+                "at": 1767268440000,
+                "needsAnswer": false,
+                "title": "The nightly job finished",
+                "tag": "message",
+                "message": {
+                    "text": "All 12 steps passed."
+                },
+                "read": true
             }
         ],
         "pendingDecisionIDs": [

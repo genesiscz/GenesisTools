@@ -14,8 +14,9 @@ import type { LiteralOp, NthIndexOfParams, Op, RunReport } from "./types";
  *
  * `report` carries the same RunReport a successful `run()` returns, so a catch can read
  * `err.report.files` / `.written` / `.missCount` instead of parsing the message. It is
- * set on the MISS and stale-prose failures, where a report exists; a pre-flight refusal
- * happens before any file is planned, so there it stays undefined.
+ * set on the MISS and stale-prose failures, where a report exists, and on a pre-flight
+ * refusal, which plans no file: there `files` lists each refused file (action "refused",
+ * with its reason) and nothing else.
  */
 export class FableReplaceError extends Error {
     readonly code: 1 | 2 | 3;
@@ -73,17 +74,38 @@ export const preview = (s: string, max = 60): string => {
     return flat.length <= max ? flat : `${flat.slice(0, max)}…`;
 };
 
-export const countOccurrences = (haystack: string, needle: string): number => {
+/** Offsets of every non-overlapping occurrence of `needle`, in order: the walk `countOccurrences` counts. */
+export const occurrenceOffsets = (haystack: string, needle: string): number[] => {
+    const offsets: number[] = [];
     if (needle.length === 0) {
-        return 0;
+        return offsets;
     }
-    let count = 0;
-    let idx = haystack.indexOf(needle);
-    while (idx !== -1) {
-        count += 1;
-        idx = haystack.indexOf(needle, idx + needle.length);
+
+    for (let idx = haystack.indexOf(needle); idx !== -1; idx = haystack.indexOf(needle, idx + needle.length)) {
+        offsets.push(idx);
     }
-    return count;
+
+    return offsets;
+};
+
+export const countOccurrences = (haystack: string, needle: string): number =>
+    occurrenceOffsets(haystack, needle).length;
+
+/** The 1-based line of each offset, in one pass over `content`. The offsets must ascend. */
+export const linesAt = (content: string, offsets: number[]): number[] => {
+    const lines: number[] = [];
+    let line = 1;
+    let newline = content.indexOf("\n");
+    for (const at of offsets) {
+        while (newline !== -1 && newline < at) {
+            line += 1;
+            newline = content.indexOf("\n", newline + 1);
+        }
+
+        lines.push(line);
+    }
+
+    return lines;
 };
 
 /** Offsets where `needle` STARTS a line (offset 0 or right after "\n"), non-overlapping. */
@@ -170,6 +192,10 @@ export const opDesc = (op: Op): string => {
             return `${op.kind} "${preview(op.anchor, 40)}"`;
         case "append":
             return `append "${preview(op.text, 40)}"`;
+        case "rewrite":
+            return op.expectSha256 === undefined
+                ? "rewrite (no expectSha256, dry run)"
+                : `rewrite sha256=${preview(op.expectSha256, 12)}`;
         default:
             return `replace "${preview((op as LiteralOp).find, 48)}"`;
     }

@@ -3903,6 +3903,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -3952,6 +3953,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4032,6 +4034,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4080,6 +4083,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4107,6 +4111,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4144,6 +4149,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4167,6 +4173,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4197,6 +4204,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4257,6 +4265,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4294,6 +4303,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4310,6 +4320,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4336,6 +4347,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4361,6 +4373,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4393,6 +4406,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4453,6 +4467,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4492,6 +4507,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4510,6 +4526,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4538,6 +4555,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4563,6 +4581,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4599,6 +4618,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4674,6 +4694,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4750,6 +4771,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4819,6 +4841,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4837,6 +4860,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4865,6 +4889,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4889,6 +4914,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -4920,6 +4946,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5000,6 +5027,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5078,6 +5106,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5095,6 +5124,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5122,6 +5152,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5146,6 +5177,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5177,6 +5209,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5236,6 +5269,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5274,6 +5308,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5291,6 +5326,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5318,6 +5354,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5343,6 +5380,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5381,6 +5419,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5404,6 +5443,7 @@
               "type": "epic",
               "fields": [],
               "writes": [],
+              "overrides": [],
               "notify": []
             }
           ]
@@ -5457,6 +5497,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5489,6 +5530,16 @@
                 }
               ],
               "writes": [
+                {
+                  "verb": "fixture",
+                  "resolved": {
+                    "value": null,
+                    "from": "fixture",
+                    "layers": []
+                  }
+                }
+              ],
+              "overrides": [
                 {
                   "verb": "fixture",
                   "resolved": {
@@ -5547,6 +5598,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5579,6 +5631,21 @@
                 }
               ],
               "writes": [
+                {
+                  "verb": "fixture",
+                  "resolved": {
+                    "value": null,
+                    "from": "fixture",
+                    "layers": [
+                      {
+                        "layer": "fixture",
+                        "value": null
+                      }
+                    ]
+                  }
+                }
+              ],
+              "overrides": [
                 {
                   "verb": "fixture",
                   "resolved": {
@@ -5648,6 +5715,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5666,6 +5734,7 @@
               "type": "epic",
               "fields": [],
               "writes": [],
+              "overrides": [],
               "notify": [
                 {
                   "action": "spotted",
@@ -5719,6 +5788,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5737,6 +5807,7 @@
               "type": "epic",
               "fields": [],
               "writes": [],
+              "overrides": [],
               "notify": [
                 {
                   "action": "spotted",
@@ -5787,6 +5858,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5805,6 +5877,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5833,6 +5906,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5872,6 +5946,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -5921,6 +5996,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6012,6 +6088,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6082,6 +6159,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6139,6 +6217,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6171,6 +6250,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6213,6 +6293,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6246,6 +6327,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6286,6 +6368,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6354,6 +6437,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6401,6 +6485,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6427,6 +6512,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6463,6 +6549,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6493,6 +6580,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6530,6 +6618,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6595,6 +6684,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6639,6 +6729,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6662,6 +6753,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6695,6 +6787,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6729,6 +6822,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6770,6 +6864,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6839,6 +6934,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6887,6 +6983,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6914,6 +7011,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6951,6 +7049,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -6977,6 +7076,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7010,6 +7110,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7071,6 +7172,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7111,6 +7213,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7130,6 +7233,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7159,6 +7263,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7185,6 +7290,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7218,6 +7324,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7279,6 +7386,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7319,6 +7427,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7338,6 +7447,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7367,6 +7477,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7395,6 +7506,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7430,6 +7542,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7493,6 +7606,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7535,6 +7649,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7556,6 +7671,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7587,6 +7703,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7611,6 +7728,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7642,6 +7760,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7701,6 +7820,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7739,6 +7859,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7756,6 +7877,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7783,6 +7905,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7807,6 +7930,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7838,6 +7962,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7897,6 +8022,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7935,6 +8061,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7952,6 +8079,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -7979,6 +8107,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8005,6 +8134,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8040,6 +8170,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8101,6 +8232,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8141,6 +8273,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8160,6 +8293,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8189,6 +8323,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8216,6 +8351,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8250,6 +8386,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8312,6 +8449,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8353,6 +8491,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8373,6 +8512,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8403,6 +8543,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8428,6 +8569,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8460,6 +8602,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8520,6 +8663,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8559,6 +8703,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8577,6 +8722,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8605,6 +8751,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8632,6 +8779,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8666,6 +8814,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8728,6 +8877,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8769,6 +8919,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8789,6 +8940,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8819,6 +8971,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8845,6 +8998,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8878,6 +9032,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8939,6 +9094,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8979,6 +9135,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -8998,6 +9155,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9027,6 +9185,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9053,6 +9212,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9086,6 +9246,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9147,6 +9308,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9187,6 +9349,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9206,6 +9369,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9235,6 +9399,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9260,6 +9425,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9292,6 +9458,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9352,6 +9519,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9391,6 +9559,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9409,6 +9578,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9437,6 +9607,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9465,6 +9636,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9500,6 +9672,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9563,6 +9736,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9605,6 +9779,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9626,6 +9801,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9657,6 +9833,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9677,10 +9854,15 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9708,10 +9890,17 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [
+        "title"
+      ],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9767,10 +9956,15 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9805,10 +9999,15 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9822,10 +10021,15 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9849,10 +10053,15 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9880,6 +10089,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9914,6 +10124,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -9976,6 +10187,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10017,6 +10229,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10037,6 +10250,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10067,6 +10281,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10096,6 +10311,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10132,6 +10348,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10196,6 +10413,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10239,6 +10457,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10261,6 +10480,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10293,6 +10513,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10322,6 +10543,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10358,6 +10580,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10422,6 +10645,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10465,6 +10689,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10487,6 +10712,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -10519,6 +10745,7 @@
         "request": "fixture",
         "dryRun": true,
         "ownerSaid": "fixture",
+        "override": "fixture",
         "project": "fixture"
       }
     },
@@ -14944,6 +15171,21 @@
         "fixture"
       ]
     }
+  },
+  {
+    "method": "worktree.snapshot",
+    "params": {
+      "root": "fixture",
+      "driver": "fixture",
+      "since": "fixture",
+      "fenceMs": 1
+    },
+    "result": null
+  },
+  {
+    "method": "worktree.watchers",
+    "params": {},
+    "result": null
   },
   {
     "method": "request.present",

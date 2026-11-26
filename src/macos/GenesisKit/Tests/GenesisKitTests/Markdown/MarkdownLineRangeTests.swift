@@ -296,6 +296,128 @@ final class MarkdownLineRangeTests: XCTestCase {
         XCTAssertEqual(after, 0)
     }
 
+    /// A polished meeting keeps its transcript inside `<details>`, so a link to a transcript line names a block the page
+    /// does not draw. The page scrolled to where that hidden block would sit (empty space near the end) and drew an empty
+    /// band there. A range, a find match and a heading jump now open that fold and every fold around it, and a fold the
+    /// reader closes again stays closed. `MARKDOWN_DETAILS_SHOTS=<folder>` keeps the page after the range as
+    /// `details-range.png`.
+    func testARangeAFindMatchAndAHeadingInsideAClosedFoldOpenItAndEveryFoldAroundIt() async throws {
+        let web = try await page()
+        let note = Self.foldedNote
+        let lines = note.components(separatedBy: "\n")
+        let target = try XCTUnwrap(lines.firstIndex(of: "Turn 150 asks about the ticket."))
+        let inner = try XCTUnwrap(lines.firstIndex(of: "Change 12 renames the field."))
+        let folds = "Array.from(document.querySelectorAll('#gn-article details')).map(d=>d.open?'open':'closed').join(',')"
+        let closeAll = "document.querySelectorAll('#gn-article details').forEach(d=>{d.open=false});true"
+        func run(_ js: String) async throws -> Any? { try await web.evaluateJavaScript(js) }
+        func shown(_ element: String) async throws -> Bool {
+            // On screen and drawn there: a block in a closed fold still has a box, where it would sit, but no pixels.
+            let js = "(function(){var e=\(element);if(!e)return false;var r=e.getBoundingClientRect();"
+                + "if(!(r.height>0&&r.top>=0&&r.bottom<=innerHeight))return false;"
+                + "var c=document.elementFromPoint(r.left+Math.min(8,r.width/2),r.top+r.height/2);return !!c&&e.contains(c);})()"
+            // A jump may scroll smoothly: give it the time a person would see it take.
+            for _ in 0..<40 {
+                if try await run(js) as? Bool == true { return true }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            return false
+        }
+
+        _ = try await run("window.gnRender(\(MarkdownWebView.jsString(note)),[],false,null,{},false);true")
+        let start = try await run(folds) as? String
+        XCTAssertEqual(start, "closed,closed", "a fold starts closed, as the note wrote it")
+
+        // The link's range: the transcript fold opens, the lines are on screen and the band covers them.
+        _ = try await run("window.gnHighlightLines(\(target),\(target + 2),'blocks',true);true")
+        let range = try await run("""
+            (function(){var h=document.querySelectorAll('#gn-article .gn-hl'),b=document.getElementById('gn-hl-band');
+            if(!h.length||!b)return 'nothing marked';var f=h[0].getBoundingClientRect(),l=h[h.length-1].getBoundingClientRect(),
+            r=b.getBoundingClientRect(),c=document.elementFromPoint(f.left+8,f.top+f.height/2);
+            return [h[0].textContent.trim(),h.length,f.height>0&&f.top>=0&&l.bottom<=innerHeight&&!!c&&h[0].contains(c),
+            r.height>0&&r.top<=f.top&&r.bottom>=l.bottom].join('|');})()
+            """) as? String
+        let opened = try await run(folds) as? String
+        if let out = ProcessInfo.processInfo.environment["MARKDOWN_DETAILS_SHOTS"] {
+            let image = try await web.takeSnapshot(configuration: nil)
+            let rep = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil).map(NSBitmapImageRep.init(cgImage:)))
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: out).appendingPathComponent("details-range.png"))
+        }
+        XCTAssertEqual(range, "Turn 150 asks about the ticket.|2|true|true", "the marked lines and the band are on screen")
+        XCTAssertEqual(opened, "open,closed", "only the fold that holds the range opens")
+
+        // A re-render, as an agent's write to the open note causes, keeps the fold open and the band on the lines.
+        _ = try await run("window.gnRender(\(MarkdownWebView.jsString(note + "\nmore\n")),[],false,null,{},false);true")
+        let kept = try await run(folds) as? String
+        XCTAssertEqual(kept, "open,closed")
+        let band = try await run("""
+            (function(){var h=document.querySelector('#gn-article .gn-hl').getBoundingClientRect(),
+            r=document.getElementById('gn-hl-band').getBoundingClientRect();return h.height>0&&r.top<=h.top&&r.bottom>=h.bottom;})()
+            """) as? Bool
+        XCTAssertEqual(band, true, "the band still covers the marked line after the re-render")
+
+        // A range in a fold inside a fold opens both.
+        _ = try await run(closeAll)
+        _ = try await run("window.gnHighlightLines(\(inner),\(inner),'blocks',true);true")
+        let both = try await run(folds) as? String
+        XCTAssertEqual(both, "open,open")
+        let innerShown = try await shown("document.querySelector('#gn-article .gn-hl')")
+        XCTAssertTrue(innerShown, "the line in the inner fold is on screen")
+
+        // Closed again by hand: a click ends the range, and neither a resize nor a re-render opens the fold again.
+        _ = try await run("document.body.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));"
+            + "document.querySelector('#gn-article details > summary').click();true")
+        _ = try await run("window.dispatchEvent(new Event('resize'));true")
+        _ = try await run("window.gnRender(\(MarkdownWebView.jsString(note)),[],false,null,{},false);true")
+        let handClosed = try await run(folds) as? String
+        XCTAssertEqual(handClosed, "closed,open", "the outer fold stays closed; the inner one keeps its own state")
+
+        // A find match in the inner fold opens it and the fold around it.
+        _ = try await run(closeAll)
+        _ = try await run("window.gnFind('needle',false,{});true")
+        let found = try await run(folds) as? String
+        XCTAssertEqual(found, "open,open")
+        let matchShown = try await shown("document.querySelector('#gn-article mark.gn-find-current')")
+        XCTAssertTrue(matchShown, "the current match is on screen")
+        _ = try await run("window.gnFind('',false,{});true")
+
+        // A heading jump (a #heading link, the outline) opens the fold that holds the heading, and no other.
+        _ = try await run(closeAll)
+        let jumped = try await run("window.gnScrollToSlug('inner-heading','Inner heading')") as? Bool
+        XCTAssertEqual(jumped, true)
+        let headingFolds = try await run(folds) as? String
+        XCTAssertEqual(headingFolds, "open,closed")
+        let headingShown = try await shown("document.getElementById('inner-heading')")
+        XCTAssertTrue(headingShown, "the heading is on screen")
+
+        // Split view's sync to a line in a closed fold shows the fold, not the place where its hidden line would sit.
+        _ = try await run(closeAll)
+        _ = try await run("window.gnSyncLine(\(target));true")
+        let synced = try await shown("document.querySelector('#gn-article details > summary')")
+        XCTAssertTrue(synced, "the fold's summary is on screen")
+
+        // A git bar for a changed line in a closed fold sits beside the fold.
+        _ = try await run("window.gnGitMarks([{k:'added',a:\(target),b:\(target),i:0}]);true")
+        let bar = try await run("""
+            (function(){var b=document.querySelector('.gn-git-bar'),d=document.querySelector('#gn-article details');
+            if(!b)return 'no bar';var r=b.getBoundingClientRect(),f=d.getBoundingClientRect();
+            return r.top>=f.top-4&&r.bottom<=f.bottom+4?'beside the fold':'at '+Math.round(r.top-f.top)+' px from the fold';})()
+            """) as? String
+        XCTAssertEqual(bar, "beside the fold")
+    }
+
+    /// The shape of a polished meeting (`tools meetings polish build`): turns inside a fold, a fold inside it.
+    private static let foldedNote: String = {
+        let turns = (1...300).map { "Turn \($0) asks about the ticket." }.joined(separator: "\n\n")
+        let changes = (1...40).map { $0 == 33 ? "Change 33 moves the needle." : "Change \($0) renames the field." }
+            .joined(separator: "\n\n")
+        let points = (1...30).map { "Point \($0) of the summary." }.joined(separator: "\n\n")
+        let notes = (1...30).map { "Note \($0) after the transcript." }.joined(separator: "\n\n")
+        return "# Workshop\n\n\(points)\n\n<details>\n<summary>The polished turns</summary>\n\n\(turns)\n\n"
+            + "### Inner heading\n\n<details>\n<summary>Diffs</summary>\n\n\(changes)\n\n</details>\n\n</details>\n\n"
+            + "## After\n\n\(notes)\n"
+    }()
+
     private final class Loader: NSObject, WKNavigationDelegate {
         var loaded: XCTestExpectation?
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded?.fulfill() }

@@ -108,3 +108,9 @@ Benchmark `scripts/benchmarks/meetings/speaker-precision.ts`.
 | Number | Decision | Status | Date | Source |
 | --- | --- | --- | --- | --- |
 | 0050 | [Count agreeing speaker findings once per kind of evidence](0050-agreeing-evidence.md) | Accepted | 2026-11-25 | Speaker precision measurement |
+
+## Pairing and publishing
+
+| Number | Decision | Status | Date | Source |
+| --- | --- | --- | --- | --- |
+| 0051 | [Share device pairing, publication kinds and transports across tools](0051-pairing-and-publishing-layer.md) | Accepted | 2026-11-26 | Pairing and publishing build spec |

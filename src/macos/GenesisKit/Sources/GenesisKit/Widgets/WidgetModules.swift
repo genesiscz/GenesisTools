@@ -6,6 +6,25 @@ public enum WidgetModulePresentation: Int, Comparable, Sendable {
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
+/// Who draws a module's preview pane around its content: `host` adds the Expand row, a scroll view and "Open X";
+/// `module` draws its own header and footer (the Agents module's hover list and alert).
+public enum WidgetPreviewChrome: Sendable {
+    case host, module
+}
+
+private struct WidgetSurfaceKey: EnvironmentKey {
+    static let defaultValue: WidgetSurfaceID? = nil
+}
+
+extension EnvironmentValues {
+    /// The surface a module's content is drawn on, set by the host around it: one module needs it (the Agents hover
+    /// list opens its sessions on its own surface), so it travels here instead of in every module's `content`.
+    var widgetSurface: WidgetSurfaceID? {
+        get { self[WidgetSurfaceKey.self] }
+        set { self[WidgetSurfaceKey.self] = newValue }
+    }
+}
+
 public struct WidgetSurfaceID: Hashable, Sendable {
     public var edge: EdgePanelPlacement
     public var group: Int
@@ -26,6 +45,8 @@ public struct WidgetModuleDescriptor: Identifiable {
     public let tint: Color
     public let expandedSize: CGSize
     public let previewSize: CGSize
+    /// Who draws the preview pane's frame: the host (an Expand row, a scroll view, an Open button) or the module itself.
+    public let previewChrome: WidgetPreviewChrome
     public let summary: () -> String
     public let content: (WidgetModulePresentation) -> AnyView
     public let visibilityChanged: (WidgetModulePresentation?) -> Void
@@ -34,6 +55,7 @@ public struct WidgetModuleDescriptor: Identifiable {
         id: String, title: String, symbol: String, tint: Color,
         expandedSize: CGSize = CGSize(width: 432, height: 540),
         previewSize: CGSize = CGSize(width: 324, height: 310),
+        previewChrome: WidgetPreviewChrome = .host,
         summary: @escaping () -> String,
         visibilityChanged: @escaping (WidgetModulePresentation?) -> Void = { _ in },
         @ViewBuilder content: @escaping (WidgetModulePresentation) -> Content
@@ -44,6 +66,7 @@ public struct WidgetModuleDescriptor: Identifiable {
         self.tint = tint
         self.expandedSize = expandedSize
         self.previewSize = previewSize
+        self.previewChrome = previewChrome
         self.summary = summary
         self.visibilityChanged = visibilityChanged
         self.content = { AnyView(content($0)) }
@@ -109,6 +132,37 @@ public final class WidgetModuleRegistry: ObservableObject {
         let after = visiblePresentations()
         for module in modules where before[module.id] != after[module.id] {
             module.visibilityChanged(after[module.id])
+        }
+    }
+}
+
+/// The outer padding of a module's preview and expanded content. The host's own rows (Expand, the module switcher) sit
+/// 18 pt in; a module's edges line up with them.
+public enum WidgetModuleMetrics {
+    public static let padding = EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18)
+}
+
+/// A module's header, one look for Tasks, Usage, Capture, File Shelf and Voice Notes: its tinted symbol, its title and
+/// its own controls at the trailing edge.
+public struct WidgetModuleHeader<Trailing: View>: View {
+    let symbol: String
+    let title: String
+    let tint: Color
+    let trailing: Trailing
+
+    public init(symbol: String, title: String, tint: Color, @ViewBuilder trailing: () -> Trailing) {
+        self.symbol = symbol
+        self.title = title
+        self.tint = tint
+        self.trailing = trailing()
+    }
+
+    public var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Spacer()
+            trailing
         }
     }
 }

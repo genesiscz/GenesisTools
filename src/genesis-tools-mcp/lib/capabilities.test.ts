@@ -4,7 +4,13 @@ import { env } from "@genesiscz/utils/env";
 import { entryFromMcpTool, toolCallResult } from "@genesiscz/utils/mcp/tool-entry";
 import type { ToolGroupRow } from "@genesiscz/utils/mcp/tool-group";
 import { TOOL_GROUPS } from "./groups";
-import { closeLoadedGroups, enabledToolGroups, filterRegistryByCapabilities, loadToolGroup } from "./server";
+import {
+    closeLoadedGroups,
+    createGenesisToolsServer,
+    enabledToolGroups,
+    filterRegistryByCapabilities,
+    loadToolGroup,
+} from "./server";
 
 /**
  * The capability filter is a separation boundary, not a convenience: `question_ask` is the
@@ -37,7 +43,9 @@ const ALL = registry(
     "fetch_markdown",
     "fetch_jsonld",
     "alza_search_products",
-    "waze_police"
+    "waze_police",
+    "genesis_replace",
+    "genesis_replace_find"
 );
 
 afterEach(() => {
@@ -94,6 +102,7 @@ describe("filterRegistryByCapabilities", () => {
             "question_update",
         ]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
+        expect(withCapabilities("replace")).toEqual(["genesis_replace", "genesis_replace_find"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
         expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
         expect(withCapabilities("alza")).toEqual(["alza_search_products"]);
@@ -167,6 +176,16 @@ describe("a standalone server's tool in the shared registry", () => {
             call: async () => ({ isError: true, content: [{ type: "text", text: "Error: signed out" }] }),
         });
         await expect(failing.handler({})).rejects.toThrow("Error: signed out");
+    });
+});
+
+describe("the replace capability", () => {
+    test("the real registry gives replace exactly its two tools, and the README names them", async () => {
+        const { tools } = await createGenesisToolsServer({ capabilities: ["replace"], inboxState: "none" });
+        const readme = await Bun.file(join(import.meta.dir, "..", "README.md")).text();
+
+        expect(tools.sort()).toEqual(["genesis_replace", "genesis_replace_find"]);
+        expect(readme).toMatch(/^- `replace`: `genesis_replace`, `genesis_replace_find`\.$/m);
     });
 });
 

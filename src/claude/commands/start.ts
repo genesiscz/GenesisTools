@@ -11,20 +11,25 @@ import {
     FABLE_MODEL_OPTION_NAME,
     OPUS_MODEL_OPTION,
     pinnedLaunchEnv,
-    subscriptionTypeOf,
 } from "@app/claude/lib/launch-env";
+import { type LaunchTag, newLaunchTag, withLaunchTag } from "@app/claude/lib/launch-tag";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { deadBucketForAccount, fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
 import { headroomNote, weeklyLimitHit } from "@app/claude/lib/usage/limit-headroom";
+import { LOW_QUOTA_WINDOW_NAMES, lowQuotaHit, switchRelaunch } from "@app/claude/lib/usage/low-quota-switch";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
+import { sessionOfLaunch } from "@genesiscz/utils/agent-sessions/pins";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
+import { claudeResumeModel } from "@genesiscz/utils/agent-sessions/readers/claude-tail-usage";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { AccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/api";
 import { accountFromPinJournal } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
@@ -36,6 +41,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { reclaimTerminalForeground } from "@genesiscz/utils/terminal/foreground";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { annotateLimitLine, runClaudeBinaryDirect, steerModeFromEnv } from "../lib/direct-run";
@@ -503,7 +509,8 @@ function resetPhrase(resetsAt: string | null): string {
  * A weekly-dead account cannot serve ANY model: every turn 429s. This runs before the interactive and --model checks
  * on purpose. Both are escapes from a Fable question, and neither is an escape from an empty weekly bucket.
  *
- * A terminal launch is refused here. An embedding app (`--sdk`) is not: a refusal is only an early exit, which T3 Code
+ * A terminal launch asks "Still want to launch it?" (Yes launches); a non-interactive one is refused. An embedding
+ * app (`--sdk`) is not refused: a refusal is only an early exit, which T3 Code
  * reports as "The provider could not start this turn" and drops stderr. Claude Code itself then gets the 429 and sends
  * its own rate-limit frames, which the app classes as a usage limit with a reset time; the returned note is added to
  * the text of those frames (`annotateLimitLine`).
@@ -543,6 +550,26 @@ async function weeklyGate(accountName: string, sdk: boolean): Promise<string | n
             ? pc.dim(`  Accounts with headroom: ${withRoom.join(", ")}`)
             : pc.dim("  No other account has weekly headroom right now.")
     );
+
+    // The cache can be behind a reset or an extra-usage grant, so a person at a terminal decides, as for Fable.
+    if (isInteractive()) {
+        const proceed = await p.confirm({
+            message: "Still want to launch it? (No cancels so you can pick another account)",
+            initialValue: true,
+            cancel: "back",
+        });
+
+        if (p.isCancel(proceed) || !proceed) {
+            p.cancel("Cancelled — nothing launched.");
+            process.exit(0);
+        }
+
+        logger.info(
+            { account: accountName, resetsAt: hit.resetsAt },
+            "[start] weekly-dead account launched anyway after the confirm"
+        );
+        return null;
+    }
 
     await out.flush();
     process.exit(1);
@@ -650,6 +677,33 @@ export function stickyResumePick(scored: ScoredAccount[], previous: string | nul
     }
 
     return entry;
+}
+
+/** True when the forwarded args already name a model, which then wins over the session's own. */
+export function namesModel(args: string[]): boolean {
+    return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
+}
+
+/**
+ * The model a resume of a known session keeps, unless the args name one: the session's last turn, so the resumed
+ * session stays on the model its prompt cache was written with (Claude Code itself takes the default model).
+ */
+export function resumeModelOf(args: string[]): string | null {
+    const sessionId = resumedSessionIdOf(args);
+
+    if (!sessionId || namesModel(args)) {
+        return null;
+    }
+
+    try {
+        const path = canonicalClaudeTranscriptSync(sessionId);
+        const model = path ? claudeResumeModel(path) : null;
+        logger.info({ sessionId, model }, "[start] the model a resume keeps");
+        return model;
+    } catch (error) {
+        logger.warn({ error, sessionId }, "[start] the resumed session's model could not be read; the default applies");
+        return null;
+    }
 }
 
 /** The session id the passthrough resumes (`--resume <id>`, `--resume=<id>`, `-r <id>`), or null. */
@@ -1090,6 +1144,14 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const resume = await resolveResumeArgs(opts, passthrough);
     const resumeArgs = resume.args;
+    const keptModel = modelId ? null : resumeModelOf([...resumeArgs, ...passthrough]);
+    const launchModelId = modelId ?? keptModel ?? undefined;
+
+    if (keptModel) {
+        out.printlnErr(
+            pc.dim(`Keeping the session's model ${keptModel} (its last turn), so its prompt cache still fits.`)
+        );
+    }
 
     await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
@@ -1171,12 +1233,12 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
           ? await findCmuxTeamsCommand(shell)
           : await findClaudeCommand();
 
-    const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
+    const extraArgs = buildLaunchArgs({ modelId: launchModelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
     const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
     const detail = [
         account.label ? `(${account.label})` : "",
-        modelId ? `model ${pc.magenta(modelId)}` : "",
+        launchModelId ? `model ${pc.magenta(launchModelId)}` : "",
         opts.cmux ? pc.cyan("via cmux claude-teams") : "",
         resumeArgs.length > 0 ? pc.dim(resumeArgs.join(" ")) : "",
     ]
@@ -1208,8 +1270,16 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             TOOLS_CLAUDE_AUTH: "keychain",
         };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
+        // A keychain login has its own scopes; a pinned parent's list belongs to the token removed above.
+        delete launchEnv.CLAUDE_CODE_OAUTH_SCOPES;
     } else {
-        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, longLivedToken ?? "") };
+        launchEnv = {
+            ...process.env,
+            ...pinnedLaunchEnv(account, {
+                value: longLivedToken ?? "",
+                scopes: account.credentials.longLivedTokenScopes,
+            }),
+        };
     }
 
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
@@ -1221,6 +1291,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     if (launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF === undefined && nativeDiffState() !== "off") {
         launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF = "1";
     }
+
+    // A session in a terminal is tagged, so the question after it quits can name the session it ran.
+    const launchTag = opts.sdk || headless ? null : newLaunchTag();
+    launchEnv = withLaunchTag(launchEnv, launchTag);
 
     // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
     // allowlist). Point CLAUDE_CODE_TEAMMATE_COMMAND at a per-PID wrapper that
@@ -1236,7 +1310,9 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 env: {
                     accountName: account.name,
                     oauthToken: longLivedToken,
-                    subscriptionType: subscriptionTypeOf(account),
+                    // The lead's own values, so a teammate starts Code Mode exactly when its lead does.
+                    oauthScopes: launchEnv.CLAUDE_CODE_OAUTH_SCOPES,
+                    subscriptionType: launchEnv.CLAUDE_CODE_SUBSCRIPTION_TYPE,
                     fableModel: FABLE_MODEL_ID,
                     customModelOption: FABLE_MODEL_OPTION,
                     customModelOptionName: FABLE_MODEL_OPTION_NAME,
@@ -1251,6 +1327,8 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     let exitCode: number;
+    // True when claude ran in this process's own terminal and quit there; the new tmux session path attaches a client.
+    let ranHere = false;
 
     try {
         if (opts.sdk) {
@@ -1281,6 +1359,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 });
                 const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
                 exitCode = await proc.exited;
+                ranHere = takeTerminalBack();
                 if (stderrPump) {
                     await stderrPump;
                 }
@@ -1309,6 +1388,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
 
             exitCode = await proc.exited;
+            ranHere = takeTerminalBack();
             if (stderrPump) {
                 await stderrPump;
             }
@@ -1345,7 +1425,138 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         removeTeammateWrapper(teammateWrapperPath);
     }
 
+    // After the finally: a relaunch never returns, and the wrapper above holds this launch's token in plaintext.
+    const next =
+        ranHere && !headless
+            ? await offerAccountSwitch({
+                  accountName,
+                  opts,
+                  passthrough,
+                  resumeArgs,
+                  launchTag,
+                  modelId: launchModelId,
+              })
+            : null;
+
+    if (next) {
+        return main(undefined, next.opts, next.passthrough);
+    }
+
     process.exit(exitCode);
+}
+
+/**
+ * Takes the terminal back after claude quit (`reclaimTerminalForeground`: the `zsh -ic` that ran it leaves the
+ * terminal to its own dead group), so a prompt or the exit does not stop this process with SIGTTOU. True when this
+ * process holds the terminal now.
+ */
+function takeTerminalBack(): boolean {
+    if (!process.stdin.isTTY) {
+        return false;
+    }
+
+    const state = reclaimTerminalForeground(0);
+    logger.debug({ state }, "[start] the terminal after claude quit");
+    return state.status === "kept" || state.status === "reclaimed";
+}
+
+/** A cached reading younger than this is used as it is; the usage daemon refreshes the cache every minute. */
+const EXIT_USAGE_FRESH_MS = 120_000;
+/** The live read after a quit waits this long, then the question goes by the cached reading (or is not asked). */
+const EXIT_USAGE_DEADLINE_MS = 5_000;
+
+/** The account's usage as claude quit: the shared cache when it is fresh, else one live read with a deadline. */
+async function usageAtExit(accountName: string): Promise<AccountUsage | undefined> {
+    const cached = await peekSharedUsage().catch((error) => {
+        logger.debug({ error }, "[start] usage cache peek after the quit failed");
+        return null;
+    });
+    const cachedRow = cached?.accounts.find((row) => row.accountName === accountName);
+
+    if (cached && cachedRow && Date.now() - cached.fetchedAt < EXIT_USAGE_FRESH_MS) {
+        return cachedRow;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"deadline">((resolve) => {
+        timer = setTimeout(() => resolve("deadline"), EXIT_USAGE_DEADLINE_MS);
+    });
+
+    try {
+        const live = await Promise.race([getSharedAccountsUsage({ accountFilter: [accountName] }), deadline]);
+
+        if (live === "deadline") {
+            logger.info({ account: accountName }, "[start] the usage read after the quit passed its deadline");
+            return cachedRow;
+        }
+
+        return live.find((row) => row.accountName === accountName) ?? cachedRow;
+    } catch (error) {
+        logger.warn({ error, account: accountName }, "[start] the usage read after the quit failed");
+        return cachedRow;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * After claude quit in this terminal on an account with little quota left (`launch.lowQuotaSwitch` in the claude
+ * config: under 10% of the 5-hour window or under 5% of a weekly limit), asks "Do you want to switch to another
+ * account?". Yes returns the relaunch: the usage-ranked account picker, then the same session resumed there.
+ */
+async function offerAccountSwitch(input: {
+    accountName: string;
+    opts: StartOptions;
+    passthrough: string[];
+    resumeArgs: string[];
+    launchTag: LaunchTag | null;
+    modelId: string | undefined;
+}): Promise<{ opts: StartOptions; passthrough: string[] } | null> {
+    if (!isInteractive() || !process.stdout.isTTY) {
+        return null;
+    }
+
+    const setting = (await launchPreferences()).lowQuotaSwitch;
+
+    if (!setting.enabled) {
+        return null;
+    }
+
+    const [usage, launched] = await Promise.all([
+        usageAtExit(input.accountName),
+        input.launchTag ? sessionOfLaunch(input.launchTag.id) : Promise.resolve(null),
+    ]);
+    const sessionId = launched ?? resumedSessionIdOf([...input.resumeArgs, ...input.passthrough]);
+    const model = (sessionId ? resumeModelOf(["--resume", sessionId]) : null) ?? input.modelId;
+    const hit = lowQuotaHit({ usage, modelFamily: model ? modelFamilyOf(model) : undefined, setting });
+
+    logger.info(
+        { account: input.accountName, hit, sessionId, fromLaunchTag: launched !== null, setting },
+        "[start] quota check after claude quit"
+    );
+
+    if (!hit) {
+        return null;
+    }
+
+    out.printlnErr(
+        pc.yellow(
+            `⚠ "${input.accountName}" has ${Math.round(hit.leftPct)}% of its ${LOW_QUOTA_WINDOW_NAMES[hit.window]} left (${resetPhrase(hit.resetsAt)}).`
+        )
+    );
+
+    const yes = await p.confirm({
+        message: "Do you want to switch to another account?",
+        initialValue: true,
+        cancel: "back",
+    });
+
+    if (p.isCancel(yes) || !yes) {
+        return null;
+    }
+
+    logger.info({ from: input.accountName, sessionId }, "[start] switching accounts after the quit");
+    return switchRelaunch({ opts: input.opts, passthrough: input.passthrough, sessionId });
 }
 
 /**

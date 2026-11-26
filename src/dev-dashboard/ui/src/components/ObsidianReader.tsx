@@ -7,6 +7,7 @@ import { Copy, Globe, GlobeLock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { ReadingColumn } from "@/components/ReadingColumn";
+import { ShareFreshnessChips } from "@/components/ShareFreshnessChips";
 import { dashboard } from "@/lib/dashboard-client";
 import { useRevealFragment } from "./obsidian-fragment";
 
@@ -88,7 +89,9 @@ export function ObsidianReader({ path }: Props) {
         );
     }
 
-    const shareUrl = data.publishedSlug ? `${window.location.origin}/share/${data.publishedSlug}` : null;
+    // The link to hand out: the default target's when it holds the note, else the first place that does.
+    const primaryShare = data.shares.find((share) => share.isDefault) ?? data.shares[0];
+    const shareUrl = data.publishedSlug ? (primaryShare?.url ?? null) : null;
 
     return (
         <div className="dd-panel flex h-full flex-col overflow-hidden">
@@ -98,8 +101,7 @@ export function ObsidianReader({ path }: Props) {
                     <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
                 </div>
                 {shareUrl ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                        <code className="truncate text-[10px] text-[var(--dd-text-muted)]">{shareUrl}</code>
+                    <div className="flex shrink-0 items-center gap-2">
                         <Button
                             size="sm"
                             variant="outline"
@@ -129,6 +131,14 @@ export function ObsidianReader({ path }: Props) {
                     </Button>
                 )}
             </div>
+            {data.shares.length > 0 ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-[var(--dd-border)] px-3 py-1.5 text-[11px]">
+                    <ShareFreshnessChips shares={data.shares} editedAt={data.editedAt} />
+                    {shareUrl ? (
+                        <code className="min-w-0 truncate text-[10px] text-[var(--dd-text-muted)]">{shareUrl}</code>
+                    ) : null}
+                </div>
+            ) : null}
             {viewMode === "reading" ? (
                 <div className="flex-1 overflow-auto px-5 py-4">
                     <ReadingColumn>

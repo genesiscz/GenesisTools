@@ -6,6 +6,7 @@ import * as cli from "@genesiscz/utils/cli";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { hasAudio, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { openProject } from "./edit";
 import { parseImportMarker } from "./import";
@@ -184,6 +185,38 @@ describe.skipIf(!hasFfmpeg)("movies.import", () => {
         expect(fingerprint(withSound)).toEqual(before);
     });
 
+    test("an HDR movie is taken as it is: the editor's probe allows it, the split's probe still refuses it", async () => {
+        const movies = await moviesToolset();
+        const before = fingerprint(hdr);
+        const movie = await movies.import(hdr, { markers: [{ at: 1, label: "Middle" }] });
+        const folder = movie.recording;
+        const copy = join(folder, "screen.mp4");
+
+        // The library holds the movie itself (a clone), still PQ: nothing was converted.
+        const transfer = await runVideoCommand({
+            command: [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=color_transfer",
+                "-of",
+                "csv=p=0",
+                copy,
+            ],
+        });
+        expect(transfer.trim()).toBe("smpte2084");
+        expect(readRecordingManifest(folder)?.settings).toMatchObject({ video: { file: "screen.mp4", frames: 20 } });
+        expect(markersOf(await openProject(folder))).toEqual([{ at: 1, plays: 1, label: "Middle" }]);
+        expect(fingerprint(hdr)).toEqual(before);
+
+        // Frames split by ffmpeg carry no tone mapping, so the evidence probe keeps its refusal.
+        await expect(probeVideo({ input: copy })).rejects.toThrow("HDR evidence needs an explicit SDR conversion");
+        expect((await probeVideo({ input: copy, hdr: "allow" })).colorTransfer).toBe("smpte2084");
+    });
+
     test("a movie without sound stays silent and takes its file's name as the title", async () => {
         const movies = await moviesToolset();
         const movie = await movies.import(silent);
@@ -246,7 +279,6 @@ describe.skipIf(!hasFfmpeg)("movies.import", () => {
             const tagged = await refusal(hev1);
             expect(tagged).toContain("its video is HEVC tagged hev1, which the editor (AVFoundation) does not play");
             expect(tagged).toContain("-c copy -tag:v hvc1");
-            expect(await refusal(hdr)).toContain("is an HDR movie (PQ); the editor takes SDR movies only");
             expect(await refusal(turned)).toContain(
                 "is turned 45°; the editor takes a movie turned 0°, 90°, 180° or 270° only"
             );

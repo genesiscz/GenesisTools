@@ -9,6 +9,8 @@ import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
+import { REMOTE_DIR_RE, SSH_HOST_RE, TARGET_NAME_RE } from "@genesiscz/utils/publish/targets";
+import { isSecureRef, type SecureRef } from "@genesiscz/utils/security/SecureRef";
 import { z } from "zod";
 
 /**
@@ -30,8 +32,12 @@ const DashboardAuthSchema = z.object({
 
 const PublishedNoteSchema = z.object({
     slug: z.string(),
-    vaultPath: z.string(),
+    /** Read as NFC, so an entry stored decomposed by an older build matches a typed path (normalizeVaultPath). */
+    vaultPath: z.string().transform((path) => path.normalize("NFC")),
     publishedAt: z.string(),
+    /** Legacy fields read only for import into the publication ledger. */
+    targets: z.array(z.string()).optional(),
+    syncs: z.record(z.string(), z.object({ syncedAt: z.string(), sourceModifiedAt: z.string() })).optional(),
 });
 
 const TtydSessionSchema = z.object({
@@ -57,11 +63,81 @@ const PulseConfigSchema = z.object({
     pollIntervalMs: z.number().int().min(1000).default(5000),
 });
 
-const DevDashboardConfigSchema = z.object({
+// The old dashboard file is only a migration source for publishing settings.
+const LegacyTargetBase = z.object({
+    name: z.string().regex(TARGET_NAME_RE),
+    publicBase: z.string().url().optional(),
+});
+const LegacyTargets = z.discriminatedUnion("driver", [
+    LegacyTargetBase.extend({ driver: z.literal("mac-live") }),
+    LegacyTargetBase.extend({
+        driver: z.literal("paired"),
+        url: z.string().url(),
+        deviceId: z.string().min(1),
+        token: z.custom<SecureRef>(isSecureRef, { message: "token must be a vault reference" }),
+    }),
+    LegacyTargetBase.extend({
+        driver: z.literal("ssh-rsync"),
+        host: z.string().regex(SSH_HOST_RE),
+        dataDir: z.string().regex(REMOTE_DIR_RE),
+        publicBase: z.string().url(),
+    }),
+]);
+const LEGACY_MAC = { name: "mac", driver: "mac-live" } as const;
+const LegacyNamedShare = z.object({
+    defaults: z.object({ target: z.string().default("mac") }).prefault({}),
+    targets: z
+        .array(LegacyTargets)
+        .default([LEGACY_MAC])
+        .superRefine((targets, ctx) => {
+            const names = new Set<string>();
+            for (const [index, target] of targets.entries()) {
+                if (names.has(target.name)) {
+                    ctx.addIssue({
+                        code: "custom",
+                        path: [index, "name"],
+                        message: `Duplicate target "${target.name}"`,
+                    });
+                }
+
+                names.add(target.name);
+            }
+        }),
+});
+const LegacySingleShare = z.object({
+    target: z.enum(["server", "mac"]),
+    server: z
+        .object({ host: z.string().optional(), dataDir: z.string().optional(), publicBase: z.string().optional() })
+        .optional(),
+});
+const LegacyShare = z.preprocess((raw) => {
+    if (raw == null) {
+        return undefined;
+    }
+
+    const single = LegacySingleShare.safeParse(raw);
+    if (!single.success || (typeof raw === "object" && "targets" in raw)) {
+        return raw;
+    }
+
+    const { host, dataDir, publicBase } = single.data.server ?? {};
+    const server =
+        host && dataDir && publicBase ? { name: "server", driver: "ssh-rsync", host, dataDir, publicBase } : null;
+    return {
+        defaults: { target: server && single.data.target === "server" ? "server" : "mac" },
+        targets: server ? [LEGACY_MAC, server] : [LEGACY_MAC],
+    };
+}, LegacyNamedShare.optional());
+
+export const LegacyShareSourceSchema = z.object({
+    publishedNotes: z.array(PublishedNoteSchema).default([]),
+    share: LegacyShare,
+});
+
+const DevDashboardConfigSchema = LegacyShareSourceSchema.extend({
     port: z.number().int().min(1).max(65535).default(3042),
     allowedHosts: z.array(z.string()).default([]),
     obsidianVault: z.string().optional(),
-    publishedNotes: z.array(PublishedNoteSchema).default([]),
     cmuxPollIntervalMs: z.number().int().min(250).default(2000),
     auth: DashboardAuthSchema.prefault({}),
     ttydSessions: z.array(TtydSessionSchema).default([]),
@@ -96,6 +172,11 @@ export async function getConfig(): Promise<DevDashboardConfig> {
 
     const fallback = DevDashboardConfigSchema.parse({});
     return { ...fallback, obsidianVault: resolveDashboardVault(fallback.obsidianVault) ?? "" };
+}
+
+/** Serialize changes to the share settings and note registry across CLI and dashboard processes. */
+export function withConfigMutation<T>(change: () => Promise<T>): Promise<T> {
+    return getDevDashboardStorage().withConfigLock(change);
 }
 
 /**

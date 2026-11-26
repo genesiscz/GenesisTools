@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
@@ -49,6 +50,15 @@ function requireSegment(kind: string, value: string): string {
     return safe;
 }
 
+/**
+ * The admission record of the `narrow-git` status mode for one worktree: a sibling of `hookDataRoot()`, so the capture
+ * sweep never reads it as a harness folder. Named by a hash of the root path.
+ */
+export function narrowAdmissionPath(root: string): string {
+    const name = createHash("sha256").update(root).digest("hex").slice(0, 20);
+    return join(hookDataRoot(), "..", "narrow-admission", `${name}.json`);
+}
+
 export function sessionDir(harness: string, sessionId: string): string {
     return join(hookDataRoot(), requireSegment("harness", harness), requireSegment("session id", sessionId));
 }
@@ -80,6 +90,11 @@ export function mentionsRoot(): string {
 /** When a post phase last swept abandoned captures (`sweepAbandonedCaptures`): its mtime is the time. */
 export function sweepStampPath(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "sweep.stamp");
+}
+
+/** When a code-mode script's call last ran and when the id self-check last spoke (`scriptCallIdNotice`). */
+export function scriptCallStampPath(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "script-calls.json");
 }
 
 /** The unpushed reminder's per-repository cache and its once-per-interval claims. */

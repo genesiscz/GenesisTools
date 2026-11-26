@@ -1256,7 +1256,8 @@ async function verifyExport(
     const matcher = verifyMatcherOf(options);
     const { project } = await openProject(value);
     const progress = options.onProgress ?? (() => undefined);
-    const info = await probeVideo({ input: movie });
+    // An HEVC export of an HDR movie is HDR: its length is all this reads of it.
+    const info = await probeVideo({ input: movie, hdr: "allow" });
     const durationUs = info.durationUs;
     // R8 5: only the asked part of the export, and every frame read once per export (kept by its content).
     const range = exportRangeOf(project, options) ?? { fromUs: 0, toUs: durationUs };

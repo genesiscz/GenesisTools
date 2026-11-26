@@ -1,9 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+    importLegacyShare,
+    legacyShareImport,
+    loadSharePublishConfig,
+} from "@app/dev-dashboard/lib/share/legacy-share";
+import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
+import {
+    loadShareConfig,
+    publicationsPath,
+    shareConfigPath,
+    updateShareConfig,
+} from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
 import { getConfig, getOrCreateDashboardAuth, resolveDashboardVault, saveConfig, saveTtydSessions } from "./config";
@@ -12,6 +24,159 @@ describe("dev-dashboard config", () => {
     it("defaults allowedHosts to an empty array", async () => {
         const config = await getConfig();
         expect(Array.isArray(config.allowedHosts)).toBe(true);
+    });
+});
+
+describe("dev-dashboard share migration", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const published = "2026-01-01T03:00:00.000Z";
+    const sourceModifiedAt = "2026-01-01T01:00:00.000Z";
+    const syncedAt = "2026-01-01T02:00:00.000Z";
+    const token = { type: "secure", path: "dev-dashboard/share-targets/remote/token" } as const;
+    const namedShare = {
+        defaults: { target: "remote" },
+        targets: [
+            { name: "mac", driver: "mac-live" },
+            { name: "remote", driver: "paired", url: "https://share.example.com/md", deviceId: "fixture", token },
+        ],
+    };
+    const note = {
+        slug: "fixture",
+        vaultPath: "Notes/Weekly.md",
+        publishedAt: at,
+        targets: ["remote", "mac"],
+        syncs: { remote: { syncedAt, sourceModifiedAt } },
+    };
+    const raw = {
+        allowedHosts: ["mac.example.com"],
+        share: namedShare,
+        publishedNotes: [note, { slug: "other", vaultPath: "Other.md", publishedAt: published, targets: [] }],
+    };
+    const livePublicBase = "https://mac.example.com";
+
+    let dir: string;
+    let configPath: string;
+    let prevHome: string | undefined;
+
+    beforeEach(async () => {
+        prevHome = env.get("GENESIS_TOOLS_HOME");
+        dir = mkdtempSync(join(tmpdir(), "share-migration-"));
+        env.testing.set("GENESIS_TOOLS_HOME", dir);
+        resetDevDashboardStorage();
+        const storage = getDevDashboardStorage();
+        configPath = storage.getConfigPath();
+        await storage.setConfig(raw);
+    });
+
+    afterEach(() => {
+        if (prevHome === undefined) {
+            env.testing.unset("GENESIS_TOOLS_HOME");
+        } else {
+            env.testing.set("GENESIS_TOOLS_HOME", prevHome);
+        }
+
+        resetDevDashboardStorage();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("imports both targets and note sync records once and keeps the note registry", async () => {
+        expect(await importLegacyShare()).toEqual({ imported: ["mac", "remote"] });
+
+        const first = [configPath, shareConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"));
+        expect(SafeJSON.parse(first[1])).toEqual({
+            version: 2,
+            servers: [],
+            defaults: { target: "remote" },
+            targets: [
+                {
+                    name: "mac",
+                    publicBase: livePublicBase,
+                    transport: { kind: "mac-live", mounts: { md: "/share" } },
+                },
+                {
+                    name: "remote",
+                    publicBase: "https://share.example.com",
+                    transport: { kind: "paired", url: "https://share.example.com", deviceId: "fixture", token },
+                },
+            ],
+        });
+        expect(SafeJSON.parse(first[2])).toEqual({
+            version: 1,
+            publications: [
+                {
+                    kind: "md",
+                    id: "fixture",
+                    title: "Weekly",
+                    source: "Notes/Weekly.md",
+                    publishedAt: at,
+                    syncs: { remote: { syncedAt, sourceModifiedAt }, mac: { syncedAt: at, sourceModifiedAt: at } },
+                },
+                { kind: "md", id: "other", title: "Other", source: "Other.md", publishedAt: published, syncs: {} },
+            ],
+        });
+        const saved = SafeJSON.parse(first[0]);
+        expect(saved.share).toBeUndefined();
+        expect(saved.publishedNotes).toEqual([
+            { slug: "fixture", vaultPath: "Notes/Weekly.md", publishedAt: at },
+            { slug: "other", vaultPath: "Other.md", publishedAt: published },
+        ]);
+        expect(saved.allowedHosts).toEqual(["mac.example.com"]);
+        expect(statSync(shareConfigPath()).mode & 0o777).toBe(0o600);
+        expect(statSync(publicationsPath()).mode & 0o777).toBe(0o600);
+
+        expect(await importLegacyShare()).toEqual({ imported: [] });
+        expect([configPath, shareConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"))).toEqual(
+            first
+        );
+    });
+
+    it("preserves a target already in the store and keeps status reads free of writes", async () => {
+        const before = readFileSync(configPath, "utf8");
+        expect((await loadSharePublishConfig()).defaults.target).toBe("remote");
+        expect(await shareStatusFor(note)).toMatchObject([
+            { target: "mac", live: true, url: "https://mac.example.com/share/fixture" },
+            {
+                target: "remote",
+                live: false,
+                isDefault: true,
+                url: "https://share.example.com/md/fixture",
+                syncedAt,
+                sourceModifiedAt,
+            },
+        ]);
+        expect(readFileSync(configPath, "utf8")).toBe(before);
+        expect(existsSync(shareConfigPath())).toBe(false);
+        expect(existsSync(publicationsPath())).toBe(false);
+
+        const existing = {
+            name: "remote",
+            publicBase: "https://new.example.com",
+            transport: { kind: "mac-live", mounts: { md: "/other" } },
+        } as const;
+        await updateShareConfig((config) => ({ ...config, targets: [existing] }));
+        expect(await importLegacyShare()).toEqual({ imported: ["mac"] });
+        expect((await loadShareConfig()).targets.find((entry) => entry.name === "remote")).toEqual(existing);
+    });
+
+    it("converts the first share.target format, defaults incomplete settings to Mac and refuses duplicate or plaintext targets", () => {
+        const parse = (share: unknown) => legacyShareImport({ rawConfig: { share }, livePublicBase });
+        const converted = parse({
+            target: "server",
+            server: {
+                host: "deploy@share.example.com",
+                dataDir: "/srv/share/data/",
+                publicBase: "https://example.com/share/",
+            },
+        });
+        expect(converted?.defaultTarget).toBe("server");
+        expect(converted?.targets[1]).toEqual({
+            name: "server",
+            publicBase: "https://example.com",
+            transport: { kind: "ssh-rsync", host: "deploy@share.example.com", dataDir: "/srv/share/data" },
+        });
+        expect(parse({ target: "server", server: {} })?.defaultTarget).toBe("mac");
+        expect(() => parse({ targets: [namedShare.targets[0], namedShare.targets[0]] })).toThrow();
+        expect(() => parse({ targets: [{ ...namedShare.targets[1], token: "gtshare_plain" }] })).toThrow();
     });
 });
 

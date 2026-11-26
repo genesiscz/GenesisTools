@@ -50,7 +50,7 @@ import {
     waitingBlock,
 } from "./load";
 import { cursorStillHolds, InboxTrace, recordAnswer } from "./session-cursor";
-import { readInboxData, readInboxGroupEntries } from "./unread";
+import { readInboxData, readInboxGroupEntries, readRecentlyReadEntries } from "./unread";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -2161,6 +2161,46 @@ test("the head and its earlier answers use the same unread partition and clear w
                 sessionIsFresh: () => true,
             })
         ).toHaveLength(2);
+    });
+});
+test("the read entries of a window come newest first, bounded in SQL, and the unread read never lists them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "inbox-read-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root, QUESTION_LOG_BASE: join(root, "log") }, () => {
+        const db = openReadModel(toolDataDir("question", "qa.db"));
+        try {
+            const insert = db.query(
+                "INSERT INTO entries (id, ts, session_id, agent, agent_label, project, question, answer_md, tag, read_at, superseded_by) VALUES (?, ?, ?, 'codex', ?, 'orchard', ?, ?, ?, ?, ?)"
+            );
+            insert.run(
+                "read-note",
+                100,
+                "alpha",
+                null,
+                "Crates loaded",
+                "Crates loaded\n\nAll 12 crates.",
+                "message",
+                101,
+                null
+            );
+            insert.run("read-answer", 90, "alpha", null, "Which shelf?", "The top shelf.", "question", 95, null);
+            insert.run("outside", 10, "alpha", null, "Old news", "Old news", "message", 11, null);
+            insert.run("unread", 120, "alpha", null, "New note", "New note", "message", null, null);
+            insert.run("replaced", 110, "alpha", null, "Replaced", "Replaced", "message", 111, "read-note");
+            insert.run("external", 80, "unknown", "Nightly job", "Build done", "Build done", "message", 81, null);
+        } finally {
+            db.close();
+        }
+
+        const read = readRecentlyReadEntries({ since: 50 });
+        expect(read.map((row) => row.id)).toEqual(["read-note", "read-answer", "external"]);
+        expect(read[0]).toMatchObject({ sessionId: "alpha", provider: "codex", itemTag: "message", at: 100 });
+        expect(read[0]?.messageText).toBe("Crates loaded\n\nAll 12 crates.");
+        expect(read[1]?.reply).toEqual({ question: "Which shelf?", text: "The top shelf." });
+        expect(read[2]).toMatchObject({ sessionId: "unknown", sender: "Nightly job" });
+        expect(readRecentlyReadEntries({ since: 50, limit: 1 }).map((row) => row.id)).toEqual(["read-note"]);
+        expect(readRecentlyReadEntries({ since: 101 })).toEqual([]);
+        expect(() => readRecentlyReadEntries({ since: 0, limit: 0 })).toThrow(/limit/);
+        expect(readInboxData({ clearedAt: 0, staleBefore: 0 }).answers.map((row) => row.id)).toEqual(["unread"]);
     });
 });
 test("overview previews skip long media context and end on complete code points", async () => {

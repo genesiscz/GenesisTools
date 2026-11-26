@@ -777,7 +777,12 @@ Native-only capture plan fields (the `ax-tool capture` flag in brackets):
 - `maxMb` (`--max-mb <n>`): stop keeping frames after n MB were written. Sampling and motion go on.
 - `audio` (`--audio system,mic`): record system audio (`excludesCurrentProcessAudio`) and the microphone (macOS 15
   and later, else code `unsupported`), each as its own AAC track in `videoOut` (system 2 channels, mic 1, 48 kHz).
-  Needs `videoOut` or `audioSidecar`; not in isolated mode.
+  Needs `videoOut` or `audioSidecar`. In isolated mode the sound comes from one extra stream whose picture is
+  dropped, so it never stops with a window's stream.
+- `systemAudioScope` (`--system-audio-scope all|app`): isolated mode with audio `system`. `all` (the default) keeps
+  everything the Mac plays but the recorder, as screen mode does; `app` keeps only the selected windows' apps.
+  ScreenCaptureKit filters sound per app, never per window: a `window` mode movie (one window's filter) keeps that
+  window's app only.
 - `micDevice` (`--mic-device <uid>`): an input that `ax-tool audio-devices` lists as `id`; an unknown one fails with
   code `device-missing`. Default: the system input.
 - `audioSidecar` (`--audio-sidecar`): also write `audio-system.m4a` and `audio-mic.m4a` next to the frames.
@@ -821,7 +826,9 @@ tools control capture session \
 
 `capture session` takes `--target` (`{"kind":"window","windowIds":[n]}`, `{"kind":"app","app":"Finder"}` or
 `{"kind":"display","screenIndex":0}`; default the front window), `--exclude-window-ids`, `--fps` (default 60),
-`--no-indicator`, `--max-seconds` (1 to 600) and `--output` (default `~/.genesis-tools/control/recordings/`). It is
+`--no-indicator`, `--max-seconds` (1 to 600), `--output` (default `~/.genesis-tools/control/recordings/`), and the
+sound of `tools recorder start` for every target: `--audio system,mic`, `--mic-device <uid>` and
+`--system-audio-scope all|app` (a window or app keeps everything the Mac plays, or only its app). It is
 made of segments: one recorder run stops after 180 s, so a longer recording chains runs, and stop joins them into one
 movie.
 

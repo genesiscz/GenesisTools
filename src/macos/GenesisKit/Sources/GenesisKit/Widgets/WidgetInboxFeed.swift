@@ -87,15 +87,20 @@ struct WidgetFeedRows<Row: View>: View {
 }
 
 /// Built when the snapshot or the run preference changes. Waiting and unread each have their own consecutive runs.
+/// `read` holds the answers and messages already read (`WidgetInboxSummary.recentlyRead`), which only the Items list
+/// draws, below the others.
 struct WidgetInboxFeeds {
     let all: [WidgetFeedRun]
     let waiting: [WidgetFeedRun]
     let unread: [WidgetFeedRun]
+    let read: [WidgetFeedRun]
 
-    init(_ items: [WidgetInboxItem] = [], by: String = "session", project: (WidgetInboxItem) -> String? = { _ in nil }) {
+    init(_ items: [WidgetInboxItem] = [], read: [WidgetInboxItem] = [], by: String = "session",
+         project: (WidgetInboxItem) -> String? = { _ in nil }) {
         all = WidgetInboxFeed.runs(items, by: by, project: project)
         waiting = WidgetInboxFeed.runs(items.filter(\.needsAnswer), by: by, project: project)
         unread = WidgetInboxFeed.runs(items.filter(\.isUnreadEntry), by: by, project: project)
+        self.read = WidgetInboxFeed.runs(read, by: by, project: project)
     }
 
     subscript(filter: String) -> [WidgetFeedRun] {
@@ -175,6 +180,35 @@ struct WidgetFeedRunHeader: View, Equatable {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("widget.feed.run." + id)
         .liveRow(selected: false)
+    }
+}
+
+/// The Items list's line above the messages and answers already read: they are dimmed and counted nowhere.
+struct WidgetReadItemsHeader: View, Equatable {
+    let hours: Int
+    let count: Int
+
+    /// The windows the setting offers, "None" (0) first, plus a stored value that is none of them.
+    static func choices(current: Int) -> [Int] {
+        [0] + Array(Set([6, 24, 72, 168, current]).subtracting([0])).sorted()
+    }
+
+    /// "24 hours", "6 hours", "3 days": whole days from two days on.
+    static func window(_ hours: Int) -> String {
+        hours >= 48 && hours % 24 == 0 ? Plural.count(hours / 24, "day") : Plural.count(hours, "hour")
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("Read").fontWeight(.semibold)
+            Text("·").foregroundStyle(.secondary)
+            Text("last " + Self.window(hours)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 0)
+            Text(Plural.count(count, "item")).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
+        }
+        .font(.system(size: 11.5))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget.feed.read")
     }
 }
 

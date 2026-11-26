@@ -435,6 +435,41 @@ final class RecordingControlsClickTests: XCTestCase {
         XCTAssertNotEqual(window.frame.origin, NSPoint(x: 100, y: 100), "the window moved")
         XCTAssertFalse(fired.contains("pause") || fired.contains("use"), "a drag presses nothing")
     }
+
+    func testALongDragOfSmallStepsKeepsTheGrabbedSpotUnderThePointer() {
+        // The window server keeps a window's origin on whole points. Adding each event's 0.4 pt to that rounded origin
+        // lost the fraction every time: 200 steps right moved the window 0 pt and 200 steps down moved it 200 pt, not 80.
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 400, width: 300, height: 60), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        window.contentView = content
+        let drag = RecordingWindowDragView(frame: NSRect(x: 10, y: 30, width: 20, height: 30))
+        drag.autoresizingMask = [.minYMargin]
+        content.addSubview(drag)
+        let start = window.frame.origin
+        // Events located on the screen, so each carries its own global location, as a drag delivered in the background
+        // does. The pointer starts inside the grip.
+        func event(_ type: NSEvent.EventType, _ step: Int) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: 220.3 + 0.4 * Double(step), y: 445.6 - 0.4 * Double(step)),
+                               modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
+                               clickCount: 1, pressure: 1)!
+        }
+        drag.mouseDown(with: event(.leftMouseDown, 0))
+        for step in 1...200 { drag.mouseDragged(with: event(.leftMouseDragged, step)) }
+        XCTAssertEqual(window.frame.minX, start.x + 80, accuracy: 1, "the window follows the pointer's whole travel")
+        XCTAssertEqual(window.frame.minY, start.y - 80, accuracy: 1)
+        // The window grows 40 pt downward during the drag with its top edge kept, as the bar does when a notice appears.
+        let grip = window.convertPoint(toScreen: drag.convert(drag.bounds.origin, to: nil))
+        window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY - 40, width: 300, height: 100), display: false)
+        for step in 201...300 { drag.mouseDragged(with: event(.leftMouseDragged, step)) }
+        drag.mouseUp(with: event(.leftMouseUp, 300))
+        let moved = window.convertPoint(toScreen: drag.convert(drag.bounds.origin, to: nil))
+        XCTAssertEqual(moved.x, grip.x + 40, accuracy: 1, "the grabbed spot stays under the pointer after the window grew")
+        XCTAssertEqual(moved.y, grip.y - 40, accuracy: 1)
+    }
 }
 
 /// The controls and the picker rendered for review: `RECORDING_SNAPSHOT_DIR=<dir>` writes PNGs there, flattened onto
@@ -801,8 +836,54 @@ final class RecordingTargetOutlineTests: XCTestCase {
     }
 }
 
+/// A picker stand-in whose height a test sets. It reports where its top edge sits in the window.
+@MainActor
+private final class PickerContentHeight: ObservableObject {
+    @Published var value: CGFloat = 100
+    var top: CGFloat = .nan
+}
+
+private struct PickerContentOfHeight: View {
+    @ObservedObject var height: PickerContentHeight
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.red.frame(width: 300, height: 20)
+                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { height.top = $0 }
+            Color.blue.frame(width: 300, height: height.value - 20)
+        }
+    }
+}
+
 @MainActor
 final class RecordingPickerPanelTests: XCTestCase {
+    func testAListThatGrowsKeepsTheHeaderAtTheTopAndTheWindowTakesOnlyItsLatestHeight() async throws {
+        _ = NSApplication.shared
+        let panel = RecordingPickerPanel()
+        panel.window.alphaValue = 0
+        defer { panel.dismiss() }
+        let screen = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let height = PickerContentHeight()
+        panel.present(PickerContentOfHeight(height: height), near: CGPoint(x: screen.midX, y: screen.maxY - 40), focus: false) {}
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(panel.window.frame.height, 100)
+        var heights: [CGFloat] = []
+        let resizes = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: panel.window)
+            .sink { _ in heights.append(panel.window.frame.height) }
+        defer { resizes.cancel() }
+        // Two layout passes before the window can follow, as when a list lays out its rows: a first height, then the
+        // full one. The window was 100 pt tall throughout.
+        height.value = 250
+        panel.window.contentView?.layoutSubtreeIfNeeded()
+        height.value = 400
+        panel.window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(height.top, 0, accuracy: 0.5, "the header stays at the window's top while the window is still short")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(panel.window.frame.height, 400)
+        XCTAssertEqual(heights, [400], "only the latest height lands, never the one measured a pass before it")
+        XCTAssertEqual(height.top, 0, accuracy: 0.5)
+    }
+
     func testThePickerHasItsContentSizeEachTimeItOpens() async throws {
         _ = NSApplication.shared
         let panel = RecordingPickerPanel()

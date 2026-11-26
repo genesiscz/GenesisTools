@@ -113,6 +113,44 @@ public enum MarkdownTaskDoneStyle: String, CaseIterable, Sendable {
     }
 }
 
+/// The source editor's text size beside the page's body text.
+public enum MarkdownEditorTextSize: String, CaseIterable, Sendable {
+    /// Two points under the page's size.
+    case smaller
+    /// The size the page gives code inside its text, so the two panes of split view read alike. The default.
+    case page
+    /// Two points over the page's size.
+    case larger
+
+    /// Points added to the page's size at 100%.
+    public var offset: Double {
+        switch self {
+        case .smaller: return -2
+        case .page: return 0
+        case .larger: return 2
+        }
+    }
+}
+
+/// The space between the source editor's lines.
+public enum MarkdownEditorLineSpacing: String, CaseIterable, Sendable {
+    /// The font's own line height, as before 2026-11-24.
+    case compact
+    /// Lines 1.6 times the text size. The default.
+    case comfortable
+    /// Lines 1.75 times the text size, the page's own spacing.
+    case page
+
+    /// The line height as a multiple of the text size (CSS `line-height`); nil is the font's own.
+    public var lineHeight: Double? {
+        switch self {
+        case .compact: return nil
+        case .comfortable: return 1.6
+        case .page: return 1.75
+        }
+    }
+}
+
 @MainActor
 public final class GenesisKitMarkdownConfiguration: ObservableObject {
     public static let shared = GenesisKitMarkdownConfiguration()
@@ -194,6 +232,13 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
 
     /// The source editor opens the list of notes after `[[` and of tags after `#word` by itself. Off: Esc opens it.
     @Published public var completeWhileTyping: Bool { didSet { store(completeWhileTyping, "completeWhileTyping") } }
+    /// The source text's size beside the page's (Martin, 2026-11-24: "the text should be at similar size as the right
+    /// panel"). The window's A / 100% / A sizes both panes.
+    @Published public var editorTextSize: MarkdownEditorTextSize { didSet { store(editorTextSize.rawValue, "editorTextSize") } }
+    /// The space between the source editor's lines.
+    @Published public var editorLineSpacing: MarkdownEditorLineSpacing {
+        didSet { store(editorLineSpacing.rawValue, "editorLineSpacing") }
+    }
 
     // MARK: Go to Location (⇧⌘G)
 
@@ -278,6 +323,8 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         taskDoneStyle = string("taskDoneStyle").flatMap(MarkdownTaskDoneStyle.init(rawValue:)) ?? .dim
         pictureFolders = defaults.stringArray(forKey: Self.prefix + "pictureFolders") ?? []
         completeWhileTyping = bool("completeWhileTyping", true)
+        editorTextSize = string("editorTextSize").flatMap(MarkdownEditorTextSize.init(rawValue:)) ?? .page
+        editorLineSpacing = string("editorLineSpacing").flatMap(MarkdownEditorLineSpacing.init(rawValue:)) ?? .comfortable
         goToFiles = string("goToFiles").flatMap(MarkdownGoToFiles.init(rawValue:)) ?? .notes
         goToShowsHidden = bool("goToShowsHidden", false)
         treeShowsHidden = bool("treeShowsHidden", true)

@@ -324,14 +324,16 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         try {
             streams.push({
                 level: "debug" as pino.Level,
-                stream: createDailyFileStream(() => genesisToolsDir("logs")),
+                stream: createDailyFileStream(() => env.log.getDirectory() ?? genesisToolsDir("logs")),
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
 
             if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
                 fileLogWarningShown = true;
-                process.stderr.write(`[logger] Failed to open log file in ${genesisToolsDir("logs")}: ${message}\n`);
+                process.stderr.write(
+                    `[logger] Failed to open log file in ${env.log.getDirectory() ?? genesisToolsDir("logs")}: ${message}\n`
+                );
             }
         }
     }

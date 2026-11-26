@@ -13,6 +13,7 @@ import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
 import type { FullDiffMode } from "./diff/full";
+import type { DiffStatusConfig } from "./diff/status/types";
 import type { DiffThemeName } from "./diff/theme";
 import { AGENTS_TALK_HOOK_SECTION, type AgentsTalkConfig } from "./sections/agents-talk";
 import { AREA_RULES_HOOK_SECTION, type AreaRulesConfig } from "./sections/area-rules";
@@ -233,13 +234,18 @@ export interface DiffConfig {
      * property of the harness, not of the repository or the command.
      */
     harnesses: SomeHarnesses<DiffOverrides>;
+    /**
+     * Where the Bash diff hooks get the Git state of a root before and after a command: the mode per command shape,
+     * the modes that run beside it in shadow, and each mode's own settings. It varies by machine, not by harness.
+     */
+    status: DiffStatusConfig;
 }
 
 /**
  * What one harness may override. Anything absent falls through to the shared `diff` block. The
  * clone cap is a property of the volume and the post phase, not of a harness, so it is not here.
  */
-export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses" | "clone">> & {
+export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses" | "clone" | "status">> & {
     categories?: Partial<Record<DiffCategory, boolean>>;
 };
 
@@ -322,6 +328,13 @@ export interface ModsConfig {
          * session, for the blocks already drawn and the ones drawn later.
          */
         filesOnly: boolean;
+        /**
+         * A diff longer than this many lines draws its first lines and a `show all <n> lines` button, which opens
+         * the whole diff and leaves a `fold to <n> lines` button under it: the result of a Write over an existing
+         * file or an Edit (Claude Code's own diff, also from a REPL script's `write()`), and each open file of the
+         * mod's own diff blocks under a shell call. 0 never folds. Claude Code already folds a new file by itself.
+         */
+        foldAfterLines: number;
     };
     /**
      * Compact an idle Claude session `minutes` after its last turn, before the 1-hour prompt cache expires, when

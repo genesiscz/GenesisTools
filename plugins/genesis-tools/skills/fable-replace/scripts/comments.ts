@@ -18,7 +18,7 @@
  */
 
 import { FableReplaceError, stateless } from "./internal";
-import type { CommentSpan, DeleteLinesOp, DropCommentsOp, DropCommentsOptions, OpResult } from "./types";
+import type { AppliedOp, CommentSpan, DeleteLinesOp, DropCommentsOp, DropCommentsOptions } from "./types";
 
 /**
  * Comment spans of `src`. When `literals` is given it also receives the CONTENT spans of
@@ -333,7 +333,7 @@ export const deleteLines = (src: string, op: DeleteLinesOp): { content: string; 
     return { content: kept.join("\n"), removed: hitLines.length, lines: hitLines };
 };
 
-export const applyDropComments = (content: string, op: DropCommentsOp): { content: string; result: OpResult } => {
+export const applyDropComments = (content: string, op: DropCommentsOp): AppliedOp => {
     const desc = op.label ?? `dropComments ${op.containing ? `containing "${op.containing}"` : String(op.matching)}`;
     // An EMPTY `containing` is not a predicate: "".includes("") is true for every comment,
     // so it silently dropped all of them and reported OK. Same guard recon.ts uses.
@@ -344,6 +344,7 @@ export const applyDropComments = (content: string, op: DropCommentsOp): { conten
                 status: "MISS",
                 desc,
                 reason: "dropComments needs a non-empty `containing` or a `matching` regex — refusing to drop ALL comments",
+                lines: [],
             },
         };
     }
@@ -351,13 +352,16 @@ export const applyDropComments = (content: string, op: DropCommentsOp): { conten
     try {
         outcome = dropComments(content, op);
     } catch (err) {
-        // The shared function enforces `expect`; the op form reports it as a MISS.
+        // The shared function enforces `expect`; the op form reports it as a MISS, with what did match.
+        const matched = dropComments(content, { ...op, expect: undefined });
         return {
             content,
             result: {
                 status: op.optional ? "SKIP" : "MISS",
                 desc,
                 reason: err instanceof Error ? err.message : String(err),
+                found: matched.dropped,
+                lines: matched.lines,
             },
         };
     }
@@ -365,13 +369,13 @@ export const applyDropComments = (content: string, op: DropCommentsOp): { conten
     if (dropped === 0) {
         return {
             content,
-            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "no comment matched", found: 0 },
+            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "no comment matched", found: 0, lines },
         };
     }
-    return { content: next, result: { status: "OK", desc, found: dropped, expected: op.expect, lines } };
+    return { content: next, result: { status: "OK", desc, found: dropped, lines } };
 };
 
-export const applyDeleteLines = (content: string, op: DeleteLinesOp): { content: string; result: OpResult } => {
+export const applyDeleteLines = (content: string, op: DeleteLinesOp): AppliedOp => {
     const desc = op.label ?? `deleteLines ${op.containing ? `containing "${op.containing}"` : String(op.matching)}`;
     // An empty `containing` matches every line: it used to wipe the file and report OK.
     if ((op.containing === undefined || op.containing === "") && op.matching === undefined) {
@@ -381,6 +385,7 @@ export const applyDeleteLines = (content: string, op: DeleteLinesOp): { content:
                 status: "MISS",
                 desc,
                 reason: "deleteLines needs a non-empty `containing` or a `matching` regex — refusing to delete EVERY line",
+                lines: [],
             },
         };
     }
@@ -388,13 +393,16 @@ export const applyDeleteLines = (content: string, op: DeleteLinesOp): { content:
     try {
         outcome = deleteLines(content, op);
     } catch (err) {
-        // The shared function enforces `expect`; the op form reports it as a MISS.
+        // The shared function enforces `expect`; the op form reports it as a MISS, with what did match.
+        const matched = deleteLines(content, { ...op, expect: undefined });
         return {
             content,
             result: {
                 status: op.optional ? "SKIP" : "MISS",
                 desc,
                 reason: err instanceof Error ? err.message : String(err),
+                found: matched.removed,
+                lines: matched.lines,
             },
         };
     }
@@ -402,8 +410,8 @@ export const applyDeleteLines = (content: string, op: DeleteLinesOp): { content:
     if (removed === 0) {
         return {
             content,
-            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "no line matched", found: 0 },
+            result: { status: op.optional ? "SKIP" : "MISS", desc, reason: "no line matched", found: 0, lines },
         };
     }
-    return { content: next, result: { status: "OK", desc, found: removed, expected: op.expect, lines } };
+    return { content: next, result: { status: "OK", desc, found: removed, lines } };
 };

@@ -22,6 +22,7 @@ import {
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
 import { Executor } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatDateTime } from "@genesiscz/utils/date";
@@ -33,8 +34,18 @@ import { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 
-type GroupBy = "day" | "branch" | "workitem" | "none";
-type DateMode = "author" | "commit" | "true-first";
+const GROUP_BY_VALUES = ["day", "branch", "workitem", "none"] as const;
+const DATE_MODES = ["author", "commit", "true-first"] as const;
+type GroupBy = (typeof GROUP_BY_VALUES)[number];
+type DateMode = (typeof DATE_MODES)[number];
+
+function isGroupBy(value: string): value is GroupBy {
+    return (GROUP_BY_VALUES as readonly string[]).includes(value);
+}
+
+function isDateMode(value: string): value is DateMode {
+    return (DATE_MODES as readonly string[]).includes(value);
+}
 
 interface CommitsOptions {
     from: string;
@@ -883,7 +894,7 @@ export function registerCommitsCommand(parent: Command, _storage: Storage): void
         .option("--with-author <name...>", "Append to configured authors (repeatable)")
         .option("--format <format>", "Output format: json or table", "table")
         .option("--stat", "Include line change stats (files changed, insertions, deletions)")
-        .option("--group-by <mode>", "Group commits: day, branch, workitem, or none", "day")
+        .option("--group-by [mode]", "Group commits: day (default), branch, workitem, or none")
         .option("--without-branch", "Hide inline branch column")
         .option("--without-workitem-id", "Hide inline #workitem column")
         .option("--with-workitem-title", "Resolve workitem titles from Azure DevOps cache (inline + summary)")
@@ -901,10 +912,42 @@ export function registerCommitsCommand(parent: Command, _storage: Storage): void
             [] as number[]
         )
         .option("--include-rebases", "Expand rebased-into-range commits inline")
-        .option("--date <mode>", "Grouping date: author, commit, or true-first", "author")
+        .option("--date [mode]", "Grouping date: author (default), commit, or true-first")
         .option("--markdown", "Markdown output for standup / time-log paste")
         .option("--clipboard", "Copy output to clipboard")
-        .action(async (options: CommitsOptions) => {
-            await handleCommits(options);
-        });
+        .action(
+            async (
+                options: Omit<CommitsOptions, "groupBy" | "date"> & {
+                    groupBy?: string | boolean;
+                    date?: string | boolean;
+                }
+            ) => {
+                const enumFlag = { tool: toolCommand("git", "commits"), subcommand: ["commits"] };
+                const groupBy = await pickEnumFlag({
+                    ...enumFlag,
+                    flag: "--group-by",
+                    given: options.groupBy,
+                    values: GROUP_BY_VALUES,
+                    fallback: "day",
+                    accepts: isGroupBy,
+                });
+                if (!groupBy) {
+                    return;
+                }
+
+                const date = await pickEnumFlag({
+                    ...enumFlag,
+                    flag: "--date",
+                    given: options.date,
+                    values: DATE_MODES,
+                    fallback: "author",
+                    accepts: isDateMode,
+                });
+                if (!date) {
+                    return;
+                }
+
+                await handleCommits({ ...options, groupBy, date });
+            }
+        );
 }

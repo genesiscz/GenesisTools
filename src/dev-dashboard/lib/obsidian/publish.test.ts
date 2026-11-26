@@ -47,6 +47,24 @@ describe("obsidian publish registry", () => {
         expect(a.slug).toBe(b.slug);
     });
 
+    test("a path stored decomposed (macOS) and typed composed is one note: same slug, no second entry", async () => {
+        const decomposed = "C\u030CEZ/Note.md";
+        await getDevDashboardStorage().setConfig({
+            port: 3042,
+            obsidianVault: "/x",
+            publishedNotes: [
+                { slug: "oldslug1234567", vaultPath: decomposed, publishedAt: "2026-01-01T00:00:00.000Z" },
+            ],
+            cmuxPollIntervalMs: 2000,
+        });
+
+        const composed = decomposed.normalize("NFC");
+        expect(composed).not.toBe(decomposed);
+        expect((await publishNote(composed)).slug).toBe("oldslug1234567");
+        expect((await findPublishedByPath(composed))?.slug).toBe("oldslug1234567");
+        expect((await findPublishedByPath(decomposed))?.slug).toBe("oldslug1234567");
+    });
+
     test("unpublishNote removes the entry", async () => {
         const note = await publishNote("Y.md");
 

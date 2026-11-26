@@ -43,6 +43,22 @@ final class MarkdownSettingsTests: XCTestCase {
         withExtendedLifetime(watch) {}
     }
 
+    func testTheEditorTextIsLikeThePageWithComfortableLinesByDefaultAndTheChoiceIsKept() throws {
+        let domain = "md-editor-text-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let configuration = GenesisKitMarkdownConfiguration(defaults: defaults)
+        XCTAssertEqual(configuration.editorTextSize, .page)
+        XCTAssertEqual(configuration.editorLineSpacing, .comfortable)
+        XCTAssertEqual(configuration.editorLineSpacing.lineHeight, 1.6)
+        configuration.editorTextSize = .larger
+        configuration.editorLineSpacing = .compact
+        let reopened = GenesisKitMarkdownConfiguration(defaults: defaults)
+        XCTAssertEqual(reopened.editorTextSize, .larger)
+        XCTAssertEqual(reopened.editorLineSpacing, .compact)
+        XCTAssertNil(reopened.editorLineSpacing.lineHeight, "compact is the font's own line height, as before")
+    }
+
     func testTheGutterCardNamesTheSessionThatWroteTheHunk() throws {
         let source = AgentBlameSource(provider: "claude", session: "9fae860c-68b8-43fd-b85a-72d538afbedb", turn: "t1",
                                       ts: "2026-10-24T17:40:00Z", prompt: "Fix the blame storm")

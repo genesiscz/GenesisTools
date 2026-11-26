@@ -440,6 +440,29 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         ]);
     });
 
+    it("reopens a Meetings window on its meeting without playing the Moment it was started with again", () => {
+        const listing = ps(
+            `  341 ${LAUNCHER} --meetings --meeting m1 --play-request {"meeting":"m1","target":{"kind":"time","atSec":12}}`
+        );
+
+        expect(plan({ psStdout: listing, stalePids: ["341"] })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--meetings",
+                "--meeting",
+                "m1",
+                "--no-activate",
+            ],
+        ]);
+    });
+
     it("drops the page and its context in the one-argument form the app writes", () => {
         const listing = ps(`  312 ${LAUNCHER} --features --page=meetings.window --page-context=--draft`);
 

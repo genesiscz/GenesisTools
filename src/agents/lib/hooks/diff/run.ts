@@ -36,7 +36,7 @@ import {
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
-import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedFilesIn } from "../git";
+import { committedPaths, gitOut, lastHistoryMove, objectId, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { modsPluginDisabled } from "../mods";
 import { callDir, safeSegment } from "../paths";
@@ -66,7 +66,7 @@ import { transcriptOf } from "./capture";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
-import { commandDirs, namedArguments } from "./command-paths";
+import { namedArguments, workDirs } from "./command-paths";
 import { type FullDiffPart, fullDiffLine, overflowPart, writeFullDiff } from "./full";
 import {
     activeSessions,
@@ -79,6 +79,8 @@ import {
 } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
+import { callHasOwnRow } from "./script-calls";
+import { gitReads, type StatusReads } from "./status/prepare";
 import { terminalColumns } from "./terminal";
 import { type Palette, resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
@@ -698,6 +700,38 @@ function inTempScratch(path: string): boolean {
     return true;
 }
 
+/**
+ * The roots of this call's post phase, read the way `runDiffPost` reads them (`roots.txt` and `heads.txt` of the call
+ * folder), so the status reads can be prepared before the body runs. Null when the pre phase left no capture.
+ */
+export function postRoots(
+    payload: HookPayload
+): { dir: string; roots: Array<{ root: string; head: string | null }>; background: boolean } | null {
+    const session = safeSegment(payload.sessionId);
+    const call = safeSegment(payload.toolUseId);
+
+    if (session === null || call === null) {
+        return null;
+    }
+
+    const dir = callDir(payload.harness, session, call);
+    const rootsFile = join(dir, "roots.txt");
+
+    if (!existsSync(rootsFile)) {
+        return null;
+    }
+
+    const headsPath = join(dir, "heads.txt");
+    const heads = existsSync(headsPath) ? readFileSync(headsPath, "utf8").split("\n") : [];
+    const roots = readFileSync(rootsFile, "utf8")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((root, index) => ({ root, head: objectId(heads[index]?.trim()) }));
+    const background = backgroundTaskOf(payload) !== null && existsSync(join(dir, "call.json"));
+
+    return { dir, roots, background };
+}
+
 /** A call that went to the background, as its post phase left it in `background.json`. */
 interface DeferredCall {
     id: string;
@@ -852,6 +886,16 @@ export function deferredMessageParts(flushed: DiffDecision[]): string[] {
  */
 export const MODS_SESSION_VAR = "GENESIS_TOOLS_MODS_SESSION";
 
+/**
+ * Set by the full-diff mod to the id of its session, in the same step as `MODS_SESSION_VAR` (`announceSession` in
+ * plugins/genesis-tools-mods/hooks/register.tsx; the two names must stay equal), so it exists from the session's first
+ * hook on. Claude Code adds a script's calls to the transcript as tool calls of their own (a virtual tool_use per call,
+ * id `repl_<uuid>`), so the mod draws a script's shell diff under that row; the mark is the mod's claim that the rows
+ * draw in this session. The mod sets it again when such a row first draws (`announceScriptRows`), for a session whose
+ * announce could not set it.
+ */
+export const MODS_SCRIPT_ROWS_VAR = "GENESIS_TOOLS_MODS_SCRIPT_ROWS";
+
 /** Whether the mod announced itself in this very session: a nested session inherits another session's id. */
 export function modLoadedIn({ sessionId, announced }: { sessionId?: string; announced?: string }): boolean {
     return sessionId !== undefined && sessionId !== "" && announced === sessionId;
@@ -868,24 +912,39 @@ function installedMod(sessionId: string | undefined): boolean {
     );
 }
 
+/** The mod's mark that a code-mode script's calls draw as rows in this session; never read by a test. */
+function scriptRowsDrawn(sessionId: string | undefined): boolean {
+    return !isTestProcess() && modLoadedIn({ sessionId, announced: env.getProcessEnv()[MODS_SCRIPT_ROWS_VAR] });
+}
+
 /**
  * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.diff.fullDiff` on: the mod
  * draws each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
+ * The mod draws under the call's own row. A code-mode script's shell call gets its diff drawn by the mod too once the
+ * mod marked that script calls draw as rows in this session (`MODS_SCRIPT_ROWS_VAR`). The mod sets that mark with its
+ * session mark, so a script's diff goes to the mod from the session's first script on; the hook's message stays for a
+ * session without the mark (a mod older than the mark, or an `env.set` that failed).
  */
 export function modDrawsDiffs({
     config,
     harness,
     sessionId,
+    toolUseId,
     isEnabled = installedMod,
+    scriptRows = scriptRowsDrawn,
 }: {
     config: HooksConfig;
     harness: string;
     sessionId?: string;
+    toolUseId?: string;
     isEnabled?: (sessionId: string | undefined) => boolean;
+    /** Whether a code-mode script's calls draw as rows in this session (the mod's mark). */
+    scriptRows?: (sessionId: string | undefined) => boolean;
 }): boolean {
     return (
         isHarnessName(harness) &&
         HARNESS_HOOK_FACTS[harness].modsDrawDiffs &&
+        (callHasOwnRow(HARNESS_HOOK_FACTS[harness], toolUseId) || scriptRows(sessionId)) &&
         config.mods.diff.fullDiff &&
         diffFor(config, harness).fullDiff !== "off" &&
         isEnabled(sessionId)
@@ -902,10 +961,13 @@ export function composePostDiff({
     payload,
     config,
     record,
+    status,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
+    /** The prepared status reads of this call's own diff; a deferred diff always reads Git itself. */
+    status?: StatusReads;
 }): { flushed: DiffDecision[]; decision: DiffDecision; message: string } {
     const maxChars = diffFor(config, payload.harness).maxMessageChars;
     const flushed = flushDeferred({ payload, config, record, maxChars: Math.floor(maxChars / 2) });
@@ -914,8 +976,13 @@ export function composePostDiff({
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
     const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
-    const drawnByMod = modDrawsDiffs({ config, harness: payload.harness, sessionId: payload.sessionId });
-    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod }), room);
+    const drawnByMod = modDrawsDiffs({
+        config,
+        harness: payload.harness,
+        sessionId: payload.sessionId,
+        toolUseId: payload.toolUseId,
+    });
+    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod, status }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
     const message = [...own, ...flushedParts].join("\n\n");
 
@@ -1549,10 +1616,13 @@ export function runDiffPost({
     drawnByMod = false,
     deferred = false,
     changeLogs,
+    status,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
+    /** The prepared status reads of this boundary (`prepareStatus`); absent: one Git read per root, as before. */
+    status?: StatusReads;
     /** The folder of the session change logs that attribution reads as proof; a test passes its own. */
     changeLogs?: string;
     /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
@@ -1604,6 +1674,7 @@ export function runDiffPost({
     const roots = readFileSync(rootsFile, "utf8")
         .split("\n")
         .filter((line) => line.length > 0);
+    const reads = status ?? gitReads("all");
     const headsPath = join(dir, "heads.txt");
     const heads = existsSync(headsPath) ? readFileSync(headsPath, "utf8").split("\n") : [];
     const stampPath = join(dir, "stamp");
@@ -1670,9 +1741,9 @@ export function runDiffPost({
         // ONE status read per root, reused for the entries AND the current HEAD: porcelain
         // v2's `--branch` header already carries the oid, so noticing a commit costs nothing
         // until one has actually happened.
-        const summary = statusOf(root);
+        const summary = reads.read(root);
         const startedOn = objectId(heads[index]?.trim());
-        const nowOn = objectId(summary.branch?.oid);
+        const nowOn = objectId(summary.head ?? undefined);
         const moved = startedOn !== null && nowOn !== null && startedOn !== nowOn;
         // A commit is the command's own edit; a rebase, pull, merge, checkout or reset is HEAD
         // walking through other people's work, so the files it brought are named in one line and
@@ -2142,7 +2213,10 @@ function attributionContext({
     // file fell to "others" (11 calls on 2026-10-14).
     const named = mentionsFrom([
         ...mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }),
-        ...namedArguments(payload.command, commandDirs(payload.command, payload.cwd)).map(canonical),
+        ...namedArguments(
+            payload.command,
+            workDirs(payload.command, payload.cwd, readOnlyCommand(payload.command))
+        ).map(canonical),
     ]);
     let siblings: Set<string> | undefined;
     let mentions: Mentions | undefined;

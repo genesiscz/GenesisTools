@@ -13,7 +13,7 @@ export const REPO_WORK_VERSION = 1;
 export const RULE_FIELDS = ["title", "body", "acceptance", "severity", "for", ...FIELD_NAMES] as const;
 export type RuleField = (typeof RULE_FIELDS)[number];
 
-/** The writes a role rule governs. `reference` is a link that is not `parent`. */
+/** The writes a role rule governs. `reference` is a link, or an edit that only moves the item under another parent. */
 export const WRITE_VERBS = [
     "spot",
     "comment",
@@ -55,6 +55,8 @@ const typeKey = z.union([z.enum(ITEM_TYPES), z.literal("*")]);
 const typeRulesSchema = z.object({
     fields: z.partialRecord(z.enum(RULE_FIELDS), fieldRuleSchema).optional(),
     writes: z.partialRecord(z.enum(WRITE_VERBS), roleRuleSchema).optional(),
+    /** Who may do a write that the `writes` rule of that verb refuses, with `--override "<why>"`. */
+    overrides: z.partialRecord(z.enum(WRITE_VERBS), roleRuleSchema).optional(),
 });
 
 const routingRuleSchema = z.object({

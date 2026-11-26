@@ -29,6 +29,8 @@ export interface HarnessFacts {
     headlessFlags: readonly string[];
     /** Subcommands after the CLI's own word that do the same (`codex exec`). */
     headlessSubcommands: readonly string[];
+    /** The variable the harness sets to its own session id. */
+    sessionEnvKey: string;
     /** The variable the harness sets to its own process id, or null. */
     pidEnvKey: string | null;
     /** The SessionStart reminder of how its agents talk to each other while they work. */
@@ -50,6 +52,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
         binary: "claude",
         headlessFlags: ["-p", "--print", "--input-format"],
         headlessSubcommands: [],
+        sessionEnvKey: "CLAUDE_CODE_SESSION_ID",
         pidEnvKey: "CLAUDE_PID",
         agentsTalkHint:
             "Invoke the `genesis-tools:agents-talk` skill first when agents must talk to each other WHILE they work: a `gt:handoff-to` swarm, or an agent team whose lead may need to steer a teammate in the middle of its task (team mail to a busy teammate waits until its turn ends). Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.",
@@ -63,6 +66,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
         binary: "codex",
         headlessFlags: [],
         headlessSubcommands: ["exec", "e", "app-server", "mcp-server", "mcp", "proto"],
+        sessionEnvKey: "CODEX_THREAD_ID",
         pidEnvKey: null,
         agentsTalkHint:
             "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).",
@@ -76,6 +80,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
         binary: "grok",
         headlessFlags: ["-p", "--prompt", "--prompt-file"],
         headlessSubcommands: [],
+        sessionEnvKey: "GROK_SESSION_ID",
         pidEnvKey: null,
         agentsTalkHint:
             "When agents must talk to each other WHILE they work, read the `agents-talk` skill and follow its Grok section: wrap `tools agents login` in the `monitor` tool (`persistent: true`), which pushes each mail line into the chat, and pass `--session <id>` explicitly on every `tools agents` call, because a grok worker's environment may be stripped. An idle grok subagent is not woken by its mail; the parent resumes it with `spawn_subagent` `resume_from`.",

@@ -5,11 +5,14 @@
 import { errorDiagnostic, failReply, infoDiagnostic, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, type WorkParams, workMethods } from "./api";
 import {
+    noteStandingDrift,
     type PullReport,
     pairItem,
+    previewSync,
     pullRemote,
     pushPairing,
     releaseHeld,
+    resolveDrift,
     runSyncOnce,
     type SyncDeps,
     type SyncReport,
@@ -53,12 +56,15 @@ import type { Resolved } from "./rules/resolve";
 import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
 import type { WorkCommand } from "./store/decide";
 import { newItemId } from "./store/decide";
+import { selectPairings } from "./store/rows";
 import { selectItems } from "./store/view";
 
 export interface CallOptions {
     request?: string;
     dryRun?: boolean;
     ownerSaid?: string;
+    /** Why this session does a write that a role rule refuses; the journal keeps it with the rule it passed. */
+    override?: string;
 }
 
 /** What a door gives each call: the store context, the per-call options, and the tool-side lookups. */
@@ -111,6 +117,8 @@ export interface ConfigRow {
     type: ItemType;
     fields: { field: RuleField; resolved: Resolved<FieldRule> }[];
     writes: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
+    /** Who may override each refused write. */
+    overrides: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
     /** Who hears about each action on this type (P8 decision 4): the level of each layer and the one that decides. */
     notify: { action: NotifyAction; resolved: ResolvedNotify; editor: ConfigNotifyEditor }[];
 }
@@ -185,9 +193,17 @@ function strip<T extends Record<string, unknown>>(value: T): T {
     return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
 }
 
+/** The session's context with this call's owner words and override. */
+function callContext(session: WorkSession): WorkContext {
+    return {
+        ...session.ctx,
+        ...(session.call.ownerSaid !== undefined ? { ownerSaid: session.call.ownerSaid } : {}),
+        ...(session.call.override !== undefined ? { override: session.call.override } : {}),
+    };
+}
+
 function run(session: WorkSession, command: WorkCommand): Promise<Reply<WriteData>> {
-    const ctx: WorkContext =
-        session.call.ownerSaid !== undefined ? { ...session.ctx, ownerSaid: session.call.ownerSaid } : session.ctx;
+    const ctx = callContext(session);
     return write(ctx, command, strip({ request: session.call.request, dryRun: session.call.dryRun }));
 }
 
@@ -445,6 +461,7 @@ export const workHandlers: WorkHandlers = {
                 (entry) => entry.resolved.value.level !== "optional"
             ),
             writes: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayWrite(type, verb) })),
+            overrides: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayOverride(type, verb) })),
             notify: NOTIFY_ACTIONS.map((action) => ({
                 action,
                 resolved: resolveNotify(loaded.notifyLayers, { type, action }),
@@ -583,8 +600,7 @@ export const workHandlers: WorkHandlers = {
     },
 
     async reopen(p, session) {
-        const ctx: WorkContext =
-            session.call.ownerSaid !== undefined ? { ...session.ctx, ownerSaid: session.call.ownerSaid } : session.ctx;
+        const ctx = callContext(session);
         return reopen(
             ctx,
             strip({
@@ -723,10 +739,73 @@ export const workHandlers: WorkHandlers = {
                 { dryRun: true, diagnostics: [infoDiagnostic("PREVIEW", message)] }
             );
 
+        if (p.resolve !== undefined) {
+            if (p.take === undefined) {
+                return failReply("sync", [
+                    errorDiagnostic("TAKE_REQUIRED", "--resolve needs --take ours or --take theirs.", "take"),
+                ]);
+            }
+
+            if (p.resolve === "all") {
+                const drifted = selectPairings(sync.deps.db, { state: "drift" }).map((pairing) => pairing.item);
+
+                if (session.call.dryRun === true) {
+                    return preview(
+                        `Would keep ${p.take === "ours" ? "this side" : "the outside"} for ${drifted.length} item(s).`
+                    );
+                }
+
+                const total: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
+
+                for (const item of [...new Set(drifted)]) {
+                    try {
+                        const one = await resolveDrift(sync.deps, {
+                            item,
+                            take: p.take,
+                            ...(p.facts !== undefined ? { facts: p.facts } : {}),
+                        });
+                        total.pushed += one.pushed;
+                        total.failed += one.failed;
+                        total.drift += one.drift;
+                        total.problems = [...(total.problems ?? []), ...(one.problems ?? [])];
+                        total.notes = [...(total.notes ?? []), ...(one.notes ?? [])];
+                    } catch (error) {
+                        total.notes = [...(total.notes ?? []), `${item}: ${String(error)}`];
+                    }
+                }
+
+                return okReply("sync", noteStandingDrift(sync.deps.db, total));
+            }
+
+            const found = itemOf(session, "sync", p.resolve);
+
+            if ("refused" in found) {
+                return found.refused;
+            }
+
+            if (session.call.dryRun === true) {
+                return preview(`Would keep ${p.take === "ours" ? "this side" : "the outside"} for ${found.item.id}.`);
+            }
+
+            try {
+                const options = {
+                    item: found.item.id,
+                    take: p.take,
+                    ...(p.facts !== undefined ? { facts: p.facts } : {}),
+                };
+                return okReply("sync", noteStandingDrift(sync.deps.db, await resolveDrift(sync.deps, options)));
+            } catch (error) {
+                return failReply("sync", [errorDiagnostic("RESOLVE_FAILED", String(error), "resolve")]);
+            }
+        }
+
         if (p.release === undefined) {
+            const options = p.all === true ? { all: true } : {};
             return session.call.dryRun === true
-                ? preview("Would sync queued connector changes.")
-                : okReply("sync", await runSyncOnce(sync.deps));
+                ? okReply("sync", noteStandingDrift(sync.deps.db, await previewSync(sync.deps, options)), {
+                      dryRun: true,
+                  })
+                : okReply("sync", noteStandingDrift(sync.deps.db, await runSyncOnce(sync.deps, options)));
         }
 
         const found = itemOf(session, "sync", p.release);

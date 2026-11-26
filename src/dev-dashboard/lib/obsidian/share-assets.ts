@@ -141,8 +141,11 @@ export interface ShareAssetIndex {
     sharedNote: string;
 }
 
-export function shareAssetUrl(slug: string, hash: string): string {
-    return `/share/${encodeURIComponent(slug)}?asset=${hash}`;
+/** The path the share pages live under: `/share` on the Mac's dashboard, any one segment on a share server (`/md`). */
+export const DEFAULT_SHARE_PAGE_PATH = "/share";
+
+export function shareAssetUrl(slug: string, hash: string, pagePath = DEFAULT_SHARE_PAGE_PATH): string {
+    return `${pagePath}/${encodeURIComponent(slug)}?asset=${hash}`;
 }
 
 /**
@@ -576,11 +579,11 @@ export function linkedImageResolver(options: {
  * secrets masked here, before any caller (panel, raw, JSON fetch) can see it.
  */
 export async function readShareAsset(options: {
-    vaultRoot: string;
     index: ShareAssetIndex;
     hash: string;
+    read: ShareAssetReader;
 }): Promise<{ asset: ShareAsset; body: Buffer } | null> {
-    const { vaultRoot, index, hash } = options;
+    const { index, hash, read } = options;
 
     if (!SHARE_ASSET_HASH_RE.test(hash)) {
         return null;
@@ -592,9 +595,17 @@ export async function readShareAsset(options: {
         return null;
     }
 
-    const body = await readIndexedAsset(vaultRoot, asset);
+    const body = await read(asset);
 
     return body ? { asset, body } : null;
+}
+
+/** The servable body of one indexed asset: masked like the page shows it, or null when it changed or is gone. */
+export type ShareAssetReader = (asset: ShareAsset) => Promise<Buffer | null>;
+
+/** Reads each asset from its own path in the vault (`readIndexedAsset`). */
+export function vaultAssetReader(vaultRoot: string): ShareAssetReader {
+    return (asset) => readIndexedAsset(vaultRoot, asset);
 }
 
 /**
@@ -708,12 +719,12 @@ function commonDir(paths: string[]): string {
  * `SHARE_BUNDLE_MAX_BYTES`.
  */
 async function readAssetBodies(options: {
-    vaultRoot: string;
+    read: ShareAssetReader;
     assets: Iterable<ShareAsset>;
     startBytes: number;
     what: string;
 }): Promise<{ bodies: Map<ShareAsset, Buffer>; skipped: number; total: number } | null> {
-    const { vaultRoot, assets, what } = options;
+    const { read, assets, what } = options;
     const bodies = new Map<ShareAsset, Buffer>();
     let total = options.startBytes;
     let skipped = 0;
@@ -723,7 +734,7 @@ async function readAssetBodies(options: {
     }
 
     for (const asset of assets) {
-        const body = await readIndexedAsset(vaultRoot, asset);
+        const body = await read(asset);
 
         if (!body) {
             log.warn({ asset: asset.vaultPath }, `${what} skipped an attachment that changed`);
@@ -773,17 +784,17 @@ export function shareAttachments(index: ShareAssetIndex): ShareAsset[] {
  * files together exceed `SHARE_BUNDLE_MAX_BYTES`.
  */
 export async function buildShareBundle(options: {
-    vaultRoot: string;
+    read: ShareAssetReader;
     index: ShareAssetIndex;
     notePath: string;
     noteText: string;
     folderName: string;
 }): Promise<{ entries: Array<{ name: string; data: Uint8Array }>; skipped: number } | null> {
-    const { vaultRoot, index, notePath, noteText, folderName } = options;
+    const { index, notePath, noteText, folderName } = options;
 
     const noteData = new TextEncoder().encode(noteText);
     const read = await readAssetBodies({
-        vaultRoot,
+        read: options.read,
         assets: shareAttachments(index),
         startBytes: noteData.length,
         what: "share bundle",
@@ -859,15 +870,15 @@ function dataUrl(contentType: string, body: Buffer): string {
  * Returns null when the files together exceed `SHARE_BUNDLE_MAX_BYTES`.
  */
 export async function buildShareEmbed(options: {
-    vaultRoot: string;
+    read: ShareAssetReader;
     index: ShareAssetIndex;
     panelBase: (asset: ShareAsset) => string;
     sourceBytes: number;
 }): Promise<ShareEmbed | null> {
-    const { vaultRoot, index, panelBase, sourceBytes } = options;
+    const { index, panelBase, sourceBytes } = options;
     const embed: ShareEmbed = { media: new Map(), panels: {}, raws: {} };
     const read = await readAssetBodies({
-        vaultRoot,
+        read: options.read,
         assets: index.byHash.values(),
         startBytes: sourceBytes,
         what: "share embed",

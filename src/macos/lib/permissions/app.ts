@@ -597,9 +597,13 @@ export interface BuildAppOptions {
     parts?: Omit<PartsChoice, "installed">;
 }
 
-/** Orders builds, and anything else that rewrites `retired.noindex` (`retiredBundlesSummary` with `apply`). */
+/**
+ * Orders builds, app tests (they share the checkout's Swift tree) and anything else that rewrites `retired.noindex`
+ * (`retiredBundlesSummary` with `apply`). It sits in the app home beside the bundle, which a GENESIS_TOOLS_HOME
+ * sandbox does not move: under the sandbox home, an `app:test` there took a lock no real build waits on (2026-11-25).
+ */
 function appBuildLockPath(): string {
-    return join(genesisAppDir(), "build.lock");
+    return join(genesisAppInstallDir(), "build.lock");
 }
 
 export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {

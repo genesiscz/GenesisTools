@@ -28,6 +28,7 @@ export interface RuleLayerInput {
 
 const ANYONE: RoleRule = "anyone";
 const LEAD_OWNER: RoleRule = ["lead", "owner"];
+const POSTER_LEAD_OWNER: RoleRule = ["poster", "lead", "owner"];
 
 /** The write rules per level (design C, P3): the built-in defaults. */
 function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
@@ -50,17 +51,29 @@ function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
 
             return type === "handoff" ? ["worker", "poster", "owner"] : ANYONE;
         case "edit":
+            // The session that made an epic or a note may edit it too (the owner asked not to restrict agents too
+            // much, D5); another session still needs a lead or the owner.
+            if (type === "epic" || level === "note" || type === "handoff") {
+                return POSTER_LEAD_OWNER;
+            }
+
+            return ANYONE;
         case "drop":
             if (type === "epic" || level === "note") {
                 return LEAD_OWNER;
             }
 
-            return type === "handoff" ? ["poster", "lead", "owner"] : ANYONE;
+            return type === "handoff" ? POSTER_LEAD_OWNER : ANYONE;
         case "accept":
             // The design gave lead and owner only. The poster (the session that spotted it) may accept its own find
             // too, because the owner asked not to restrict agents too much (D5); an idea stays the owner's.
-            return type === "idea" ? ["owner"] : ["poster", "lead", "owner"];
+            return type === "idea" ? ["owner"] : POSTER_LEAD_OWNER;
     }
+}
+
+/** Who may override a refused write by default: finish and drop, by anyone; every other verb, nobody. */
+function defaultOverride(verb: WriteVerb): RoleRule {
+    return verb === "finish" || verb === "drop" ? ANYONE : [];
 }
 
 /** Built-in field rules: title and type are required by the store itself; a spotted item recommends these three. */
@@ -106,6 +119,8 @@ function pickTyped<V>(
 export interface ResolvedRules {
     field(type: ItemType, field: RuleField): Resolved<FieldRule>;
     mayWrite(type: ItemType, verb: WriteVerb): Resolved<RoleRule>;
+    /** Who may do a write that `mayWrite` refuses, with an override and its reason. */
+    mayOverride(type: ItemType, verb: WriteVerb): Resolved<RoleRule>;
     /** The first routing rule of the strongest layer that has a list (a list replaces a weaker list as a whole). */
     routeSpotted(draft: {
         type: ItemType;
@@ -137,6 +152,14 @@ export function resolveWorkRules(layers: readonly RuleLayerInput[]): ResolvedRul
                 type,
                 (rules, key) => rules.types?.[key]?.writes?.[verb],
                 defaultWrite(type, verb)
+            );
+        },
+        mayOverride(type, verb) {
+            return pickTyped(
+                layers,
+                type,
+                (rules, key) => rules.types?.[key]?.overrides?.[verb],
+                defaultOverride(verb)
             );
         },
         routeSpotted(draft) {

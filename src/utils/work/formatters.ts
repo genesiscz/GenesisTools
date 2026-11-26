@@ -11,6 +11,7 @@ import {
     type TableShape,
 } from "@genesiscz/utils/output/formatter";
 import type { Reply } from "@genesiscz/utils/output/reply";
+import type { SyncReport } from "./connectors/sync";
 import type { ContextFact } from "./context";
 import type { ConfigResult, ContextResult, ListResult, TreeResult, WorkResults } from "./handlers";
 import type { Change } from "./model/change";
@@ -110,6 +111,19 @@ function summary(change: Change): string {
     return typeof title === "string" ? `  ${title}` : "";
 }
 
+/** The reason and the rule of a role override the change carries, for the end of its log line. */
+function overrideNote(change: ShowResult["log"][number]): string {
+    const facts = change.stamp?.facts ?? [];
+    const why = facts.find((fact) => fact.path === "role-override");
+
+    if (why === undefined) {
+        return "";
+    }
+
+    const rules = facts.filter((fact) => fact.path === "role-override.rule").map((fact) => fact.value);
+    return `  [override: ${why.value}${rules.length > 0 ? `; ${rules.join("; ")}` : ""}]`;
+}
+
 function showText(data: ShowResult, section: string | undefined): string[] {
     const { item } = data;
     const head = [
@@ -125,7 +139,7 @@ function showText(data: ShowResult, section: string | undefined): string[] {
     ];
     const log = data.log.map(
         (c) =>
-            `  ${c.ts.slice(0, 16)}  ${c.kind}  ${c.actor.sessionTitle ?? c.actor.sessionId ?? c.actor.harness}${summary(c)}`
+            `  ${c.ts.slice(0, 16)}  ${c.kind}  ${c.actor.sessionTitle ?? c.actor.sessionId ?? c.actor.harness}${summary(c)}${overrideNote(c)}`
     );
 
     switch (section) {
@@ -209,6 +223,49 @@ export interface ViewOptions {
     explain?: boolean;
 }
 
+function idList(ids: readonly string[]): string {
+    const shown = ids.slice(0, 20).join(", ");
+    return ids.length > 20 ? `${shown} and ${ids.length - 20} more` : shown;
+}
+
+/** One pass of the sync, or its preview: the counts, then each held or failed item with its reason, then the notes. */
+function syncLines(d: SyncReport): string[] {
+    if (d.skipped !== undefined) {
+        return [`skipped: ${d.skipped} (another runner holds the lease)`];
+    }
+
+    const lines: string[] = [];
+
+    if (d.preview !== undefined) {
+        const { create, update, hold } = d.preview;
+        lines.push(
+            `preview, nothing sent: ${create.length} to make outside, ${update.length} to update, ${hold.length} held`
+        );
+
+        for (const [label, ids] of [
+            ["make", create],
+            ["update", update],
+        ] as const) {
+            if (ids.length > 0) {
+                lines.push(`  ${label}: ${idList(ids)}`);
+            }
+        }
+    } else {
+        lines.push(`${d.pushed} pushed, ${d.held} held, ${d.failed} failed, ${d.drift} drift`);
+    }
+
+    for (const problem of d.problems ?? []) {
+        const note = problem.note.split("\n")[0].slice(0, 300);
+        lines.push(`  ${problem.state} ${problem.item} (${problem.connector}): ${note}`);
+    }
+
+    for (const note of d.notes ?? []) {
+        lines.push(`  note: ${note}`);
+    }
+
+    return lines;
+}
+
 export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResults]: Formatter<WorkResults[M]> } {
     return {
         list: defineFormatter<ListResult>({
@@ -286,8 +343,13 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
                         }
                     }
 
-                    for (const { verb, resolved } of row.writes) {
-                        lines.push(`  write ${verb}: ${roleText(resolved.value)} (from ${resolved.from})`);
+                    const roleRules = [
+                        ...row.writes.map((entry) => ({ label: "write", ...entry })),
+                        ...row.overrides.map((entry) => ({ label: "override", ...entry })),
+                    ];
+
+                    for (const { label, verb, resolved } of roleRules) {
+                        lines.push(`  ${label} ${verb}: ${roleText(resolved.value)} (from ${resolved.from})`);
 
                         if (view.explain) {
                             lines.push(
@@ -359,11 +421,7 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
             ],
         }),
         sync: defineFormatter<WorkResults["sync"]>({
-            text: (d) => [
-                d.skipped !== undefined
-                    ? `skipped: ${d.skipped} (another runner holds the lease)`
-                    : `${d.pushed} pushed, ${d.held} held, ${d.failed} failed, ${d.drift} drift`,
-            ],
+            text: (d) => syncLines(d),
         }),
         batch: defineFormatter<Reply<unknown>[]>({
             text: (replies) => replies.map((r, i) => `${i + 1}. ${r.verb}: ${r.ok ? "ok" : "failed"}`),

@@ -465,6 +465,25 @@ export function formatCountdown(remainingMs: number): string {
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+// ============= Timecodes =============
+
+/**
+ * Seconds as `H:MM:SS`, the form a video player and `ffmpeg -ss` both read (`5:21:35`). Fractions are cut.
+ * `hours: "auto"` leaves out a zero hour (`21:35`), as a player's clock does.
+ */
+export function formatTimecode(totalSeconds: number, options: { hours?: "always" | "auto" } = {}): string {
+    const whole = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(whole / 3600);
+    const minutes = Math.floor((whole % 3600) / 60);
+    const seconds = String(whole % 60).padStart(2, "0");
+
+    if (hours === 0 && options.hours === "auto") {
+        return `${minutes}:${seconds}`;
+    }
+
+    return `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
+}
+
 /**
  * One line of tab-separated values. A tab, carriage return or newline inside a cell becomes one space, so a cell never
  * splits a row; an absent cell is empty.
@@ -473,4 +492,32 @@ export function tsvLine(cells: ReadonlyArray<string | number | undefined | null>
     return cells
         .map((cell) => (cell === undefined || cell === null ? "" : String(cell).replace(/[\t\r\n]+/g, " ")))
         .join("\t");
+}
+
+/**
+ * `H:MM:SS`, `M:SS` or plain seconds (`5:21:35`, `21:35`, `19295.5`) as seconds; null for anything else. Without an
+ * hour field the minutes may pass 59 (`62:03` is 3723 s), as a player counts a long video.
+ */
+export function parseTimecode(input: string): number | null {
+    const text = input.trim();
+
+    if (/^\d+(\.\d+)?$/.test(text)) {
+        const seconds = Number(text);
+        return Number.isFinite(seconds) ? seconds : null;
+    }
+
+    const match = text.match(/^(?:(\d+):)?(\d+):(\d{1,2}(?:\.\d+)?)$/);
+
+    if (!match) {
+        return null;
+    }
+
+    const [, hours, minutes, seconds] = match;
+
+    if ((hours !== undefined && (minutes.length > 2 || Number(minutes) > 59)) || Number(seconds) >= 60) {
+        return null;
+    }
+
+    const total = Number(hours ?? 0) * 3600 + Number(minutes) * 60 + Number(seconds);
+    return Number.isFinite(total) ? total : null;
 }

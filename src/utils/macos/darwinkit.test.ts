@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
     createIdleCloser,
+    GuardedDarwinKit,
+    holdUntilSettled,
     parseDarwinKitAccessError,
     shouldAnnounceAccessPrompt,
     translateDarwinKitAccessError,
 } from "./darwinkit";
+import { fakeDarwinKitPath } from "./testing/fake-darwinkit";
 
 /**
  * `MacReminders.requestAccess` retires the DarwinKit helper it spawned, because
@@ -183,5 +186,65 @@ describe("translateDarwinKitAccessError", () => {
 
         expect(translated).toBeInstanceOf(Error);
         expect(translated.message).toBe("boom");
+    });
+});
+
+/**
+ * DarwinKit unrefs its helper and the helper's pipes, and waits for the helper's `ready` line with
+ * no timer. A CLI that awaits only that line had nothing holding Bun's event loop open, so Bun
+ * exited with code 0 in the middle of the await: `tools todo add --sync-to calendar` printed
+ * nothing, recorded no sync and left its lock file behind (2026-11-24).
+ */
+describe("holdUntilSettled", () => {
+    test("passes the value through", async () => {
+        expect(await holdUntilSettled(Promise.resolve(7), { ms: 1_000, what: "work" })).toBe(7);
+    });
+
+    test("passes a rejection through unchanged", async () => {
+        const failure = new Error("helper said no");
+
+        await expect(holdUntilSettled(Promise.reject(failure), { ms: 1_000, what: "work" })).rejects.toBe(failure);
+    });
+
+    test("rejects with its label after the deadline and runs onExpire once", async () => {
+        let expired = 0;
+        const pending = holdUntilSettled(new Promise<never>(() => {}), {
+            ms: 20,
+            what: "The helper sent no answer to x",
+            onExpire: () => {
+                expired += 1;
+            },
+        });
+
+        await expect(pending).rejects.toThrow("The helper sent no answer to x after 20 ms");
+        expect(expired).toBe(1);
+    });
+
+    test("negative control: a settled wait never runs onExpire", async () => {
+        let expired = 0;
+        await holdUntilSettled(Promise.resolve(), {
+            ms: 20,
+            what: "work",
+            onExpire: () => {
+                expired += 1;
+            },
+        });
+        await Bun.sleep(40);
+
+        expect(expired).toBe(0);
+    });
+});
+
+describe("GuardedDarwinKit", () => {
+    test("answers through a helper that sends ready, and passes its status through", async () => {
+        const dk = new GuardedDarwinKit({ binary: fakeDarwinKitPath(), timeout: 5_000, reconnect: { enabled: false } });
+
+        try {
+            const answer = await dk.calendar.authorized();
+
+            expect(answer.status).toBe("notDetermined");
+        } finally {
+            await dk.close();
+        }
     });
 });

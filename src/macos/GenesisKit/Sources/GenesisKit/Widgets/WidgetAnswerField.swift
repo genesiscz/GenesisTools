@@ -12,7 +12,7 @@ enum WidgetAnswerFieldStyle: Equatable {
             : EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 5)
     }
 
-    var cornerRadius: CGFloat { self == .full ? 13 : WidgetOptionLabel.cornerRadius + 2 }
+    var cornerRadius: CGFloat { self == .full ? 13 : DecisionOptionMetrics.cornerRadius + 2 }
 }
 
 /// One answer box for the reply composer, a decision card's own answer and the alert popup's own answer: the rounded
@@ -53,6 +53,8 @@ struct WidgetAnswerField<Above: View, Below: View>: View {
     var activate: () -> Void = {}
     /// The compact field's tooltip, which says where a click goes.
     var activateTooltip = ""
+    /// The compact field's accessibility identifier and frame probe: the alert's, or a list entry's.
+    var compactIdentifier = "widget.peek.ownAnswer"
     let above: Above
     let below: Below
 
@@ -110,8 +112,8 @@ struct WidgetAnswerField<Above: View, Below: View>: View {
                 .accessibilityLabel(placeholder.trimmingCharacters(in: CharacterSet(charactersIn: "…")))
                 .accessibilityValue(shownText)
                 .accessibilityHint(activateTooltip)
-                .accessibilityIdentifier("widget.peek.ownAnswer")
-                .frameProbe("widget.peek.ownAnswer")
+                .accessibilityIdentifier(compactIdentifier)
+                .frameProbe(compactIdentifier)
         } else {
             box.onTapGesture(perform: activate)
                 .frameProbe(ownAnswerID == nil ? "widget.composer" : "widget.ownAnswer.box")
@@ -182,11 +184,16 @@ struct WidgetAnswerField<Above: View, Below: View>: View {
 }
 
 extension WidgetAnswerField where Above == EmptyView, Below == EmptyView {
-    /// The alert popup's own answer: the compact box, showing what the decision's own answer holds.
-    static func compact(placeholder: String, shownText: String, tooltip: String, activate: @escaping () -> Void)
+    /// A compact own answer (the alert popup's, a list entry's): the compact box, showing what the decision's own
+    /// answer holds.
+    static func compact(placeholder: String, shownText: String, tooltip: String,
+                        identifier: String = "widget.peek.ownAnswer", activate: @escaping () -> Void)
         -> WidgetAnswerField
     {
-        WidgetAnswerField(style: .compact, ownAnswerID: "", placeholder: placeholder, shownText: shownText,
-                          activate: activate, activateTooltip: tooltip, above: { EmptyView() }, below: { EmptyView() })
+        var field = WidgetAnswerField(style: .compact, ownAnswerID: "", placeholder: placeholder, shownText: shownText,
+                                      activate: activate, activateTooltip: tooltip, above: { EmptyView() },
+                                      below: { EmptyView() })
+        field.compactIdentifier = identifier
+        return field
     }
 }

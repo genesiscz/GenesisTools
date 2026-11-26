@@ -41,7 +41,7 @@ export function calendarPermissionMessage(status: string, need: "read" | "write"
         case "restricted":
             return `Calendar access for this process is restricted by a profile or parental controls (status: restricted). ${fix}`;
         default:
-            return `Calendar access for this process is not granted (status: ${status}) and macOS showed no permission prompt. ${fix}`;
+            return `Calendar access for this process is not granted (status: ${status}) and macOS showed no permission prompt. To make macOS ask, run \`${macosCalendarDoctorCommand()} --request-access\` from a terminal and answer the dialog. ${fix}`;
     }
 }
 

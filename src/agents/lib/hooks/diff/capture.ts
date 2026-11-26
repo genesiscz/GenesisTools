@@ -15,23 +15,16 @@ import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { type DiffConfig, defaultLogPath, megabytes } from "../config";
-import {
-    gitOut,
-    isDeleted,
-    isUntrackedDirectory,
-    objectId,
-    statusEntries,
-    untrackedFilesIn,
-    untrackedFilesInEach,
-} from "../git";
+import { gitOut, isDeleted, isUntrackedDirectory, objectId, untrackedFilesIn, untrackedFilesInEach } from "../git";
 import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
 import { actorOf, readOnlyCommand } from "./attribution";
-import { commandDirs, namedArguments } from "./command-paths";
+import { namedArguments, workDirs } from "./command-paths";
 import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
+import { gitReads, type StatusReads } from "./status/prepare";
 
 /**
  * Files the hooks and the harness append to during EVERY call: the decision log and its rotated
@@ -215,13 +208,19 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
  * command. A regex got all three of these wrong: it took only the FIRST `cd`, refused a
  * relative path, and truncated `cd /Users/x/My Repo` at the space.
  *
- * ⚠️ A directory the command merely NAMES is not a root, even when it is a repository. That
+ * A command that may write also works in each folder it hands a program (`programDirs`): a folder flag such as
+ * `--cwd <dir>` or `-C <dir>`, or a repository's top folder given to a script runner.
+ *
+ * ⚠️ Any other directory the command merely NAMES is not a root, even when it is in a repository. That
  * is deliberate (one `git rev-parse` per candidate costs about 8 ms on the hot path, and the
  * `git status` that follows in the post phase costs 30 to 60 ms more); files named that way
- * are watched individually instead, by `captureNamed`.
+ * are watched individually instead, by `captureNamed`. A command that only reads gets no program folder for the
+ * same reason: `git -C <dir> log` changes nothing there.
  */
 export function captureRoots(payload: HookPayload, config: DiffConfig): string[] {
-    return rootsOf(commandDirs(payload.command, payload.cwd), config).map((entry) => entry.root);
+    return rootsOf(workDirs(payload.command, payload.cwd, readOnlyCommand(payload.command)), config).map(
+        (entry) => entry.root
+    );
 }
 
 /**
@@ -614,14 +613,32 @@ function entryBytes(path: string, limit: number, found: { placeholder: boolean; 
  *
  * `copyFile` is the clone primitive, a parameter so a test can see its flags or make it fail.
  */
+/** What the pre phase knows before it reads any status: the command's folders, its roots and its shape. */
+export interface CaptureStart {
+    dirs: string[];
+    roots: Array<{ root: string; head: string | null }>;
+    skipped: string[];
+    readOnly: boolean;
+}
+
+/** The roots of a call and whether its command only reads, so the status reads can be prepared before the capture. */
+export function captureStart(payload: HookPayload, config: DiffConfig): CaptureStart {
+    const readOnly = readOnlyCommand(payload.command);
+    const dirs = workDirs(payload.command, payload.cwd, readOnly);
+    const skipped: string[] = [];
+    const roots = rootsOf(dirs, config, skipped);
+    return { dirs, roots, skipped, readOnly };
+}
+
 export function capturePre(
     payload: HookPayload,
     config: DiffConfig,
-    { copyFile }: { copyFile?: CopyFile } = {}
+    { copyFile, start, status }: { copyFile?: CopyFile; start?: CaptureStart; status?: StatusReads } = {}
 ): CaptureResult {
-    const dirs = commandDirs(payload.command, payload.cwd);
-    const skipped: string[] = [];
-    const captured_roots = rootsOf(dirs, config, skipped);
+    const begun = start ?? captureStart(payload, config);
+    const dirs = begun.dirs;
+    const skipped: string[] = [...begun.skipped];
+    const captured_roots: CapturedRoot[] = begun.roots;
     const roots = captured_roots.map((entry) => entry.root);
     const wanted = config.watchNamedPaths
         ? namedArguments(payload.command, dirs).filter((path) => !harnessOwnFile(path))
@@ -674,7 +691,8 @@ export function capturePre(
     // on 2026-11-01 each put the dirty files into a tar, `ls` and `tail` included. Every file the
     // post phase reads stays, so its answer (silent, the other writers' files, a stale deletion) is
     // the same.
-    const readOnly = readOnlyCommand(payload.command);
+    const readOnly = begun.readOnly;
+    const reads = status ?? gitReads(readOnly ? "deletions" : "all");
 
     // The named-path pass runs FIRST so a capture with no git root still produces a call
     // directory. The post phase gates on `roots.txt`, and returning early when `roots` was
@@ -711,7 +729,7 @@ export function capturePre(
     roots.forEach((root, index) => {
         // A reader needs only the already-deleted tracked paths. Its post phase still takes a fresh
         // full status so a concurrent writer's untracked file is attributed correctly.
-        const entries = statusEntries(root, { trackedOnly: readOnly });
+        const entries = reads.read(root).entries;
         // A DELETED path is excluded: it is gone from disk, so there is nothing to copy (one
         // such entry used to make `tar` exit 1 and discard the whole archive, 2026-09-20). The
         // post phase renders a deletion from `git diff HEAD` and needs no captured copy.

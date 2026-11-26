@@ -57,7 +57,7 @@ struct WidgetUsageModuleView: View {
                     alertsList(limit: presentation == .expanded ? 3 : 1)
                     rowsList(limit: presentation == .expanded ? 40 : 5)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 16)
+                .padding(WidgetModuleMetrics.padding)
             }
         }
         .accessibilityElement(children: .contain)
@@ -89,10 +89,7 @@ struct WidgetUsageModuleView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
-            Image(systemName: WidgetModuleChoice.usage.symbol).foregroundStyle(.mint)
-            Text("Usage").font(.system(size: 15, weight: .semibold))
-            Spacer()
+        WidgetModuleHeader(symbol: WidgetModuleChoice.usage.symbol, title: "Usage", tint: .mint) {
             if store.loading { SpinningArc(color: .mint).frame(width: 13, height: 13) }
             if let loadedAt = store.loadedAt {
                 LiveAgo(date: loadedAt, style: .brief).font(.system(size: 10)).foregroundStyle(.secondary)

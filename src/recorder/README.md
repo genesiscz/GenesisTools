@@ -56,8 +56,10 @@ Target flags of `start` (one at most):
 | `--app <name>` | this app's windows (name, bundle id or pid) |
 | `--region <x,y,w,h>` | an area, in global screen points from the top-left corner (CoreGraphics) |
 
-A display that is not connected, or an area off every display, is refused, naming the displays. A window or app
-movie has no audio: `--audio` needs `--display` or `--region`. Every target keeps cursor positions and clicks,
+A display that is not connected, or an area off every display, is refused, naming the displays. Every target
+records sound with `--audio`. A window or app movie's system track keeps everything the Mac plays, as a display
+movie does; `--system-audio-scope app` keeps only the recorded app's sound (ScreenCaptureKit filters sound per app,
+never per window). Every target keeps cursor positions and clicks,
 including a recording with the cursor hidden. Window clicks outside the selected windows are excluded. Shortcuts
 are kept unless `--no-shortcuts` is set. An area is recorded in ax-tool's region mode.
 
@@ -67,6 +69,7 @@ Movie flags of `start`:
 |---|---|---|
 | `--audio <sources>` | none | `system`, `mic` or `system,mic`, one track per source |
 | `--mic-device <uid>` | needs `--audio mic` | the microphone, an id from `ax-tool audio-devices` |
+| `--system-audio-scope [scope]` | `all`; needs `--audio system` | a window or app movie's system sound: `all` (everything the Mac plays) or `app` (only the recorded app); a display or area keeps everything |
 | `--fps <n>` | 60, 1 to 120 | frames per second while something moves |
 | `--idle-fps <n>` | keeps `--fps`, 0.1 to 5 | frames per second while nothing moves |
 | `--threshold <percent>` | 0.5, 0 to 100 | how much of the picture must change to leave the idle rate |
@@ -269,6 +272,7 @@ tools recorder finish <recording> <movie> [--from T --to T]  # subtitles and cha
 tools recorder proxy <recording> [--display most-change|ID] [--window 10] [--switch FROM-TO=ID]... [--keep-plan]
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of a proxy.json)
 tools recorder proxy <recording> --undo-switch   # take the last display switch back (--redo-switch makes it again)
+tools recorder displays <recording> [--json]     # each display, the segments and the switch points (source seconds)
 ```
 
 `export --size` takes `1920x1080`, `1920x` (width) or `x1080` (height). Progress prints on stderr every 10 %; stdout
@@ -285,6 +289,13 @@ editor's ⌘Z and the REPL's `undoDisplaySwitch()` take back the same one. A mee
 captions with the speakers' names. The picture holds every display that has frames (bars round a smaller one), so a
 switch never moves an edit's hidden parts; an edit made on an older proxy is moved onto the new picture once (one undo
 step, `fitToProxy`). `edit` makes the proxy by itself for a frames-only recording.
+
+`displays` reads the plan back: every display with frames, the segments from start to end and the switch times. The
+editor draws one row per display from the same plan, with the switch points as lines. Three ops of `apply` change it,
+each call one undo step: `switchDisplay` (`{display, from, to}`), `hideDisplay` (`{display, from?, to?}`: the display
+next to each of its segments shows instead) and `moveDisplaySwitch` (`{at, to}`). The REPL's `m.displays()`,
+`m.switchDisplay()`, `m.hideDisplay()` and `m.moveDisplaySwitch()` call the same code
+(`src/recorder/lib/display-ops.ts`).
 
 ### Windows and the service
 
@@ -320,6 +331,14 @@ take it like a recording. It writes the folder the recorder writes (`src/recorde
   does a recording with system audio in its movie. A movie without an audio track lists no source, and `transcript()`
   refuses it.
 
+An HDR movie (PQ or HLG, such as an iPhone's HDR video) is imported as it is. HDR is a wider range of brightness and
+colour, not more pixels. The editor plays it through AVFoundation, and the export's codec decides the result: an H.264
+export is SDR (BT.709; AVFoundation maps the tones), an HEVC export (`{"op":"exportSettings","codec":"hevc"}`) stays
+HDR (10-bit, the movie's own PQ or HLG), also with cuts and zooms. Checked 2026-11-22 on PQ and HLG test movies up to
+3840 x 2160. The CLI and the REPL say that the movie is HDR (`hdr` in the answer). A GIF or WebM is made by ffmpeg
+from the rendered movie, so make it from an H.264 render (the default codec): from an HEVC render of an HDR movie it
+gets the colours without tone mapping.
+
 A marker is `--marker <time>=<label>` (`0:12=Login done`; `{ at, label }` in the REPL, `at` in source seconds or
 `m:ss`), with a label of 1 to 80 characters. A marker outside the movie's video is refused: when the sound runs on
 past the video, the editor plays only the video's length. A file that is not a movie the editor plays is refused too,
@@ -330,7 +349,6 @@ each with its reason, and the import reads the file the way the editor's probe d
   `AVURLAsset` on macOS 27), with an ffmpeg line that converts it to H.264;
 - HEVC tagged `hev1` (ffmpeg's libx265 default in an .mp4), with an ffmpeg line that puts it under `hvc1` without
   encoding it again;
-- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only;
 - a movie turned by anything but 0, 90, 180 or 270 degrees.
 
 The editor's own probe then reads the copy and refuses a movie over its limits (12 hours, 48 megapixels, 64 GiB). A
@@ -338,7 +356,7 @@ refusal makes nothing; when the editor refuses the copy, its folder goes to the 
 
 `movies.import()` returns the recording as a `Movie`, as `movies.open()` does, because the next call is an edit; the
 CLI prints the folder on stdout and the id on stderr, and `--json` prints `{ id, folder, title, movie, source, seconds,
-frames, averageFps, audioTracks, markers }`. `tools recorder trash <id>` removes it again.
+frames, averageFps, audioTracks, markers, hdr? }`. `tools recorder trash <id>` removes it again.
 
 ### Demo mode: one call, a finished demo
 
@@ -467,8 +485,9 @@ A new rate or threshold applies to the next segment. A running movie ends its se
 A paused movie applies it when it resumes. The full recorder's bar changes Change needed with the same call.
 The widget's bar has no Change needed control.
 
-Select the sources before you start. A full recorder window or app movie has no audio track.
-Choose **Select an Area** or a display for a movie with sound. The movie engine keeps its start-time audio settings.
+Select the sources before you start. Every target records the sources you choose, each as its own track: a
+display, an area, a window and an app alike. Settings → Recorder → What the movie keeps → "System audio of a window
+or app" picks whose sound a window or app movie keeps. The movie engine keeps its start-time audio settings.
 A frames take can mute a source or switch the microphone when it has the track and the live command.
 The widget records silent video. Its bar disables the camera and Add marker.
 The camera starts with a movie. The bar disables Change needed when both frame rates are equal.
@@ -496,6 +515,7 @@ The camera defaults to a 200 pt circle. The widget shows a saved frame rate over
 | `recorder.picker.frontChosenWindow` | `true` | Bring a selected background window forward. |
 | `recorder.picker.focusLoss` | `stayOpen` | Use `close` to close the picker when it loses focus. |
 | `recorder.bar.placement` | `nearTarget` | Use the saved placement from `recording.panelPlacement` if the bar has no setting. |
+| `recorder.bar.look` | `dark` | Use `glass` for the bar's earlier look: the system glass and the app's own control style (Settings → Recorder → Recording bar). |
 | `recorder.bar.expandedByDefault` | `false` | Start with the extra rows closed. |
 | `recorder.bar.startWaitSeconds` | `5` | Show “Still waiting” after this many seconds without a first frame. |
 | `recorder.bar.noticeSeconds` | `4` | Clear a temporary notice after this many seconds. A Stop failure keeps its retry action. |
@@ -948,6 +968,12 @@ again); the first run may ask for the AI vault key in GenesisTools.app. A movie 
 - **"GenesisTools.app has no recorder part yet: building it".** The installed app lacks the recorder part, and the
   CLI builds it (about a minute). From the REPL, run `tools macos permissions build --add-part recorder` in a shell
   first.
+- **The app build stops with "unable to type-check this expression in reasonable time".** Seen with the Command Line
+  Tools (no Xcode), which build against the 26.5 SDK: split the named expression into typed `let` steps. Find the next
+  ones before they fail with `-Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=400`.
+- **A hand-written ffmpeg command fails with "Unrecognized option 'filter_complex_script'".** ffmpeg 9 removed that
+  option: read the graph from a file with `-/filter_complex <file>`. The recorder's own commands pass
+  `-filter_complex` and are not affected.
 - **A start fails with a permission error.** Grant Screen Recording (and Microphone or Camera when you record them)
   in System Settings. `tools macos permissions` exits 1 while a grant is missing.
 - **`--camera` is refused.** The menu bar recorder must run, because only it writes `camera.mov`. Start it with

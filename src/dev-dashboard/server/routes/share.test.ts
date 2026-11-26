@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, jest, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
@@ -13,7 +13,12 @@ import {
     noteSection,
     SHARE_BUNDLE_MAX_BYTES,
     type ShareEmbedPanels,
+    vaultAssetReader,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
+import { snapshotShareSource, writeShareSnapshot } from "@app/dev-dashboard/lib/share/snapshot";
+import type { ShareSource } from "@app/dev-dashboard/lib/share/source";
+import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { LINKED_NOTE_READ_CONCURRENCY, shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
@@ -22,6 +27,7 @@ import { unzip } from "@genesiscz/utils/fs/unzip";
 import * as zipFunctions from "@genesiscz/utils/fs/zip";
 import { zip, zipAsync } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { startPublishServer } from "@genesiscz/utils/publish/server";
 
 const PIC = Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBPVP8 fake-webp-bytes");
 const SHOT = Buffer.from("\u0089PNG fake-png-found-by-name");
@@ -173,7 +179,8 @@ describe("GET /share/:slug assets", () => {
         query: Record<string, string>,
         accept = "*/*",
         target = slug,
-        extra: Record<string, string> = {}
+        extra: Record<string, string> = {},
+        source?: ShareSource
     ): Promise<RouteResult> {
         const ctx: RouteContext = {
             method: "GET",
@@ -188,8 +195,88 @@ describe("GET /share/:slug assets", () => {
             services: {} as RouteContext["services"],
         };
 
-        return shareRoutes()[0].handler(ctx);
+        return shareRoutes(source)[0].handler(ctx);
     }
+
+    test("a snapshot renders the same page, assets and zip as the vault, from a folder with no vault", async () => {
+        const dataDir = join(dir, "snapshots");
+        const data = join(dataDir, "md");
+        const vault = vaultShareSource();
+
+        for (const target of [slug, pubSlug]) {
+            const note = await vault.findBySlug(target);
+            expect(note).not.toBeNull();
+
+            if (note) {
+                await writeShareSnapshot({ source: vault, note, dir: join(data, target) });
+            }
+        }
+
+        const snapshots = snapshotShareSource({ dataDir: data, publicOrigin: "https://share.example.com" });
+        const live = await get({}, "text/html");
+        const server = await startPublishServer({
+            kinds: Object.values(PUBLISH_KIND_SERVERS),
+            dataDir,
+            stateDir: join(dir, "snapshot-state"),
+            publicBase: "https://share.example.com/md",
+            port: 0,
+            host: "127.0.0.1",
+        });
+        let servedHtml: string;
+        try {
+            const served = await fetch(`${server.url}/md/${slug}`, { headers: { accept: "text/html" } });
+            expect(served.status).toBe(200);
+            expect(served.headers.get("x-share-server")).toBe("genesis-tools");
+            servedHtml = await served.text();
+        } finally {
+            await server.stop();
+        }
+
+        // Only the freshness badge differs: the vault page is live, the snapshot page says when it was synced.
+        const BADGE_RE = /<div class="dd-share-freshness"[^>]*>[\s\S]*?<\/div>/;
+        const liveHtml = live.kind === "raw" ? live.body : "missing";
+        expect(servedHtml.replace(BADGE_RE, "")).toBe(liveHtml.replace(BADGE_RE, "").replaceAll("/share/", "/md/"));
+
+        const mtime = statSync(join(dir, "vault", "Notes/sub/Run.md")).mtime.toISOString();
+        expect(
+            await vault.freshness({ slug, vaultPath: "Notes/sub/Run.md", publishedAt: "", targets: [], syncs: {} })
+        ).toEqual({
+            mode: "live",
+            editedAt: mtime,
+        });
+        const snapshotFreshness = await snapshots.freshness({
+            slug,
+            vaultPath: "Notes/sub/Run.md",
+            publishedAt: "",
+            targets: [],
+            syncs: {},
+        });
+        expect(snapshotFreshness.mode).toBe("snapshot");
+        expect(snapshotFreshness.editedAt).toBe(mtime);
+        expect(Date.parse(snapshotFreshness.syncedAt ?? "")).toBeGreaterThan(0);
+        expect(liveHtml).toContain(`data-mode="live" data-tone="fresh" data-edited="${mtime}"`);
+        expect(servedHtml).toContain('data-mode="snapshot"');
+        expect(servedHtml).toContain(`data-edited="${mtime}"`);
+
+        const picture = await get({ asset: sha(PIC) }, "image/*", slug, {}, snapshots);
+        expect(picture.kind === "binary" && Buffer.from(picture.body).equals(PIC)).toBe(true);
+
+        const logo = await get({ asset: sha(LOGO) }, "*/*", slug, {}, snapshots);
+        const logoText = logo.kind === "binary" ? Buffer.from(logo.body).toString("utf8") : "";
+        expect(logoText).toContain("[redacted]");
+        expect(logoText).not.toContain("sk-test-");
+
+        const zipped = await get({ download: "zip" }, "*/*", slug, {}, snapshots);
+        const liveZip = await get({ download: "zip" });
+        const names = (res: RouteResult) => (res.kind === "binary" ? [...unzip(res.body).keys()].sort() : []);
+        expect(names(zipped)).toEqual(names(liveZip));
+
+        const saved = await get({ download: "html" }, "*/*", slug, {}, snapshots);
+        expect(saved.kind === "raw" && saved.body).toContain(`https://share.example.com/share/${pubSlug}`);
+
+        expect(await get({}, "text/html", "no-such-slug", {}, snapshots)).toMatchObject({ status: 404 });
+        expect(await get({}, "text/html", "..", {}, snapshots)).toMatchObject({ status: 404 });
+    });
 
     function assetUrl(bytes: Buffer | string): string {
         return `/share/${slug}?asset=${sha(bytes)}`;
@@ -760,7 +847,7 @@ describe("GET /share/:slug assets", () => {
 
         writeFileSync(join(vault, "N/a.png"), Buffer.from("\u0089PNG a-changed-after-indexing"));
         const bundle = await buildShareBundle({
-            vaultRoot: vault,
+            read: vaultAssetReader(vault),
             index,
             notePath: "N/Twins.md",
             noteText: source,
@@ -782,7 +869,7 @@ describe("GET /share/:slug assets", () => {
         const source = "![[original.png]]\n\n![[alias.png]]";
         const index = await buildShareAssetIndex({ vaultRoot: vault, notePath: "N/Alias.md", source });
         const bundle = await buildShareBundle({
-            vaultRoot: vault,
+            read: vaultAssetReader(vault),
             index,
             notePath: "N/Alias.md",
             noteText: source,
@@ -807,10 +894,12 @@ describe("GET /share/:slug assets", () => {
         };
         const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
 
-        expect(await buildShareEmbed({ vaultRoot: dir, index, panelBase: () => "", sourceBytes })).toBeNull();
+        expect(
+            await buildShareEmbed({ read: vaultAssetReader(dir), index, panelBase: () => "", sourceBytes })
+        ).toBeNull();
         expect(
             await buildShareBundle({
-                vaultRoot: dir,
+                read: vaultAssetReader(dir),
                 index,
                 notePath: "large.md",
                 noteText: "a".repeat(sourceBytes),

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import {
     mkdirSync,
     mkdtempSync,
@@ -7,14 +8,24 @@ import {
     rmSync,
     statSync,
     symlinkSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import { env } from "@genesiscz/utils/env";
+import { updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { artifactKindServer } from "@genesiscz/utils/publish/kinds/artifact";
+import { startPublishServer } from "@genesiscz/utils/publish/server";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+    secrets,
+} from "@genesiscz/utils/security";
 import * as storage from "@genesiscz/utils/storage";
 import { plugin } from "bun";
 import { act, type ComponentType, createElement } from "react";
@@ -68,6 +79,7 @@ import {
 } from "./open";
 import { mdPageExtras } from "./page-extras";
 import { GALLERY_DIR } from "./paths";
+import { listPublishedArtifacts, publishArtifact, unpublishArtifact } from "./publish";
 import { addEntry, type DashboardEntry, loadRegistry, removeEntry, resolveTarget, tooBroadReason } from "./registry";
 import {
     findRunning,
@@ -776,7 +788,7 @@ describe("lightweight command imports", () => {
     test("the entry loads build, server, library and compiler modules only inside their actions", () => {
         const source = readFileSync(join(import.meta.dir, "..", "index.ts"), "utf8");
 
-        for (const module of ["build", "serve", "library", "kit-types"]) {
+        for (const module of ["build", "serve", "library", "kit-types", "publish"]) {
             expect(source).not.toMatch(new RegExp(`^import .*\\./lib/${module}`, "m"));
             expect(source).toContain(`import("./lib/${module}")`);
         }
@@ -1238,6 +1250,96 @@ describe("build helpers", () => {
         const page = injectShim("<html><head><title>t</title></head></html>", "<script>s</script>");
         expect(page.indexOf("<script>s</script>")).toBeLessThan(page.indexOf("<title>"));
     });
+});
+
+test("publishes the built artifact to a paired server and reuses its id on republish", async () => {
+    const root = mkdtempSync(join(tmpdir(), "artifact-publish-"));
+    const priorHome = env.get("GENESIS_TOOLS_HOME");
+    env.testing.set("GENESIS_TOOLS_HOME", root);
+    const key = randomBytes(32);
+    _setMasterKeyProvidersForTest([
+        {
+            id: "keychain",
+            available: async () => true,
+            get: async () => key,
+            getSync: () => key,
+            set: async () => {},
+        },
+    ]);
+    _resetSecretsForTest();
+
+    const entry = join(root, "report.html");
+    const script = join(root, "report.js");
+    const html =
+        '<!doctype html><html><head><title>Report</title></head><body><script type="module" src="./report.js"></script></body></html>';
+    writeFileSync(entry, html);
+    writeFileSync(script, 'document.body.dataset.report = "fixture-built";');
+
+    const server = await startPublishServer({
+        dataDir: join(root, "data"),
+        stateDir: join(root, "state"),
+        kinds: [artifactKindServer],
+        host: "127.0.0.1",
+        port: 0,
+        publicBase: "https://share.example.com",
+        minFreeBytes: 0,
+    });
+    try {
+        const input = { target: entry, targetNames: [], title: "Weekly report" };
+        await expect(publishArtifact(input)).rejects.toThrow("share-server setup --role client");
+        const { code } = server.context.devices.createPairingCode();
+        const device = await server.context.devices.pair(code, "desk");
+        if (!device) {
+            throw new Error("fixture pairing failed");
+        }
+
+        const token = await (await secrets()).set("publish/targets/remote/token", device.token);
+        await updateShareConfig((config) => ({
+            ...config,
+            defaults: { target: "remote" },
+            targets: [
+                {
+                    name: "remote",
+                    publicBase: server.url,
+                    transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
+                },
+            ],
+        }));
+
+        const first = await publishArtifact(input);
+        const url = `${server.url}/artifact/${first.id}`;
+        expect(first.outcomes).toEqual([{ target: "remote", url }]);
+        const page = await fetch(url);
+        expect(page.status).toBe(200);
+        const body = await page.text();
+        expect(body).toContain("fixture-built");
+        expect(body).not.toContain('src="./report.js"');
+        expect((await listPublishedArtifacts()).map(({ id, stale }) => ({ id, stale }))).toEqual([
+            { id: first.id, stale: false },
+        ]);
+
+        const later = new Date(Date.now() + 5000);
+        utimesSync(entry, later, later);
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(true);
+        const second = await publishArtifact(input);
+        expect(second).toEqual(first);
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(false);
+        expect(await unpublishArtifact({ idOrTarget: entry, targetNames: [] })).toEqual([{ target: "remote" }]);
+        expect(await listPublishedArtifacts()).toEqual([]);
+        expect((await fetch(url)).status).toBe(404);
+    } finally {
+        await server.stop();
+        _resetSecretsForTest();
+        _resetMasterKeyProviders();
+
+        if (priorHome === undefined) {
+            env.testing.unset("GENESIS_TOOLS_HOME");
+        } else {
+            env.testing.set("GENESIS_TOOLS_HOME", priorHome);
+        }
+
+        rmSync(root, { recursive: true, force: true });
+    }
 });
 
 describe("openArtifact", () => {

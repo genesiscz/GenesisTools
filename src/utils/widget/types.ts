@@ -87,6 +87,11 @@ export const widgetPreferencesSchema = z.object({
     previewFilter: z.enum(["needs-you", "active"]).default("needs-you"),
     /** The agents hover list's order: waiting for you first, newest activity first, or by project. */
     previewSort: z.enum(["attention", "recent", "project"]).default("attention"),
+    /**
+     * Hours the hover list's Items view keeps the messages and answers already read, dimmed below the unread ones; 0
+     * lists none. They never count in the badge, the unread count or an alert.
+     */
+    previewReadHours: z.number().int().min(0).max(168).default(24),
     /** The sound an answer or message plays; "same" uses `alertSound`, "none" plays no sound. */
     alertAnswerSound: z.string().trim().min(1).max(40).default("same"),
     /** Seconds the session that raised an alert flashes in the widget; 0 does not flash it. */
@@ -147,6 +152,11 @@ export const widgetPreferencesSchema = z.object({
     inboxGrouping: z.enum(["feed", "session", "list"]).default("feed"),
     inboxFeedRuns: z.enum(["session", "project"]).default("session"),
     inboxFeedHeaders: z.enum(["groups", "all"]).default("all"),
+    /**
+     * What marks the message or answer the widget shows as read: a click on its card ("click"), or also the panel
+     * opening on it ("panel-open", the behaviour before 2026-11-25). "Mark all read" marks every item either way.
+     */
+    markReadOn: z.enum(["click", "panel-open"]).default("click"),
     /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */
     inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
     /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */

@@ -8,6 +8,8 @@ export const codexHooks: HookFacts = {
     diffLogFromTranscript: false,
     readToolCalls: codexToolCalls,
     modsDrawDiffs: false,
+    // Codex has no code mode whose calls lack a row.
+    scriptCalls: null,
     settingsModel: false,
     currentModel: codexCurrentModel,
     // A Codex subagent thread writes its own rollout, which the thread id in its shell (CODEX_THREAD_ID) finds.

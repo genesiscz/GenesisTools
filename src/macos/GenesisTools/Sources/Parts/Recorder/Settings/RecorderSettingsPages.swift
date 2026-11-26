@@ -35,6 +35,7 @@ private struct RecorderRecordingSettings: View {
     var body: some View {
         VStack(spacing: 18) {
             recordingCard
+            barCard
             movieCard
             cameraCard
             shortcutsCard
@@ -97,10 +98,35 @@ private struct RecorderRecordingSettings: View {
         }
     }
 
+    private var barCard: some View {
+        NativeSettingsCard("Recording bar", subtitle: "The bar that floats beside a recording. A change applies the next time it opens.") {
+            NativeSettingsSegmented(
+                "Look", detail: "Dark is the default. Glass keeps the bar's earlier look.",
+                identifier: "recorder.settings.barLook",
+                options: RecordingBarLook.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                selection: model.choice(RecordingBarLook.key, RecordingBarLook.dark), minSegmentWidth: 80)
+        }
+    }
+
     private var movieCard: some View {
         NativeSettingsCard("What the movie keeps", subtitle: "In the menu bar, Record Screen with Microphone and System Audio turns both sound tracks on for that recording, and Record Screen with System Audio Only records the Mac\u{2019}s sound alone.") {
             NativeSettingsToggle("System audio", detail: "What the Mac plays, as its own track.",
                                  identifier: "recorder.settings.systemAudio", isOn: model.capture(\.systemAudio))
+            Divider()
+            NativeSettingsSegmented(
+                "System audio of a window or app",
+                detail: model.capture(\.systemAudio).wrappedValue
+                    ? "Whose sound a window or app movie keeps. A display or an area keeps everything the Mac plays."
+                    : "Turn System audio on to use it.",
+                identifier: "recorder.settings.systemAudioScope",
+                options: [
+                    NativeSettingsOption(SystemAudioScope.all, "Everything",
+                                         detail: "Everything the Mac plays, as a display movie keeps it."),
+                    NativeSettingsOption(SystemAudioScope.app, "Only that app",
+                                         detail: "Only the recorded window's app. Other apps, alerts and music stay out."),
+                ],
+                selection: model.capture(\.systemAudioScope), minSegmentWidth: 96)
+                .disabled(!model.capture(\.systemAudio).wrappedValue)
             Divider()
             NativeSettingsToggle("Microphone", detail: "Your voice, as its own track.",
                                  identifier: "recorder.settings.microphone", isOn: model.capture(\.microphone))
@@ -309,6 +335,10 @@ private struct RecorderEditorSettings: View {
             NativeSettingsToggle("Ask what to do with a dragged range",
                                  detail: "A drag on the frames lane opens a popover (cut, speed, zoom, hide, text, export). Off: the drag marks the export part.",
                                  identifier: "recorder.settings.rangePopover", isOn: model.bool(EditorModel.rangePopoverKey, true))
+            Divider()
+            NativeSettingsToggle("Display switch lines through every lane",
+                                 detail: "A recording of several displays: the lines where the movie changes display run through the clips, effects and sound too. Off: only through the display rows.",
+                                 identifier: "recorder.settings.displaySwitchLines", isOn: model.bool(EditorModel.displaySwitchLinesKey, true))
             Divider()
             NativeSettingsSegmented(
                 "Effect lanes before scrolling", detail: "Past this many effect lanes the lanes area scrolls, with a fade at the cut edge.",

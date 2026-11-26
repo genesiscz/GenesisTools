@@ -1,12 +1,25 @@
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
 import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
-import { listPublished, publishNote, unpublishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import {
+    findPublishedBySlug,
+    listPublished,
+    publishNote,
+    unpublishNote,
+} from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
+import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
+import { shareInBackground, unshareInBackground } from "@app/dev-dashboard/lib/share/targets";
 import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@genesiscz/utils/logger";
 import { resolveWikilinkToVaultPath } from "@genesiscz/utils/obsidian/wikilink-resolve";
+
+const { log } = logger.scoped("obsidian-routes");
 
 export function obsidianRoutes(): RouteDef[] {
     return [
@@ -63,7 +76,14 @@ export function obsidianRoutes(): RouteDef[] {
                 const source = await readNote(obsidianVault, path);
                 const vaultEntries = await listVault(obsidianVault);
                 const published = await listPublished();
-                const publishedSlug = published.find((note) => note.vaultPath === path)?.slug ?? null;
+                const publishedNote = published.find((note) => note.vaultPath === path.normalize("NFC"));
+                const publishedSlug = publishedNote?.slug ?? null;
+                const shares = publishedNote ? await shareStatusFor(publishedNote) : [];
+                const info = await stat(resolve(obsidianVault, path)).catch((err: unknown) => {
+                    log.debug({ err, path }, "note has no readable mtime");
+                    return null;
+                });
+                const editedAt = info ? info.mtime.toISOString() : null;
                 const rendered = renderMarkdown(source, {
                     resolveWikilink: (name) => {
                         const match = published.find((note) => {
@@ -81,7 +101,11 @@ export function obsidianRoutes(): RouteDef[] {
                         path.normalize("NFC"),
                 });
 
-                return { kind: "json", status: 200, body: { source, html: rendered.html, publishedSlug } };
+                return {
+                    kind: "json",
+                    status: 200,
+                    body: { source, html: rendered.html, publishedSlug, editedAt, shares },
+                };
             } catch (err) {
                 return errorResult(err, 404);
             }
@@ -94,7 +118,9 @@ export function obsidianRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "path required" } };
                 }
 
+                await importLegacyShare();
                 const note = await publishNote(path);
+                shareInBackground(note);
 
                 return { kind: "json", status: 200, body: { note } };
             } catch (err) {
@@ -109,7 +135,14 @@ export function obsidianRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "slug required" } };
                 }
 
+                await importLegacyShare();
+                const note = await findPublishedBySlug(slug);
                 await unpublishNote(slug);
+
+                if (note) {
+                    unshareInBackground(note);
+                }
+
                 const remaining = await listPublished();
 
                 return { kind: "json", status: 200, body: { remaining } };

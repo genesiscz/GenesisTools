@@ -1190,9 +1190,10 @@ private struct TextInspector: View {
             TextAnimateControls(model: model, note: note)
             // The slider sets the length in the recording, as the ops take it; the row says how long it plays.
             SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: note.startUs, toUs: note.endUs))
+            let longest: Double = max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000)
             Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
                 model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
-            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000))
+            }), in: 0.2...longest)
             .accessibilityLabel("Text length")
             WideButton(title: "Delete", systemImage: "trash", role: .destructive) { model.deleteText(id) }
         }
@@ -1340,9 +1341,10 @@ private struct RedactionEditor: View {
             }), in: 0.02...1)
                 .accessibilityLabel("Hidden part height")
             SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: redaction.startUs, toUs: redaction.endUs))
+            let longest: Double = max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000)
             Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
                 model.updateRedaction(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
-            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000))
+            }), in: 0.2...longest)
             .accessibilityLabel("Hidden part length")
         }
         .padding(10)
@@ -1637,9 +1639,10 @@ private struct MusicSection: View {
                 if let fileSeconds, fileSeconds > 1 {
                     let start = Double(music.startMs ?? 0) / 1000
                     SectionLabel(text: "Starts at", value: formatClock(Int64(start * 1_000_000), tenths: true) + " of " + formatClock(Int64((fileSeconds * 1_000_000).rounded()), tenths: true))
+                    let latest: Double = max(0.5, fileSeconds - 0.5)
                     Slider(value: Binding(get: { min(start, fileSeconds - 0.5) }, set: { value in
                         model.setMusic { $0.startMs = value < 0.25 ? nil : Int((value * 2).rounded() * 500) }
-                    }), in: 0...max(0.5, fileSeconds - 0.5))
+                    }), in: 0...latest)
                         .accessibilityLabel("Where in the music file it starts")
                         .instantTooltip("Skip an intro: the movie's music begins this far into the file")
                 }
@@ -2439,37 +2442,67 @@ private struct ShapeHandles: View {
                     let a = toView(CGPoint(x: shape.x1, y: shape.y1))
                     let b = toView(CGPoint(x: shape.x2, y: shape.y2))
                     ForEach([true, false], id: \.self) { first in
-                        let point = first ? a : b
-                        Circle()
-                            .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.9))
+                        // In typed steps, never one expression: with the 26.5 SDK (a build with the Command Line Tools)
+                        // the type checker gave up on the whole chain ("unable to type-check this expression in
+                        // reasonable time").
+                        let point: CGPoint = first ? a : b
+                        let end: Int = first ? 1 : 2
+                        let fill: Color = selected ? RecorderPalette.zoom : Color.white.opacity(0.9)
+                        let arrowTip: String = first ? "The arrow's tail: drag it" : "Where the arrow points: drag it"
+                        let tip: String = shape.kind == .arrow ? arrowTip : "A corner: drag it"
+                        let endName: String = first ? "start" : "end"
+                        let label: String = "\(shape.kind.rawValue.capitalized) \(endName)"
+                        let place: String = first ? Self.spoken(shape.x1, shape.y1) : Self.spoken(shape.x2, shape.y2)
+                        let drag = DragGesture(minimumDistance: 0).onChanged { value in
+                            model.selectedShape = shape.id
+                            let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                            grabbed = start
+                            // From where the drag began, so the point stays under the pointer.
+                            let origin = toView(first ? CGPoint(x: start.x1, y: start.y1) : CGPoint(x: start.x2, y: start.y2))
+                            let moved = map.sourcePoint(ofCanvas: CGPoint(x: (origin.x + value.translation.width) / max(1, size.width),
+                                                                         y: (origin.y + value.translation.height) / max(1, size.height)))
+                            model.updateShape(shape.id) {
+                                if first { $0.x1 = moved.x; $0.y1 = moved.y } else { $0.x2 = moved.x; $0.y2 = moved.y }
+                            }
+                        }.onEnded { _ in grabbed = nil }
+                        let dot = Circle()
+                            .fill(fill)
                             .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
                             .frame(width: 16, height: 16)
                             .contentShape(Circle().inset(by: -6))
                             .offset(x: point.x - 8, y: point.y - 8)
-                            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                                model.selectedShape = shape.id
-                                let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
-                                grabbed = start
-                                // From where the drag began, so the point stays under the pointer.
-                                let origin = toView(first ? CGPoint(x: start.x1, y: start.y1) : CGPoint(x: start.x2, y: start.y2))
-                                let moved = map.sourcePoint(ofCanvas: CGPoint(x: (origin.x + value.translation.width) / max(1, size.width),
-                                                                             y: (origin.y + value.translation.height) / max(1, size.height)))
-                                model.updateShape(shape.id) {
-                                    if first { $0.x1 = moved.x; $0.y1 = moved.y } else { $0.x2 = moved.x; $0.y2 = moved.y }
-                                }
-                            }.onEnded { _ in grabbed = nil })
-                            .instantTooltip(shape.kind == .arrow ? (first ? "The arrow's tail: drag it" : "Where the arrow points: drag it") : "A corner: drag it")
-                            .accessibilityLabel("\(shape.kind.rawValue.capitalized) \(first ? "start" : "end")")
-                            .accessibilityValue(Self.spoken(first ? shape.x1 : shape.x2, first ? shape.y1 : shape.y2))
+                        dot
+                            .gesture(drag)
+                            .instantTooltip(tip)
+                            .accessibilityLabel(label)
+                            .accessibilityValue(place)
                             .accessibilityAdjustableAction { direction in
-                                model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0, point: first ? 1 : 2)
+                                model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0, point: end)
                             }
-                            .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01, point: first ? 1 : 2) }
-                            .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01, point: first ? 1 : 2) }
+                            .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01, point: end) }
+                            .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01, point: end) }
                     }
                     // The middle: drags the whole shape, both points by the same amount, kept inside the picture.
+                    // In typed steps as well, for the same type checker limit as the two ends above.
                     let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-                    Circle()
+                    let kind: String = shape.kind.rawValue
+                    let moveTip: String = "Drag to move the whole \(kind)"
+                    let moveLabel: String = "Move \(kind)"
+                    let middlePlace: String = Self.spoken((shape.x1 + shape.x2) / 2, (shape.y1 + shape.y2) / 2)
+                    let move = DragGesture(minimumDistance: 0).onChanged { value in
+                        let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                        grabbed = start
+                        let from = map.sourcePoint(ofCanvas: .zero)
+                        let to = map.sourcePoint(ofCanvas: CGPoint(x: value.translation.width / max(1, size.width), y: value.translation.height / max(1, size.height)))
+                        // The shift, held so neither point leaves the picture.
+                        let dx = min(max(to.x - from.x, -min(start.x1, start.x2)), 1 - max(start.x1, start.x2))
+                        let dy = min(max(to.y - from.y, -min(start.y1, start.y2)), 1 - max(start.y1, start.y2))
+                        model.updateShape(shape.id) {
+                            $0.x1 = start.x1 + dx; $0.y1 = start.y1 + dy
+                            $0.x2 = start.x2 + dx; $0.y2 = start.y2 + dy
+                        }
+                    }.onEnded { _ in grabbed = nil }
+                    let grip = Circle()
                         .fill(Color.white.opacity(0.9))
                         .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
                         .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 8, weight: .bold))
@@ -2481,22 +2514,11 @@ private struct ShapeHandles: View {
                         .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
                         .onDisappear { NSCursor.arrow.set() }
                         .offset(x: middle.x - 10, y: middle.y - 10)
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                            let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
-                            grabbed = start
-                            let from = map.sourcePoint(ofCanvas: .zero)
-                            let to = map.sourcePoint(ofCanvas: CGPoint(x: value.translation.width / max(1, size.width), y: value.translation.height / max(1, size.height)))
-                            // The shift, held so neither point leaves the picture.
-                            let dx = min(max(to.x - from.x, -min(start.x1, start.x2)), 1 - max(start.x1, start.x2))
-                            let dy = min(max(to.y - from.y, -min(start.y1, start.y2)), 1 - max(start.y1, start.y2))
-                            model.updateShape(shape.id) {
-                                $0.x1 = start.x1 + dx; $0.y1 = start.y1 + dy
-                                $0.x2 = start.x2 + dx; $0.y2 = start.y2 + dy
-                            }
-                        }.onEnded { _ in grabbed = nil })
-                        .instantTooltip("Drag to move the whole \(shape.kind.rawValue)")
-                        .accessibilityLabel("Move \(shape.kind.rawValue)")
-                        .accessibilityValue(Self.spoken((shape.x1 + shape.x2) / 2, (shape.y1 + shape.y2) / 2))
+                    grip
+                        .gesture(move)
+                        .instantTooltip(moveTip)
+                        .accessibilityLabel(moveLabel)
+                        .accessibilityValue(middlePlace)
                         .accessibilityAdjustableAction { direction in
                             model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0)
                         }

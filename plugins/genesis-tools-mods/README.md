@@ -38,7 +38,8 @@ The full reference of every mod is the "The Claude Code mods" section of [the ag
 
 ## The mods
 
-- `diff` (on): the whole diff of a Bash call whose diff-hook message was cut, under the call's row.
+- `diff` (on): the whole diff of a Bash call whose diff-hook message was cut, under the call's row. A diff past
+  `mods.diff.foldAfterLines` lines (20), Claude Code's own Write and Edit diffs included, draws its first lines and `show all`.
 - `idleCompact` (on): compacts an idle session 56 minutes after its last turn, before the 1-hour prompt cache expires.
 - `agentModel`: a subagent's model in front of its description on its rows.
 - `agentRow`: the agents panel under the prompt names each subagent's model and effort beside its type.

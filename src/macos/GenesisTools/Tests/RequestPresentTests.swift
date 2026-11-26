@@ -1,4 +1,8 @@
+import AppKit
 import Foundation
+import GenesisKitTestSupport
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsHost
 
@@ -383,6 +387,93 @@ final class RequestPresentTests: XCTestCase {
         model.deny()
         fake.replies.removeFirst()(0, #"{"pid":7575}"#, "")
         XCTAssertEqual(fake.stopped, [7171, 7272, 7373, 7474, 7575], "the clip that started after the close stops too")
+    }
+
+    private static func relayedForPicture() throws -> RequestPresentParams {
+        let json = """
+        {"kind":"notice","id":"relayed:picture","title":"Confirm 3 answers you gave in chat",
+         "reason":"An agent relayed these answers from your chat.","createdAt":"2026-11-24T21:00:00.000Z",
+         "buttons":{"confirm":"Confirm as mine","decline":"Not now"},
+         "rows":[
+          {"id":"m1:i3","title":"Q1 · Alice Example","quote":"that was Alice","detail":"Planning · 00:10",
+           "action":{"kind":"play-meeting","label":"Play clip","meeting":"m1","fromSec":10,"toSec":14}},
+          {"id":"m1:i9","title":"Q2 · Bob Example","quote":"Bob, yes","detail":"Planning · 03:25",
+           "action":{"kind":"play-meeting","label":"Play clip","meeting":"m1","fromSec":205,"toSec":212}},
+          {"id":"m2:i4","title":"Q3 · Carol Example",
+           "quote":"Carol from the second minute on, and the voice after her is Dan Example, not Bob",
+           "detail":"Retro · 41:02",
+           "action":{"kind":"play-meeting","label":"Play clip","meeting":"m2","fromSec":2462,"toSec":2470}}]}
+        """
+        return try JSONDecoder().decode(RequestPresentParams.self, from: Data(json.utf8))
+    }
+
+    /// The window as the panel lays it out (`ApprovalPanelPresenter.present`), drawn in a window nobody sees: alpha 0,
+    /// off the desktop, never ordered front or activated.
+    private static func picture(of model: ApprovalDialogModel, appearance: NSAppearance.Name) throws -> CGImage {
+        _ = NSApplication.shared
+        let controller = NSHostingController(rootView: ApprovalDialogView(model: model)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        controller.safeAreaRegions = []
+        controller.sizingOptions = [.preferredContentSize]
+        let size = controller.view.fittingSize
+        let window = NSWindow(contentRect: CGRect(x: -10_000, y: -10_000, width: size.width, height: size.height),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.appearance = NSAppearance(named: appearance)
+        window.contentViewController = controller
+        window.order(.below, relativeTo: 0)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        let view = controller.view
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        return try XCTUnwrap(bitmap.cgImage)
+    }
+
+    /// Every row shows its who, its quote and its Play clip, and the answer words show, read back from the picture,
+    /// so a layout defect of the check list fails here and not only in the live window. With
+    /// REQUEST_PRESENT_SCREENSHOT_DIR set, the light and dark pictures are written there too.
+    func testTheRelayedAnswersWindowShowsEveryRowWithItsPlayButton() throws {
+        let fake = FakeActions()
+        let panel = FakeRequestPanel()
+        // The real time, so the picture counts down from the request's two minutes; the timeout never fires here.
+        let clock = RequestClock(now: Date.init, after: { _, _ in {} })
+        let presenter = RequestPresenter(panel: panel, clock: clock, activate: {}, actionContext: fake.context)
+        presenter.enqueue(try Self.relayedForPicture()) { _ in }
+        let model = try XCTUnwrap(panel.shown.last)
+        while !fake.replies.isEmpty {
+            fake.replies.removeFirst()(0, "{}", "")
+        }
+        XCTAssertEqual(model.checks.compactMap { $0.link?.enabled == true ? $0.link?.title : nil }, Array(repeating: "Play clip", count: 3))
+
+        let folder = ProcessInfo.processInfo.environment["REQUEST_PRESENT_SCREENSHOT_DIR"]
+        var text = ""
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] where name == "light" || folder != nil {
+            let image = try Self.picture(of: model, appearance: appearance)
+            if name == "light" {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = false
+                try recognizeText(in: image, with: request)
+                text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            }
+            if let folder {
+                let url = URL(fileURLWithPath: folder).appendingPathComponent("relayed-answers-\(name).png")
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])).write(to: url)
+                print("shot \(url.path) \(image.width)x\(image.height)")
+            }
+        }
+        for words in ["Alice Example", "Bob Example", "Carol Example", "Dan Example", "Confirm as mine", "Not now"] {
+            XCTAssertTrue(text.contains(words), "the picture shows \(words): \(text)")
+        }
+        XCTAssertGreaterThanOrEqual(text.components(separatedBy: "Play clip").count - 1, 3, "every row shows its Play clip: \(text)")
     }
 
     // MARK: A request that ends elsewhere (withdrawn by its caller, answered in another surface)

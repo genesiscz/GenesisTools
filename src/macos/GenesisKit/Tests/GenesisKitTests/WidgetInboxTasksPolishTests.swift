@@ -100,6 +100,47 @@ final class WidgetTasksPolishTests: XCTestCase {
                        [URLQueryItem(name: "work-project", value: "Studio & Tools")])
     }
 
+    /// A failed change of a task in a session's inbox card is the shared failure row (Details, Report a bug), as the
+    /// hub's task card draws it, never red text.
+    func testATaskErrorInASessionCardIsAFailureRow() async throws {
+        let open = task()
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("The ledger is busy.") }
+            return try self.snapshot([open])
+        })
+        defer { store.stop() }
+        store.perform(.complete, on: open)
+        await settled(store)
+        XCTAssertNotNil(store.error(for: open))
+        let key = "local:codex:fixture:"
+        let card = WidgetCard(task: open, id: "todo:" + open.id, kind: "todo", sessionKey: key, sourceId: open.id,
+                              at: Date().timeIntervalSince1970 * 1000, title: open.title, body: "", status: "open",
+                              choices: [], attachments: [], refs: [], read: false)
+        let session = WidgetSession(key: key, target: .init(hostId: "local", provider: "codex", sessionId: "fixture",
+                                                            sourceHome: "", cwd: "/fixture"),
+                                    title: "Fixture session", project: "Fixture", activityAt: 5000, status: "idle",
+                                    pinned: false, visible: true, hiddenByFilter: false)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.fixture." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/usr/bin/true",
+            stateRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        var state = WidgetState(version: 1, revision: 1, preferences: .hubDefaults, assets: [:], drafts: [:], outgoing: [])
+        state.selectedKey = key
+        var snapshot = WidgetSnapshot(notifications: .empty, version: 1, state: state, sessions: [session],
+                                      cards: [card], manifests: [:], errors: [])
+        snapshot.selectedKey = key
+        model.receive([try XCTUnwrap(String(bytes: try JSONEncoder().encode(snapshot), encoding: .utf8))])
+        model.taskActions = store
+        let shown = try XCTUnwrap(model.cards.first)
+        model.openCard(shown)
+        let lines = try WidgetInboxRender.draw(LiveWidgetView(model: model, edge: .right, embedded: true),
+                                               size: CGSize(width: 420, height: 640)).joined(separator: " ")
+        XCTAssertTrue(lines.contains("Dismiss"), "the card draws the task's actions: \(lines)")
+        XCTAssertTrue(lines.contains("Details"), lines)
+    }
+
     private func renderTasks<V: View>(_ view: V, name: String) throws -> String {
         let renderer = ImageRenderer(content: view.padding(10).background(Color.black).environment(\.colorScheme, .dark))
         renderer.scale = 2

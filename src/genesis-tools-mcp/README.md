@@ -1,8 +1,8 @@
 # tools genesis-tools-mcp
 
 One MCP server, named `genesis-tools`, that gives Claude Code, Codex and Grok the GenesisTools agent tools. With it an
-agent can ask the user and log answers, post decisions to the native inbox, hand tasks to another agent session and
-annotate screenshots. It also carries the MCP tools of other GenesisTools tools: Jev, macOS control, web fetch, AI
+agent can ask the user and log answers, post decisions to the native inbox, hand tasks to another agent session,
+annotate screenshots and edit files through fable-replace. It also carries the MCP tools of other GenesisTools tools: Jev, macOS control, web fetch, AI
 usage, and the opt-in Alza and Waze groups. The same stdio process serves every host, and a capability list picks
 which tools a host sees.
 
@@ -63,6 +63,7 @@ Every tool belongs to a capability. Unset, a host gets every capability except t
 - `decision`: `question_post`, `question_poll`, `question_update`, `question_tokens`.
 - `handoff`: `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action`.
 - `annotate`: `annotate_image`.
+- `replace`: `genesis_replace`, `genesis_replace_find`.
 - `jev`: `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates`, `jev_grep`.
 - `control`: `control_find`, `control_get`, `control_run`, `control_workflow_run`.
 - `fetch`: `fetch_markdown`, `fetch_raw`, `fetch_jsonld`.
@@ -184,6 +185,28 @@ you find coordinates).
 - `preset` is `review-red` (default), `callout-amber` or `redact`. A style value on an annotation overrides it.
 - It returns JSON: `{ok, output, width, height, annotations, warnings}`. Read the output file to check it.
 
+### File edits (fable-replace)
+
+`genesis_replace` runs one fable-replace batch (the `fable-replace` skill of the genesis-tools plugin) and answers its
+JSON report. `genesis_replace_find` counts where a pattern occurs, before an edit. Both serve an agent in code mode,
+which has no shell heredoc and should parse no human text.
+
+- The server never runs the engine itself. Each call starts
+  `bun plugins/genesis-tools/skills/fable-replace/scripts/cli.ts --json` in `cwd`, with the payload on stdin, as the
+  leader of its own process group. A cancelled call or the 16-minute deadline ends the whole group, the verify command
+  included.
+- `genesis_replace` takes `cwd` (absolute, required) and exactly one of `edits` (FileEdit objects, a RegExp field as
+  `{source, flags}`), `spec` (FRSPEC text) or `renameModule` (`{file, symbol, to, roots}`). `dryRun`, `diff`
+  (`none`, `stat` (default) or `full`), `verify`, `verifyControl: "ts"` and `sessionId` are optional. An unknown
+  argument, a relative `cwd` or a second door is refused before anything runs.
+- The answer's `structuredContent` is the CLI's report (`v: 1`, `ok`, `exitCode` 0 to 3, `files`, `written`,
+  `backupDir`, `verify`), and `isError` follows `ok`. The text is one summary line and at most 60 lines of the
+  CLI's stderr. A CLI that prints no report gives an error answer with its exit code and the end of its output.
+- The backup goes to the calling session's scratch folder: the child gets `FABLE_REPLACE_SESSION` (the `sessionId`
+  input, else the gateway's caller) and `FABLE_REPLACE_HARNESS` (the caller's harness).
+- `genesis_replace_find` takes `cwd`, `pattern`, `regex`, `flags`, `roots` (default `["."]`) and `exts`, and
+  answers the report `{v, pattern, roots, total, files: [{file, count, declares}]}`. It writes nothing.
+
 ### Groups from other tools
 
 Each group is an adapter, `src/<tool>/mcp/genesis-tools.ts`, over the same handlers as that tool's own MCP server. A
@@ -240,10 +263,11 @@ tool added there appears here with no edit to this server.
 - **Data.** The server keeps no store of its own. The question and handoff tools write the question store under
   `~/.genesis-tools/question/` (the Q and A log, `qa.db`, pending forms, `decisions/`, and `handoff/<date>.jsonl`).
   Recorded screenshots are copied to `~/.genesis-tools/attachments/images/`. `annotate_image` writes beside its input.
+  `genesis_replace` writes the files under its `cwd` and keeps its backups in the session's scratch folder.
   `GENESIS_TOOLS_HOME` replaces the home folder that holds `.genesis-tools`, so the tree moves to
   `$GENESIS_TOOLS_HOME/.genesis-tools/`. The full layout is in
   [`../question/README.md`](../question/README.md).
-- **Cost.** The question, handoff, annotate, control, fetch, usage, Alza and Waze tools call no paid API.
+- **Cost.** The question, handoff, annotate, replace, control, fetch, usage, Alza and Waze tools call no paid API.
   `jev_route`, `jev_verify` and `jev_grep` call the Jev model, which is paid. `jev_compact` calls it only with
   `llm: true` (one request per 20 calls). `jev_verify_templates` costs nothing. See
   [`../jev/README.md`](../jev/README.md).
@@ -278,12 +302,13 @@ See [`../mcp-manager/README.md`](../mcp-manager/README.md) for the gateway.
 - Unset or empty enables every capability except the opt-in `alza` and `waze`.
 - An unknown name enables nothing. The retired `boards` capability enables nothing.
 - A list replaces the default set. There is no "everything plus `alza`" value: name each capability you want. The
-  default set is `question_answer`, `question_ask`, `handoff`, `annotate`, `jev`, `control`, `fetch` and `usage`
+  default set is `question_answer`, `question_ask`, `handoff`, `annotate`, `replace`, `jev`, `control`, `fetch`,
+  `usage` and `work`
   (the inbox and decision sets are inside these).
 
 ```bash
 GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,handoff,annotate
-GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,question_ask,handoff,annotate,jev,control,fetch,usage,alza
+GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,question_ask,handoff,annotate,replace,jev,control,fetch,usage,work,alza
 ```
 
 The second line is the default set plus `alza`. Leave `control` out and the `control_*` tools disappear.

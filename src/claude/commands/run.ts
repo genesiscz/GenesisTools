@@ -350,6 +350,7 @@ export async function runProxySession(
     // A first-party OAuth token in the environment outranks ANTHROPIC_AUTH_TOKEN and
     // would silently bill the real Anthropic account instead of reaching the proxy.
     delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
+    delete launchEnv.CLAUDE_CODE_OAUTH_SCOPES;
     delete launchEnv.ANTHROPIC_API_KEY;
     delete launchEnv.CLAUDE_CODE_SUBSCRIPTION_TYPE;
     delete launchEnv.ANTHROPIC_DEFAULT_FABLE_MODEL;

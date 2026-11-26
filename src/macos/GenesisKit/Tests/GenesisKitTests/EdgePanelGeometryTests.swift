@@ -40,6 +40,37 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertEqual(narrow.cutout, 200)
     }
 
+    func testTopBarMeasuresTheSameWidthsInEitherLayout() {
+        // The primary button is 50 pt wider in the one-piece bar, where it shows its title.
+        let split = WidgetTopBarLayout.placements(left: 50, right: 150, height: 36, cutout: 220, notch: 220, titleWidth: 50)
+        let plain = WidgetTopBarLayout.placements(left: 100, right: 150, height: 36, cutout: 0, notch: 220, titleWidth: 50)
+        XCTAssertEqual(split.plain, plain.plain)
+        XCTAssertEqual(split.split, plain.split)
+        XCTAssertEqual(plain.plain.width, 100 + 150 + 16)
+        XCTAssertEqual(plain.split.width, 150 * 2 + 220 + 16)
+    }
+
+    func testTopBarSettlesAtAPositionOnTheSnapEdge() {
+        // 2026-11-24: position 0.438 on a 2056 pt display with a 220 pt notch. Measured from the layout it was drawn in,
+        // the bar chose the other layout every time; with the title counted in both measurements it keeps one.
+        let screen = CGRect(x: 0, y: 0, width: 2056, height: 1329)
+        func layouts(titleWidth: CGFloat) -> [CGFloat] {
+            var cutout: CGFloat = 220
+            var seen: [CGFloat] = []
+            for _ in 0..<6 {
+                let left: CGFloat = cutout > 0 ? 50 : 100
+                let measured = WidgetTopBarLayout.placements(
+                    left: left, right: 150, height: 36, cutout: cutout, notch: 220, titleWidth: titleWidth)
+                cutout = WidgetTopPlacement.place(position: 0.438, screen: screen, notch: 220,
+                    width: measured.plain.width + 36, splitWidth: measured.split.width + 36).cutout
+                seen.append(cutout)
+            }
+            return seen
+        }
+        XCTAssertEqual(layouts(titleWidth: 0), [0, 220, 0, 220, 0, 220], "the old measurement flips")
+        XCTAssertEqual(Set(layouts(titleWidth: 50)).count, 1)
+    }
+
     func testTopDragUsesAvailableTravelAndClampsAtTheEdges() {
         XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: 130, width: 300, screenWidth: 1600), 0.6, accuracy: 0.001)
         XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: -130, width: 300, screenWidth: 1600), 0.4, accuracy: 0.001)

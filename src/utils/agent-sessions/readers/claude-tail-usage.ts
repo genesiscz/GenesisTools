@@ -1,4 +1,5 @@
 import { claudeCacheWrites } from "@genesiscz/utils/ai/usage/spend/parse";
+import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -162,4 +163,28 @@ export function parseClaudeTailUsage(lines: string[], filePath: string): ClaudeT
     }
 
     return usage;
+}
+
+/** The standard context window; a turn that read more ran with the 1M window (`[1m]`). */
+const STANDARD_CONTEXT_TOKENS = 200_000;
+
+/** How much of the transcript's end the resume model is read from. */
+const RESUME_MODEL_TAIL_BYTES = 512 * 1024;
+
+/**
+ * The model a resume keeps: the last real turn's model, with `[1m]` when that turn read more context than the standard
+ * window holds, so it ran with the 1M window. Null when the tail holds no real turn. Claude Code itself resumes on the
+ * default model, and a different model starts the prompt cache from nothing (nabidky-2.0, 2026-11-23: Opus 5.5 with
+ * 471,685 tokens of context came back on Fable 5.2).
+ */
+export function claudeResumeModel(filePath: string): string | null {
+    const { lines } = readLastLines(filePath, { maxBytes: RESUME_MODEL_TAIL_BYTES });
+    const usage = parseClaudeTailUsage(lines, filePath);
+
+    if (!usage.model) {
+        return null;
+    }
+
+    const context = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens;
+    return context > STANDARD_CONTEXT_TOKENS ? `${usage.model}[1m]` : usage.model;
 }

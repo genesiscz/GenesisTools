@@ -24,6 +24,8 @@ struct WidgetHostView: View {
     @State private var topDragOrigin: Double?
     @State private var topDragPoint: CGFloat?
     @State private var measuredHeaderHeight: CGFloat = 0
+    /// The width the top bar's title adds when it shows (`WidgetTopBarLayout.titleWidth`), measured from a hidden copy.
+    @State private var topTitleWidth: CGFloat = 0
     @State private var dragOrigin: Double?
     @State private var dragClusterHeight: CGFloat?
     /// Set while the pointer is on this panel (`motion.pointerInside`): the expanded Agents pane is built then, hidden,
@@ -136,8 +138,14 @@ struct WidgetHostView: View {
             .offset(x: frame?.minX ?? 0, y: frame?.minY ?? 0)
     }
 
+    private var topTitle: String { selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets" }
+    private static let topTitleFont: Font = .system(size: 12, weight: .semibold)
+    /// The primary button's HStack spacing, which the title brings with it.
+    private static let topTitleSpacing: CGFloat = 7
+
     private var topStrip: some View {
-        WidgetTopBarLayout(cutout: topPlacement()?.cutout ?? cutout, notch: cutout, placementsMeasured: { plain, split in
+        WidgetTopBarLayout(cutout: topPlacement()?.cutout ?? cutout, notch: cutout, titleWidth: topTitleWidth,
+            placementsMeasured: { plain, split in
             let measured = CGSize(width: ceil(plain.width + 36), height: max(headerMinimumHeight, ceil(plain.height + 24)))
             let splitMeasured = CGSize(width: ceil(split.width + 36), height: measured.height)
             DispatchQueue.main.async {
@@ -149,7 +157,7 @@ struct WidgetHostView: View {
                 if selected?.id == "agents" { model.toggleInboxOverview(on: surface) }
                 else { expand() }
             } label: {
-                HStack(spacing: 7) {
+                HStack(spacing: Self.topTitleSpacing) {
                     if selected?.id == "agents" {
                         Image(systemName: "tray.fill")
                             .font(.system(size: 14, weight: .semibold)).frame(width: 20, height: 20)
@@ -158,8 +166,8 @@ struct WidgetHostView: View {
                             .foregroundStyle(selected?.tint ?? .blue)
                     }
                     if (topPlacement()?.cutout ?? cutout) == 0 {
-                        Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
-                            .font(.system(size: 12, weight: .semibold))
+                        Text(topTitle)
+                            .font(Self.topTitleFont)
                     }
                     if selected?.id == "agents", model.waitingCount > 0 {
                         WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
@@ -176,36 +184,35 @@ struct WidgetHostView: View {
                 if selected?.id == "agents" {
                     // No spacing between the buttons: each bubble takes half the 5 pt gap as its own target (R2).
                     HStack(spacing: 0) {
-                        ForEach(Array(model.railActivitySessions.prefix(3))) { session in
-                            Button {
-                                model.toggleSession(session.key, on: surface)
-                            } label: {
-                                sessionActivity(session)
-                                    .frame(minWidth: 30, minHeight: 30).fixedSize()
-                                    .modifier(bubbleChrome(session, hitPadding: EdgeInsets(
-                                        top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2)))
-                            }.buttonStyle(.plain)
-                                .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
-                                .accessibilityLabel(sessionSummary(session))
-                                .accessibilityIdentifier("widget.agent." + session.key)
-                                .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+                        ForEach(Array(model.railActivitySessions.prefix(Self.topBubbleLimit))) { session in
+                            sessionBubble(session, size: nil, hitPadding: EdgeInsets(
+                                top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2), glyph: true)
                         }
                     }
                     // The outer bubbles' halves of the gap reach past the row; the row keeps its old width.
                     .padding(.horizontal, -Self.topBubbleGap / 2)
                 }
-                ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
+                ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(Self.topModuleLimit)), id: \.self) { id in
                     moduleButton(id, size: 25, location: "strip")
                 }
-                if moduleIDs.count > 5 {
+                // The selected module and the ones beside it; the rest wait in Settings.
+                let hidden = moduleIDs.count - (Self.topModuleLimit + 1)
+                if hidden > 0 {
                     Button {
                         model.showSettings?()
                     } label: {
-                        Text("+\(moduleIDs.count - 5)").font(.caption2)
-                    }.buttonStyle(.genHoverPlain()).instantTooltip("\(moduleIDs.count - 5) more widgets: choose them in Settings")
+                        Text("+\(hidden)").font(.caption2)
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("\(hidden) more widgets: choose them in Settings")
                         .accessibilityLabel("Choose widgets")
                 }
             }.fixedSize()
+        }
+        .background {
+            // The title's width whether or not the bar shows it, so both placements are measured the same way.
+            Text(topTitle).font(Self.topTitleFont).fixedSize().hidden().accessibilityHidden(true)
+                .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.width) }) {
+                    topTitleWidth = $0 + Self.topTitleSpacing
+                }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
         .frame(minHeight: headerMinimumHeight).fixedSize(horizontal: false, vertical: true)
@@ -310,26 +317,9 @@ struct WidgetHostView: View {
                 // spare width beside it, as its own target, so no click between two bubbles is lost (R2).
                 VStack(spacing: 0) {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
-                        Button {
-                            model.toggleSession(session.key, on: surface)
-                        } label: {
-                            sessionActivity(session)
-                                .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
-                                .modifier(bubbleChrome(session, hitPadding: WidgetSideStripMetrics.sessionHitPadding))
-                                .overlay(alignment: .bottomTrailing) {
-                                    // Which agent the count belongs to, at a glance; the tooltip names the session.
-                                    // Inset by the hit padding, so it sits on the bubble's corner as before.
-                                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
-                                        .opacity(0.85).allowsHitTesting(false)
-                                        .padding(.bottom, WidgetSideStripMetrics.sessionHitPadding.bottom)
-                                        .padding(.trailing, WidgetSideStripMetrics.sessionHitPadding.trailing)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
-                        .accessibilityLabel(sessionSummary(session))
-                        .accessibilityIdentifier("widget.agent." + session.key)
-                        .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+                        sessionBubble(session, size: CGSize(width: WidgetSideStripMetrics.sessionWidth,
+                                                            height: WidgetSideStripMetrics.sessionHeight),
+                                      hitPadding: WidgetSideStripMetrics.sessionHitPadding, glyph: true)
                     }
                 }
                 // The first and last bubbles' halves of the gap reach into the stack's neighbours' spacing, so the
@@ -393,23 +383,8 @@ struct WidgetHostView: View {
 
     private func previewPane(_ selected: WidgetModuleDescriptor) -> some View {
         VStack(spacing: 0) {
-            if selected.id == "agents" {
-                // Only this part follows the alert popup, so a popup change does not build the whole panel again.
-                WidgetAlertPopupReader(popup: model.alertPopup) { item in
-                    if let item {
-                        // The alert popup (`WidgetAlertPopup`): one item, a click answers it, × or Esc closes it.
-                        // Measured like the hover list, so the panel takes the popup's own height.
-                        // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on
-                        // every side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own
-                        // edge. Only the content is measured, so the fill cannot feed its own height back (Martin's
-                        // screenshot, 2026-10-25: a short card over an empty pane, its flash border hugging the text).
-                        WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
-                            .padding(WidgetPeekView.inset)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    } else {
-                        AgentWidgetPreview(model: model, surface: surface)
-                    }
-                }
+            if selected.previewChrome == .module {
+                selected.content(.preview).environment(\.widgetSurface, surface)
             } else {
                 Button(action: expand) {
                     HStack {
@@ -483,6 +458,43 @@ struct WidgetHostView: View {
     static let topBubbleGap: CGFloat = 5
 
     /// The bubble's hover ring and the alert flash, in place of the rectangular hover plate of `.genHoverPlain`.
+    /// The notch bar's caps: three session bubbles, and four module buttons beside the selected one.
+    static let topBubbleLimit = 3
+    static let topModuleLimit = 4
+
+    /// One session's bubble, the same in the notch bar and the side rail: its activity and count, the provider glyph on
+    /// its corner, its attention flash and its hit area. `size` nil sizes it to at least 30 pt (the notch); the rail
+    /// passes its own size and hit padding.
+    private func sessionBubble(_ session: WidgetSession, size: CGSize?, hitPadding: EdgeInsets, glyph: Bool) -> some View {
+        Button {
+            model.toggleSession(session.key, on: surface)
+        } label: {
+            Group {
+                if let size {
+                    sessionActivity(session).frame(width: size.width, height: size.height)
+                } else {
+                    sessionActivity(session).frame(minWidth: 30, minHeight: 30).fixedSize()
+                }
+            }
+            .modifier(bubbleChrome(session, hitPadding: hitPadding))
+            .overlay(alignment: .bottomTrailing) {
+                // Which agent the count belongs to, at a glance; the tooltip names the session. Inset by the hit
+                // padding, so it sits on the bubble's corner, and an overlay, so the bar's measured width stays.
+                if glyph {
+                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
+                        .opacity(0.85).allowsHitTesting(false)
+                        .padding(.bottom, hitPadding.bottom)
+                        .padding(.trailing, hitPadding.trailing)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
+        .accessibilityLabel(sessionSummary(session))
+        .accessibilityIdentifier("widget.agent." + session.key)
+        .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+    }
+
     private func bubbleChrome(_ session: WidgetSession, hitPadding: EdgeInsets = EdgeInsets()) -> WidgetBubbleChrome {
         var style = model.attentionStyle
         style.cornerRadius = 17
@@ -578,7 +590,7 @@ struct WidgetPeekView: View {
     /// The panel's corner (EdgePanelShape's 18) minus the inset, so the flash runs parallel to the panel's edge.
     static let cornerRadius: CGFloat = 18 - inset
     /// The options the tile lists; the rest wait in the session's inbox.
-    static let shownOptions = 4
+    static let shownOptions = WidgetDecisionSurface.alertOptions
     /// The later alerts the tile lists under the shown one; the rest wait in the inbox.
     static let shownWaiting = 3
 
@@ -621,10 +633,11 @@ struct WidgetPeekView: View {
                     // What the send from this popup did, read where it was sent (UX audit F5).
                     outcomeBlock(outcome)
                 } else {
-                    // The context the agent wrote under the title, so a pick here is not made blind (Martin,
-                    // 2026-10-28: "in this window you should probably have the description").
-                    if model.preferences.alertSummary,
-                       let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                    if !options.isEmpty {
+                        decision
+                    } else if model.preferences.alertSummary,
+                              let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                        // The context the agent wrote under the title (the decision body draws it above options).
                         WidgetPeekSummary(summary: summary).equatable()
                     }
                     if let text = item.message?.text, !text.isEmpty {
@@ -633,7 +646,6 @@ struct WidgetPeekView: View {
                             .accessibilityIdentifier("widget.peek.message")
                             .frameProbe("widget.peek.message")
                     }
-                    if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
                 }
@@ -731,7 +743,7 @@ struct WidgetPeekView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .buttonStyle(RowButtonStyle(cornerRadius: DecisionOptionMetrics.cornerRadius))
         .instantTooltip(openTitle)
         .accessibilityLabel(kicker + ": " + title)
         .accessibilityHint(openTitle)
@@ -741,41 +753,41 @@ struct WidgetPeekView: View {
     /// The summary's tallest block; a longer one scrolls, so the options and the footer under it stay on screen.
     static let summaryMaxHeight: CGFloat = 132
 
-    /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
-    /// setting) without opening anything, and the row says Staged at once. A send shows its outcome here.
-    private var optionList: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
-                // A pick sent at once stays in the popup, which shows its outcome (`WidgetAlertPopup.outcome`), or opens its session
-                // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
-                // Read at the click, ⌘ included: a click that only stages never opens anything.
-                // A decision that takes any set of its options only ticks the letter, in every click mode.
-                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
-                    if Self.sendOpensSession(model.preferences,
-                        staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
-                        open()
+    /// The alert's decision on the shared decision body: its summary (Alerts → the description), at most four
+    /// options as the inbox draws them and "N more in its session", and the compact own answer. A click stages an
+    /// option (or sends it, by the Decision click setting) without opening anything, and the row says Staged at once.
+    private var decision: some View {
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: nil), surface: .alert, host: host,
+            // A pick sent at once stays in the popup, which shows its outcome (`WidgetAlertPopup.outcome`), or opens its
+            // session when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no
+            // setting). Read at the click, ⌘ included: a click that only stages never opens anything. A decision that
+            // takes any set of its options only ticks the letter, in every click mode.
+            chosen: {
+                if Self.sendOpensSession(model.preferences,
+                    staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
+                    open()
+                }
+            },
+            ownAnswer: {
+                // The card's answer field, compact (Martin, 2026-10-28: "just under the buttons as a smaller compact
+                // version of the input"). The popup's panel does not type in place: it closes on its timer and when
+                // the pointer leaves, and the draft it would write belongs to the session the panel shows.
+                if model.preferences.alertCompactAnswer {
+                    WidgetCompactOwnAnswer(text: model.ownAnswerText(for: item), identifier: "widget.peek.ownAnswer") {
+                        open(ownAnswer: true)
                     }
                 }
-            }
-            if options.count > Self.shownOptions {
-                // A count opens what it counts (UX audit P5): the decision in its session, with every option.
-                moreButton("\(options.count - Self.shownOptions) more in its session",
-                           tooltip: "Opens the decision in its session with all its options") { open() }
-            }
-            if model.preferences.alertCompactAnswer { ownAnswerField }
-        }
+            },
+            footer: { EmptyView() })
     }
 
-    /// The decision's own answer under its options: the card's answer field, compact (Martin, 2026-10-28: "just under
-    /// the buttons as a smaller compact version of the input"). A click opens the decision in its session with the
-    /// full field holding the keyboard. The popup's panel does not type in place: it closes on its timer and when the
-    /// pointer leaves, and the draft it would write belongs to the session the panel shows, not to this decision's.
-    private var ownAnswerField: some View {
-        WidgetAnswerField<EmptyView, EmptyView>.compact(placeholder: "Write my own answer…", shownText: model.ownAnswerText(for: item),
-                                  tooltip: "Opens it in its session with the answer field ready to type") {
-            open(ownAnswer: true)
-        }
-        .padding(.top, 1)
+    /// The alert's actions on its decision: a send leaves for the session when "After a send" says so, and the
+    /// body's "N more in its session" opens it as the header does.
+    private var host: WidgetItemStagingHost {
+        WidgetItemStagingHost(model: model, item: item, surface: nil, sendsAll: false, afterSend: {
+            if Self.sendOpensSession(model.preferences) { open() }
+        }, opens: { open() })
     }
 
     /// A decision answered outside the widget: the option it took, marked as the answer, who recorded it, and the
@@ -786,7 +798,12 @@ struct WidgetPeekView: View {
         let saysMore = !answer.isEmpty && !picks.contains { $0.text.caseInsensitiveCompare(answer) == .orderedSame }
             && answer.lowercased() != (item.option ?? "").lowercased()
         return VStack(alignment: .leading, spacing: 5) {
-            ForEach(picks, id: \.letter) { pick in WidgetAnsweredOptionRow(letter: pick.letter, text: pick.text) }
+            ForEach(picks, id: \.letter) { pick in
+                DecisionOptionRow(state: .answered, badge: .letter(pick.letter), recommended: false, text: pick.text,
+                                  rationale: nil)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Answered " + pick.letter + ": " + pick.text)
+            }
             if saysMore {
                 Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
@@ -828,13 +845,13 @@ struct WidgetPeekView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+                .buttonStyle(RowButtonStyle(cornerRadius: DecisionOptionMetrics.cornerRadius))
                 .instantTooltip("Show it here")
                 .accessibilityLabel(WidgetAlerts.kicker(other) + ": " + (other.title ?? ""))
                 .accessibilityHint("Shows it here")
             }
             if waiting.count > Self.shownWaiting {
-                moreButton("\(waiting.count - Self.shownWaiting) more in the inbox",
+                WidgetMoreButton(title: "\(waiting.count - Self.shownWaiting) more in the inbox",
                            tooltip: "Opens the inbox of every session") {
                     guard let surface = model.hoveredSurface else { return }
                     model.toggleInboxOverview(on: surface)
@@ -868,7 +885,7 @@ struct WidgetPeekView: View {
                 .accessibilityElement(children: .combine)
             }
             if staged.count > Self.shownWaiting + 1 {
-                moreButton("\(staged.count - Self.shownWaiting - 1) more staged",
+                WidgetMoreButton(title: "\(staged.count - Self.shownWaiting - 1) more staged",
                            tooltip: "Opens the staged decisions in the inbox") { open() }
             }
         }
@@ -891,23 +908,9 @@ struct WidgetPeekView: View {
             }
         }
         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DecisionOptionMetrics.cornerRadius))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("widget.peek.outcome")
-    }
-
-    /// "2 more in its session": a quiet link-like button, since a count opens what it counts.
-    private func moreButton(_ title: String, tooltip: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Text(title)
-                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .semibold))
-            }
-            .font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-        .buttonStyle(.genHover())
-        .padding(.leading, 2)
-        .instantTooltip(tooltip)
     }
 
     /// The decision's staged pick or note, here or in the snapshot.
@@ -958,19 +961,8 @@ struct WidgetPeekView: View {
                 .instantTooltip("Sends every staged decision now, one message per session")
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
-            let sending = model.sendingDecisionIDs.contains(item.sourceId)
-            let phase = model.stagePhase(item.sourceId, draftedAt: item.draftedAt)
-            // A set's Send names the ticked letters: "Send a + b + c".
-            let letters = model.shownStagedOption(item.sourceId, stored: item.draftOption)
-            let namesSet = item.takesSeveral && letters != nil
-            Button(phase.sendTitle(letters, multiple: item.takesSeveral)) {
-                model.sendStaged([item.sourceId], known: [item])
-                if Self.sendOpensSession(model.preferences) { open() }
-            }
-                .buttonStyle(.genPrimary())
-                .disabled(sending || phase.onItsWay)
-                .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
-                                         : "Sends this staged decision alone, without the others.")
+            // The decision body's Send, in the footer under the tile's stretch.
+            WidgetDecisionSurface.alert.stagedActions(WidgetDecisionValue(item: item, card: nil), host: host)
         } else {
             Button(openTitle) { open() }
         }
@@ -1021,67 +1013,36 @@ struct WidgetPeekSummary: View, Equatable {
     }
 }
 
-/// An option a decision took outside the widget: the option row's shape, green, with a check where the inbox puts
-/// its recommended mark.
-struct WidgetAnsweredOptionRow: View {
-    let letter: String
-    let text: String
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
-        HStack(alignment: .top, spacing: 8) {
-            WidgetOptionBadge(text: letter)
-            Text(WidgetOptionText.markdown(text)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
-            Spacer(minLength: 0)
-            Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
-                .padding(.top, 3).accessibilityHidden(true)
-        }
-        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.green.opacity(0.12), in: shape)
-        .overlay(shape.strokeBorder(Color.green.opacity(0.45), lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Answered " + letter + ": " + text)
-    }
-}
-
 struct AgentWidgetModuleView: View {
     @ObservedObject var model: WidgetModel
-    @ObservedObject private var popup: WidgetAlertPopup
     let presentation: WidgetModulePresentation
+    @Environment(\.widgetSurface) private var surface
 
     init(model: WidgetModel, presentation: WidgetModulePresentation) {
         _model = ObservedObject(wrappedValue: model)
-        _popup = ObservedObject(wrappedValue: model.alertPopup)
         self.presentation = presentation
     }
 
     var body: some View {
         if presentation == .expanded {
             LiveWidgetView(model: model, edge: model.expanded ?? model.side, embedded: true)
-        } else if presentation == .preview, let item = popup.item {
-            WidgetPeekView(model: model, item: item)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))
-                    .lineLimit(2)
-                if let card = model.card {
-                    Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12)).lineLimit(3)
-                    if !card.fullText.isEmpty {
-                        Text(card.fullText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
-                    }
+            // Only this part follows the alert popup, so a popup change does not build the whole panel again.
+            WidgetAlertPopupReader(popup: model.alertPopup) { item in
+                if let item {
+                    // The alert popup (`WidgetAlertPopup`): one item, a click answers it, × or Esc closes it.
+                    // Measured like the hover list, so the panel takes the popup's own height.
+                    // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on
+                    // every side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own
+                    // edge. Only the content is measured, so the fill cannot feed its own height back (Martin's
+                    // screenshot, 2026-10-25: a short card over an empty pane, its flash border hugging the text).
+                    WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
+                        .padding(WidgetPeekView.inset)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 } else {
-                    Text("Questions, screenshots and finished work are collected here.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    AgentWidgetPreview(model: model, surface: surface ?? WidgetSurfaceID(edge: model.side))
                 }
-                Divider()
-                HStack {
-                    Label(
-                        "\(model.sessions.filter { $0.status == "waiting" }.count) waiting", systemImage: "bubble.left")
-                    Spacer()
-                    Text("\(model.sessions.filter { $0.status == "working" }.count) working")
-                }.font(.caption2).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 }

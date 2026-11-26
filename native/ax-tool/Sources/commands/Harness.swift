@@ -263,11 +263,24 @@ func cmdActivate() {
 func cmdFront() {
     let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
     var windows: [[String: Any]] = []
+    // How each owner runs, once per pid: a recording picker tells an overlay of a menu bar app from an app window.
+    var ownerKinds: [Int32: String] = [:]
     for window in list {
         guard (window[kCGWindowLayer] as? Int) == 0, let pid = window[kCGWindowOwnerPID] as? Int32 else { continue }
         var entry: [String: Any] = ["pid": Int(pid), "app": (window[kCGWindowOwnerName] as? String) ?? ""]
         if let id = window[kCGWindowNumber] as? Int { entry["windowId"] = id }
         if let title = window[kCGWindowName] as? String, !title.isEmpty { entry["title"] = title }
+        if let alpha = window[kCGWindowAlpha] as? Double { entry["alpha"] = alpha }
+        if let sharing = window[kCGWindowSharingState] as? Int { entry["sharingState"] = sharing }
+        if ownerKinds[pid] == nil {
+            switch NSRunningApplication(processIdentifier: pid)?.activationPolicy {
+            case .regular: ownerKinds[pid] = "regular"
+            case .accessory: ownerKinds[pid] = "accessory"
+            case .prohibited: ownerKinds[pid] = "background"
+            default: ownerKinds[pid] = "none"
+            }
+        }
+        entry["ownerKind"] = ownerKinds[pid]
         if let bounds = window[kCGWindowBounds] as? [String: Any] {
             entry["bounds"] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
         }

@@ -7,7 +7,7 @@ import {
     resolveProjectRoot,
     storeForProject,
 } from "@app/todo/lib/project";
-import { parseReminderTime } from "@app/todo/lib/reminders";
+import { alertsForStart, parseReminderTime } from "@app/todo/lib/reminders";
 import { buildSyncReport, type SyncReport, type SyncTarget, syncTodoAndPair } from "@app/todo/lib/sync";
 import type { OutputFormat, Todo, TodoPriority, TodoReminder } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
@@ -119,6 +119,14 @@ export function createEditCommand(): Command {
 
                 if (newReminders.length > 0) {
                     patch.reminders = [...current.reminders, ...newReminders];
+                }
+
+                if (scalars.at !== undefined) {
+                    patch.reminders = alertsForStart({
+                        reminders: patch.reminders ?? current.reminders,
+                        previousAt: current.at,
+                        at: scalars.at,
+                    });
                 }
 
                 if (newLinks.length > 0) {

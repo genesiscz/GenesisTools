@@ -13,7 +13,7 @@ enum WidgetInboxRender {
                       pinned: false, visible: true, hiddenByFilter: false)
     }
 
-    static func model(sessions: [WidgetSession], items: [WidgetInboxItem],
+    static func model(sessions: [WidgetSession], items: [WidgetInboxItem], read: [WidgetInboxItem] = [],
                       preferences: WidgetPreferences = .hubDefaults) throws -> WidgetModel {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.fixture." + UUID().uuidString))
@@ -21,15 +21,16 @@ enum WidgetInboxRender {
             appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: UUID().uuidString,
                                                  observeExternalChanges: false))
         model.entryBodyReader = { id in
-            guard let row = items.first(where: { $0.sourceId == id }) else { throw CocoaError(.fileNoSuchFile) }
+            guard let row = (items + read).first(where: { $0.sourceId == id }) else { throw CocoaError(.fileNoSuchFile) }
             return WidgetEntryBody(body: row.reply?.text ?? row.message?.text ?? "", question: row.reply?.question)
         }
-        try receive(model, sessions: sessions, items: items, preferences: preferences)
+        try receive(model, sessions: sessions, items: items, read: read, preferences: preferences)
         return model
     }
 
+    /// `read`: the answers and messages already read, sent as the summary's `recentlyRead`.
     static func receive(_ model: WidgetModel, sessions: [WidgetSession], items: [WidgetInboxItem],
-                        preferences: WidgetPreferences) throws {
+                        read: [WidgetInboxItem] = [], preferences: WidgetPreferences) throws {
         let groups = sessions.map { session in
             let rows = items.filter { $0.key == session.key }
             return WidgetInboxSession(key: session.key, unread: rows.filter { !$0.needsAnswer }.count,
@@ -37,9 +38,10 @@ enum WidgetInboxRender {
                                       unreadItem: rows.first { !$0.needsAnswer }, pendingItem: rows.first(where: \.needsAnswer),
                                       items: rows)
         }
-        let summary = WidgetInboxSummary(unread: groups.map(\.unread).reduce(0, +),
+        var summary = WidgetInboxSummary(unread: groups.map(\.unread).reduce(0, +),
                                          needsAnswer: groups.map(\.needsAnswer).reduce(0, +),
                                          complete: true, truncated: false, sessions: groups)
+        summary.recentlyRead = read.isEmpty ? nil : read
         let state = WidgetState(version: 1, revision: 1, preferences: preferences, assets: [:], drafts: [:], outgoing: [])
         let snapshot = WidgetSnapshot(notifications: summary, version: 1, state: state, sessions: sessions,
                                       cards: [], manifests: [:], errors: [])

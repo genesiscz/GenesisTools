@@ -81,6 +81,8 @@ public struct LiveWidgetView: View {
     @State private var retry: WidgetOutgoing?
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
+    /// The "Sessions with inbox items" row whose cmux popover is open.
+    @State private var waitingCmuxKey: String?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
@@ -274,13 +276,11 @@ public struct LiveWidgetView: View {
                 }
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
-                    VStack(spacing: 10) {
-                        GenesisWidgetMark()
-                        Text(model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.").font(.headline)
-                        Text("Questions, screenshots, and finished work land here.").font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Choose sessions") { model.showSettings?() }.buttonStyle(.genHover())
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    WidgetEmptyState(size: .regular,
+                                     text: model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.",
+                                     detail: "Questions, screenshots, and finished work land here.",
+                                     actionTitle: "Choose sessions", action: { model.showSettings?() })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     waitingSessions
                 }
@@ -530,18 +530,40 @@ public struct LiveWidgetView: View {
                     markAllReadButton
                 }.padding(.bottom, 4)
                 ForEach(model.inbox.sessions, id: \.key) { entry in
-                    let session = model.session(forKey: entry.key)
-                    let source = session?.title ?? entry.latest?.message?.origin ?? "Unknown session"
-                    Button {
-                        if let session {
-                            model.openSessionInbox(session)
-                        } else {
-                            model.overviewFilterPick = "all"
-                            model.inboxOverview = true
-                        }
+                    if let session = model.session(forKey: entry.key) {
+                        // The hover list's session row: status, times, the waiting question, the ring and cmux.
+                        WidgetPreviewRosterRow(
+                            session: session, inbox: entry,
+                            question: AgentWidgetPreview.pendingQuestion(entry.pendingItem,
+                                                                         enabled: model.preferences.previewQuestion),
+                            pulse: model.inboxPulseFor(entry.key), reduceMotion: model.effectiveReduceMotion,
+                            complete: model.inbox.complete, panelOpen: waitingCmuxKey == session.key, model: model,
+                            density: .expanded, staged: model.stagedToSend.filter { $0.key == session.key }.count,
+                            open: { model.openSessionInbox(session) },
+                            openPanel: { waitingCmuxKey = session.key }, closePanel: { waitingCmuxKey = nil })
+                            .equatable()
+                    } else {
+                        senderRow(entry)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+            .scrollOverflowContent()
+        }
+        .scrollOverflowHints()
+        // Like the hover list's: while a row's cmux popover is open the edge panel must not collapse.
+        .onChange(of: waitingCmuxKey) { _, key in model.cmuxPopoverOpen = key != nil }
+    }
+
+    /// A sender that is no session (an external message): its small row opens the inbox of every session.
+    private func senderRow(_ entry: WidgetInboxSession) -> some View {
+                    let source = entry.latest?.message?.origin ?? "Unknown session"
+                    return Button {
+                        model.overviewFilterPick = "all"
+                        model.inboxOverview = true
                     } label: {
                         HStack(spacing: 9) {
-                            AIProviderGlyph(meta: AIProviders.meta(for: session?.target.provider ?? "unknown"), size: 18)
+                            AIProviderGlyph(meta: AIProviders.meta(for: "unknown"), size: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(source).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                 Text(inboxSummary(entry)).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -556,13 +578,7 @@ public struct LiveWidgetView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(RowButtonStyle(cornerRadius: 10))
-                    .accessibilityLabel("Open " + (session == nil ? "inbox overview" : source) + ", " + inboxSummary(entry))
-                }
-            }
-            .padding(.vertical, 2)
-            .scrollOverflowContent()
-        }
-        .scrollOverflowHints()
+                    .accessibilityLabel("Open inbox overview, " + inboxSummary(entry))
     }
 
     private func inboxSummary(_ entry: WidgetInboxSession) -> String {
@@ -618,8 +634,9 @@ public struct LiveWidgetView: View {
                 .controlSize(.small).font(.system(size: 11)).padding(.vertical, 12)
                 .accessibilityIdentifier("widget.inbox.loading")
         } else {
-            Text("No inbox items for this session.").foregroundStyle(.secondary).font(.callout)
-            Button("See conversation") { section = "Conversation" }.buttonStyle(.genHover())
+            WidgetEmptyState(size: .regular, text: "No inbox items for this session.", actionTitle: "See conversation",
+                             action: { section = "Conversation" })
+                .frame(maxWidth: .infinity).padding(.vertical, 18)
         }
     }
 
@@ -647,7 +664,7 @@ public struct LiveWidgetView: View {
             if opening {
                 model.openCard(card)
             } else {
-                model.foldedCardIDs.insert(card.id)
+                model.foldCard(card)
             }
         }
     }
@@ -660,8 +677,9 @@ public struct LiveWidgetView: View {
         let _ = RenderProbe.hit("widget.inbox.row")
         return VStack(alignment: .leading, spacing: 0) {
             // The card's head is a value row; the open card's detail below keeps every control it has (one card).
-            WidgetInboxCardRow(
-                card: card, open: open, selected: card.id == model.card?.id, staged: staged,
+            WidgetInboxRowHead(
+                value: .init(card: card, staged: staged), open: open, selected: card.id == model.card?.id,
+                focused: false,
                 stage: staged ? WidgetStageLine(phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
                     pick: model.shownStagedLine(WidgetModel.inboxItem(card))) : nil,
                 toggle: { toggle(card) })
@@ -671,14 +689,7 @@ public struct LiveWidgetView: View {
                     .transition(.genReveal)
             }
         }
-        // The card closes over its detail instead of the rows below sliding up over fading text.
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            // A staged decision reads blue as clearly as a waiting one reads orange: at 0.3 the blue was lost on the
-            // dark card (Martin, 2026-10-28: "somehow marked as staged - the blue border probably?").
-            .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.6) : .clear,
-                          lineWidth: staged ? 1.5 : 1))
+        .decisionChrome(waiting: waiting, staged: staged, open: open)
         .attentionPulse(trigger: model.revealTrigger("card-" + card.id), style: model.revealStyle,
                         since: model.revealStart("card-" + card.id))
     }
@@ -687,44 +698,6 @@ public struct LiveWidgetView: View {
     private func staged(_ card: WidgetCard) -> Bool {
         card.kind == "decision" && card.needsAnswer
             && model.shownStaged(card.sourceId, option: card.draftOption, draft: card.draft)
-    }
-
-    /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.
-    @ViewBuilder
-    private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
-                           focused: Bool) -> some View {
-        let stages = card.kind == "decision" && model.decisionClickStages
-        // A decision that takes any set of its options: a check box per option, and a click only ticks it.
-        let multiple = card.takesSeveral
-        let text = Self.choiceText(choice)
-        let pickedWord = model.stagePhase(card.sourceId, draftedAt: card.draftedAt).word
-        Button {
-            model.choose(card, option: choice.id)
-        } label: {
-            // The badge is the key that picks the option; the letter, which the agent and the hub name it by, leads
-            // its text. Up and Down move through the options; the chosen one wears the focus ring.
-            WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
-                              recommended: choice.recommended, focused: focused, rationale: choice.rationale,
-                              multiple: multiple, pickedWord: pickedWord)
-        }
-        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
-        // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
-        .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId)
-                  || model.dialogSendingIDs.contains(card.sourceId))
-        .id("choice-" + card.id + "-" + choice.id)
-        .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
-            choice.id, recommended: choice.recommended, stages: stages, picked: picked,
-            swaps: model.preferences.decisionCommandSwaps, key: index < 9 ? index + 1 : nil,
-            multiple: multiple))
-        .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
-                                                                recommended: choice.recommended, multiple: multiple,
-                                                                picked: picked)
-            + (choice.rationale.map { ". " + $0 } ?? ""))
-        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple,
-                                                                pickedWord: pickedWord))
-        // Selected is the staged pick; the keyboard's option shows by its focus ring and VoiceOver's own cursor.
-        .accessibilityAddTraits(picked ? .isSelected : [])
-        .accessibilityHint(picked && stages && !multiple ? "Click again to unstage" : "")
     }
 
     /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
@@ -742,35 +715,36 @@ public struct LiveWidgetView: View {
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
         let preferences = model.preferences
-        // The agent's pick sits under the option it recommends, else above the options (Decision cards → The agent's
-        // pick).
-        let pickUnder = WidgetProposal.placement(card, preferences: preferences)
+        let value = WidgetDecisionValue(card: card)
         VStack(alignment: .leading, spacing: 10) {
             if let origin = card.messageOrigin {
                 Text(origin).font(.caption).foregroundStyle(.secondary)
             }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
-            if !card.body.isEmpty {
-                WidgetMarkdown(text: card.body)
-            }
-            // The hub Inbox card's context: Context, Code, the notes, the pick (WidgetDecisionDetailsView).
-            if let details = card.decision {
-                WidgetDecisionDetailsView(card: card, details: details, preferences: preferences,
-                                          proposal: pickUnder == nil ? details.proposal : nil)
-            }
-            if !card.attachments.isEmpty {
-                WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
-            }
-            if card.kind == "decision" && !card.needsAnswer {
-                // The agent that stored the answer opens its session, unless it is this card's own, which is open.
-                let answerer = model.answererSession(card.answeredBy).flatMap { $0.key == card.sessionKey ? nil : $0 }
-                WidgetDecisionOutcome(card: card, openAnswerer: answerer.map { session in { model.openSessionInbox(session) } }) {
-                    model.openDecision(id: $0.id, sessionKey: $0.sessionKey)
+            if value.answerable {
+                // An open decision or dialog: the shared decision body draws its text, the hub Inbox card's sections
+                // (Context, Code, the notes, the agent's pick), its options, the own answer, the staged note and the
+                // staged actions. The number keys pick its options (`choiceKey`).
+                WidgetDecisionBody(model: model, value: value, surface: .session,
+                                   host: WidgetCardStagingHost(model: model, card: card),
+                                   ownAnswer: { if card.kind == "decision" { ownAnswer(card) } },
+                                   footer: { cardFooterEnd(card) })
+            } else {
+                if !card.body.isEmpty {
+                    WidgetMarkdown(text: card.body)
                 }
-            }
-            if card.needsAnswer {
-                if card.kind == "form" {
+                // Not waiting, so the agent's pick sits above where the options were.
+                WidgetDecisionSections(card: card, preferences: preferences, proposalAbove: true,
+                                       images: WidgetDecisionSurface.session.images, showMedia: showMedia)
+                if card.kind == "decision" {
+                    // The agent that stored the answer opens its session, unless it is this card's own, which is open.
+                    let answerer = model.answererSession(card.answeredBy).flatMap { $0.key == card.sessionKey ? nil : $0 }
+                    WidgetDecisionOutcome(card: card, openAnswerer: answerer.map { session in { model.openSessionInbox(session) } }) {
+                        model.openDecision(id: $0.id, sessionKey: $0.sessionKey)
+                    }
+                }
+                if card.needsAnswer, card.kind == "form" {
                     ForEach(card.formItems ?? []) { item in
                         formItem(item, card: card, showsPrompt: !Self.asksOneQuestion(card))
                             .disabled(model.cardPending)
@@ -778,111 +752,31 @@ public struct LiveWidgetView: View {
                     Button(model.cardPending ? "Answer queued" : "Send answers") { model.submit(answering: true) }
                         .buttonStyle(.borderedProminent).pointerCursor(!model.cardPending)
                         .disabled(model.importing > 0 || model.cardPending)
-                } else {
-                    let staged = model.shownStagedOption(card.sourceId, stored: card.draftOption)
-                    ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
-                        let picked = staged?.contains(choice.id) ?? false
-                        let key = Self.choiceKey(index)
-                        let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
-                        optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
-                        if let pickUnder, pickUnder.letter == choice.id {
-                            // Under the option's text: the label's padding, its badge and the gap after it.
-                            WidgetProposalLine(text: pickUnder.text)
-                                .padding(.leading, WidgetOptionLabel.textInset(multiple: card.takesSeveral))
-                                .padding(.trailing, 8)
-                        }
-                    }
-                    // A set the agent recommends, ticked in one click while it is not the ticked set already.
-                    if card.takesSeveral,
-                       let recommended = DecisionAnswering.recommendedSet(
-                           card.choices.filter(\.recommended).map(\.id).joined(), count: card.choices.count),
-                       recommended != staged {
-                        WidgetRecommendedPickButton(letters: recommended) { model.pickSet(card, option: recommended) }
-                            .disabled(model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
-                            .padding(.leading, 4)
-                    }
-                    if card.kind == "decision" { ownAnswer(card) }
                 }
-            }
-            // Under the options, beside the buttons that act on it: at the top of the card it pushed the options and
-            // the buttons down under the pointer.
-            let note = model.shownStagedNote(card.sourceId, card.draft)
-            if let saved = model.draftSavedAt[card.id] ?? (note != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
-               card.kind == "decision", card.needsAnswer, !model.heldDecisionIDs.contains(card.sourceId) {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
-                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
-                    Text(note.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
-                    if model.draftSavedAt[card.id] != nil {
-                        Text("·")
-                        LiveAgo(date: saved, style: .brief)
-                    }
-                }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-            }
-            HStack(spacing: 8) {
-                if let task = card.task, let store = model.taskActions {
-                    WidgetInboxTaskButtons(task: task, store: store)
-                } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
-                    if card.status == "open" {
-                        Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
-                    }
-                    Button("Mark complete") { holdMove(card, to: "implemented") }
-                    LegacyWidgetTodoDismissButton(card: card, model: model)
-                } else if card.kind == "decision" && card.needsAnswer {
-                    // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
-                    // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
-                    if staged(card) {
+                HStack(spacing: 8) {
+                    if let task = card.task, let store = model.taskActions {
+                        WidgetTaskActionsCard(store: store, task: task, style: .actions, identifier: "widget.inbox.task." + task.id)
+                    } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
+                        if card.status == "open" {
+                            Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
+                        }
+                        Button("Mark complete") { holdMove(card, to: "implemented") }
+                        LegacyWidgetTodoDismissButton(card: card, model: model)
+                    } else if card.kind == "decision" && card.status == "answered" {
+                        // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
                         let sending = model.sendingDecisionIDs.contains(card.sourceId)
-                        let phase = model.stagePhase(card.sourceId, draftedAt: card.draftedAt)
-                        // A set's Send names the ticked letters: "Send a + b + c".
-                        let letters = model.shownStagedOption(card.sourceId, stored: card.draftOption)
-                        let namesSet = card.takesSeveral && letters != nil
-                        Button(phase.sendTitle(letters, multiple: card.takesSeveral)) {
-                            model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
-                        }
-                        .buttonStyle(.genPrimary())
-                        .disabled(sending || phase.onItsWay)
-                        .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
-                                                 : "Sends this staged decision alone, without the others.")
-                        Button("Unstage") { model.unstage(card) }
+                        Button(sending ? "Sending…" : "Send again") { model.resendAnswers([WidgetModel.inboxItem(card)]) }
                             .disabled(sending)
-                            .instantTooltip(card.draft == nil ? "Clears the staged pick."
-                                : "Clears the staged pick and puts the note back into the answer field.")
-                        // Every staged decision at once, this one included, from the card being read (Martin,
-                        // 2026-10-28). Only while another one is staged too: alone it is the same as Send now.
-                        let others = model.stagedForLeave.filter { $0.sourceId != card.sourceId }
-                        if !others.isEmpty {
-                            let all = [WidgetModel.inboxItem(card)] + others
-                            Button("Send now (all \(all.count))") {
-                                model.sendStaged(all.map(\.sourceId), known: all)
-                            }
-                            .disabled(sending)
-                            .accessibilityIdentifier("widget.card.sendAll." + card.sourceId)
-                            .instantTooltip("Sends this decision and the \(Plural.count(others.count, "other staged decision")) now, one message per session.")
-                        }
+                            .instantTooltip("Sends the answer to the session now instead of at its next prompt.")
                     }
-                } else if card.kind == "decision" && card.status == "answered" {
-                    // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
-                    let sending = model.sendingDecisionIDs.contains(card.sourceId)
-                    Button(sending ? "Sending…" : "Send again") { model.resendAnswers([WidgetModel.inboxItem(card)]) }
-                        .disabled(sending)
-                        .instantTooltip("Sends the answer to the session now instead of at its next prompt.")
+                    if card.kind == "result" || card.kind == "answer" {
+                        Button("Create handoff") { model.destination("handoff") }
+                        Button("New agent with context…") { model.destination("new") }
+                    }
+                    cardFooterEnd(card)
                 }
-                if card.kind == "result" || card.kind == "answer" {
-                    Button("Create handoff") { model.destination("handoff") }
-                    Button("New agent with context…") { model.destination("new") }
-                }
-                Spacer(minLength: 0)
-                if card.kind == "decision" && card.needsAnswer {
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
-                        .foregroundStyle(.secondary)
-                        .instantTooltip("Drops the decision without an answer. Undo brings it back.")
-                }
-                IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
-                           tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
-                    .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
+                .buttonStyle(.genHover()).font(.caption)
             }
-            .buttonStyle(.genHover()).font(.caption)
             // A file the Code section already shows with its lines is not listed again under the buttons.
             ForEach(Array(Self.listedRefs(card, preferences: preferences).enumerated()), id: \.offset) { _, ref in
                 if ref.value.hasPrefix("/") {
@@ -896,6 +790,20 @@ public struct LiveWidgetView: View {
                 }
             }
         }
+    }
+
+    /// The right end of a card's footer: Dismiss while a decision waits, quiet and at the right edge, so it never
+    /// moves when staging adds the buttons before it (UX audit P13); then Read aloud.
+    @ViewBuilder private func cardFooterEnd(_ card: WidgetCard) -> some View {
+        Spacer(minLength: 0)
+        if card.kind == "decision" && card.needsAnswer {
+            Button("Dismiss") { holdMove(card, to: "dismissed") }
+                .foregroundStyle(.secondary)
+                .instantTooltip("Drops the decision without an answer. Undo brings it back.")
+        }
+        IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
+                   tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
+            .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
     }
 
     /// The decision's own answer: a field under its options that is there before it is asked for (Martin, 2026-10-26:
@@ -1624,99 +1532,20 @@ public struct LiveWidgetView: View {
     }
 }
 
-/// The head of one inbox card, from values: the dot, kind, title, preview, kind or staged line, age and chevron. It is
-/// a button (open or fold the card) only while live (`liveRow`: hovered, or the selected card); at rest it draws the
-/// same labels with no control, so a model publish re-renders only the cards whose values changed and an
-/// accessibility client walks no buttons of the cards at rest (swift skill, "Dense lists and accessibility clients").
-/// VoiceOver still presses it (`rowButton` at rest). The card's frame, flash and open detail stay with
-/// `LiveWidgetView.inboxRow`, so the open card's controls do not depend on the head's liveness.
-struct WidgetInboxCardRow: View, Equatable {
-    let card: WidgetCard
-    let open: Bool
-    let selected: Bool
-    /// A decision whose pick or note is staged, being sent or sent.
-    let staged: Bool
-    /// Its state line ("Staged: … · just now", "Sending: …", "Sent: …"), read from the model by the parent.
-    let stage: WidgetStageLine?
-    let toggle: () -> Void
-
-    static func == (a: WidgetInboxCardRow, b: WidgetInboxCardRow) -> Bool {
-        a.card == b.card && a.open == b.open && a.selected == b.selected && a.staged == b.staged && a.stage == b.stage
-    }
-
-    var body: some View {
-        let _ = RenderProbe.hit("widget.inbox.card.body")
-        labels
-            .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel((stage?.phase.label ?? LiveWidgetView.kindLabel(card)) + ": "
-                + WidgetWords.numbered(card.title, number: card.number) + spokenFacts)
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
-            .accessibilityIdentifier("widget.inbox.row." + card.id)
-            .liveRow(selected: selected)
-    }
-
-    /// The chips an open decision shows under its title, as VoiceOver reads them: ", blocking, high confidence".
-    private var spokenFacts: String {
-        guard open, let details = card.decision else { return "" }
-        var facts: [String] = []
-        if details.blocking == true { facts.append("blocking") }
-        if let confidence = details.confidence { facts.append(confidence + " confidence") }
-        return facts.map { ", " + $0 }.joined()
-    }
-
-    private var labels: some View {
-        let waiting = card.needsAnswer && !staged
-        return HStack(alignment: .top, spacing: 9) {
-            Circle()
-                .fill(waiting ? Color.orange : (staged || !card.read ? SessionPalette.blue : Color.clear))
-                .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(card.kind.rawValue)).font(.system(size: 11))
-                .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                // A one-question form's title is its prompt, which the open card does not repeat: open, it
-                // shows whole and as Markdown, the way the form drew it.
-                let isPrompt = LiveWidgetView.asksOneQuestion(card)
-                (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
-                    .font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
-                // A sub-agent's decision names its thread and lead: each session numbers its own (DECISION 46 b).
-                if let askedIn = card.decision?.askedIn, !askedIn.isEmpty {
-                    WidgetAskedInLine(askedIn)
-                }
-                // Open, the facts the hub's card shows beside its title: blocking, and how sure the agent is.
-                if open, let details = card.decision, details.blocking == true || details.confidence != nil {
-                    HStack(spacing: 6) {
-                        if details.blocking == true {
-                            Badge("Blocking", color: KitPalette.removed, look: .filled)
-                        }
-                        if let confidence = details.confidence {
-                            DecisionConfidenceBadge(confidence)
-                        }
-                    }
-                }
-                if !open, let preview = LiveWidgetView.previewLine(card.fullText) {
-                    Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                // A staged decision's age is its stage's, not the ask's; the line says where its send is.
-                if let stage {
-                    stage
-                } else {
-                    HStack(spacing: 4) {
-                        Text(LiveWidgetView.kindLabel(card)).lineLimit(1)
-                        Text("·")
-                        LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
-                    }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
-                }
-            }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .rotationEffect(.degrees(open ? 90 : 0))
-                .padding(.top, 4)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+/// A session's inbox row: the card's head, with the open card's facts and the closed card's first line.
+extension WidgetRowHeadValue {
+    init(card: WidgetCard, staged: Bool) {
+        // A one-question form's title is its prompt, which the open card does not repeat: open, it shows whole and as
+        // Markdown, the way the form drew it.
+        let isPrompt = LiveWidgetView.asksOneQuestion(card)
+        let numbered = WidgetWords.numbered(card.title, number: card.number)
+        self.init(surface: .card, id: card.id, identifierPrefix: "widget.inbox.row.", kind: card.kind.rawValue,
+                  title: isPrompt ? card.title : numbered, titleIsMarkdown: isPrompt, openLineLimit: isPrompt ? nil : 4,
+                  askedIn: card.decision?.askedIn, needsAnswer: card.needsAnswer, waitsWhileStaged: false,
+                  dotLit: card.needsAnswer || staged || !card.read, dimmed: false,
+                  kindLabel: LiveWidgetView.kindLabel(card), spokenTitle: numbered, source: nil, count: nil, at: card.at,
+                  previewLine: LiveWidgetView.previewLine(card.fullText), blocking: card.decision?.blocking == true,
+                  confidence: card.decision?.confidence)
     }
 }
 
@@ -2019,27 +1848,6 @@ enum WidgetErrorText {
             return ("The widget's call to the hub failed. Try again, or reconnect.",
                     error.localizedDescription + "\n" + String(describing: error))
         }
-    }
-}
-
-private struct WidgetInboxTaskButtons: View {
-    let task: WidgetTask
-    @ObservedObject var store: WidgetTasksStore
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text(task.addressee).font(.caption)
-            if task.sendUncertain == true { Text("Check the session before sending again.") }
-            HStack {
-                ForEach(task.actions, id: \.self) { action in
-                    Button(action.title) { store.perform(action, on: task) }
-                }
-            }.disabled(store.mutatingIDs.contains(task.id))
-            if let error = store.error(for: task) { Text(error).foregroundStyle(.red) }
-            if let undo = store.undo, undo.task.id == task.id {
-                Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
-            }
-        }.taskResumePrompt(store, taskID: task.id)
     }
 }
 

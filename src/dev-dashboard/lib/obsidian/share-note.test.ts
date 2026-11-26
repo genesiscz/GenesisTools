@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
+import { findPublication } from "@genesiscz/utils/genesis-tools/publish/store";
 import { shareNote, toVaultRelativePath } from "./share-note";
 
 describe("toVaultRelativePath", () => {
@@ -64,12 +65,25 @@ describe("shareNote", () => {
         const first = await shareNote("Widgets/Design/Note.md");
 
         expect(first.vaultPath).toBe("Widgets/Design/Note.md");
-        expect(first.url).toBe(`https://mac.example.com/share/${first.slug}`);
+        expect(first.outcomes).toEqual([{ target: "mac", url: `https://mac.example.com/share/${first.slug}` }]);
         expect(first.slug.length).toBeGreaterThan(8);
 
         const second = await shareNote(join(vault, "Widgets", "Design", "Note.md"));
         expect(second.slug).toBe(first.slug);
-        expect(second.url).toBe(first.url);
+        expect(second.outcomes).toEqual(first.outcomes);
+    });
+
+    test("records the targets a note went to, and refuses a target that is not configured", async () => {
+        const shared = await shareNote("Widgets/Design/Note.md", ["mac"]);
+        const config = await getDevDashboardStorage().getConfig<{ publishedNotes: Array<{ targets?: string[] }> }>();
+
+        expect(config?.publishedNotes[0]?.targets).toBeUndefined();
+        const tracked = await findPublication({ kind: "md", id: shared.slug });
+        expect(Object.keys(tracked?.syncs ?? {})).toEqual(["mac"]);
+        expect(shared.outcomes[0]?.url).toContain("/share/");
+        await expect(shareNote("Widgets/Design/Note.md", ["nowhere"])).rejects.toThrow(
+            'unknown publish target "nowhere"'
+        );
     });
 
     test("fails when the note is missing", async () => {
