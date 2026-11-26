@@ -105,7 +105,15 @@ export async function syncShares(options: {
     for (const note of notes) {
         const previous = previousTargets(note);
         const targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
-        results.push({ note, outcomes: await sendNote(note, targetNames) });
+        // One note that cannot be built (its vault file moved or was deleted) must not stop the notes after it.
+        try {
+            results.push({ note, outcomes: await sendNote(note, targetNames) });
+        } catch (error) {
+            // The outcome line below already tells the user; the stack goes to the day log only.
+            log.debug({ error, slug: note.slug, vaultPath: note.vaultPath }, "share sync: note not sent");
+            const reason = error instanceof Error ? error.message : String(error);
+            results.push({ note, outcomes: [{ target: targetNames.join(", ") || "default target", error: reason }] });
+        }
     }
 
     return results;
