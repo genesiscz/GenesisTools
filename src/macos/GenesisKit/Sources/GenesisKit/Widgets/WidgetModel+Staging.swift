@@ -261,7 +261,8 @@ extension WidgetModel {
     /// The card behind an inbox item, for its text: the selected session's, else the one cached for its session; nil
     /// while no snapshot of that session was read here.
     func card(for item: WidgetInboxItem) -> WidgetCard? {
-        cards.first { $0.id == item.id } ?? sessionCache[item.key]?.cards.first { $0.id == item.id }
+        cards.first { $0.id == item.id && $0.sessionKey == item.key && $0.revision == item.revision }
+            ?? sessionCache[item.key]?.cards.first { $0.id == item.id && $0.sessionKey == item.key && $0.revision == item.revision }
     }
 
     /// The own answer field of a decision takes the draft (its card becomes the selected, open one); with a staged note
@@ -477,6 +478,10 @@ extension WidgetModel {
 
     /// The staged decisions no send has taken yet: what Send sends and the staged count names.
     public var stagedToSend: [WidgetInboxItem] { stagedItems.filter { !isOnItsWay($0.sourceId) } }
+
+    var stagedCountsBySession: [String: Int] {
+        stagedToSend.reduce(into: [:]) { counts, item in counts[item.key, default: 0] += 1 }
+    }
 
     /// The state a row that shows `id` as staged draws (`WidgetStageLine`): staged since `draftedAt` (the snapshot's
     /// epoch ms) or the stage made here, sending while its send runs, then sent or kept for its session from the hub's

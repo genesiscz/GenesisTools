@@ -470,7 +470,8 @@ final class RequestPresentTests: XCTestCase {
                 print("shot \(url.path) \(image.width)x\(image.height)")
             }
         }
-        for words in ["Alice Example", "Bob Example", "Carol Example", "Dan Example", "Confirm as mine", "Not now"] {
+        for words in ["Alice Example", "Bob Example", "Carol Example", "Dan Example", "that was Alice", "Bob, yes",
+                      "Carol from the second minute on", "Confirm as mine", "Not now"] {
             XCTAssertTrue(text.contains(words), "the picture shows \(words): \(text)")
         }
         XCTAssertGreaterThanOrEqual(text.components(separatedBy: "Play clip").count - 1, 3, "every row shows its Play clip: \(text)")

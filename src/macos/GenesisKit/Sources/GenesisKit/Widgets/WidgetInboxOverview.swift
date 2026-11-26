@@ -249,7 +249,7 @@ struct WidgetInboxOverview: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 28)
                 } else {
                     VStack(spacing: 10) {
-                        WidgetInboxStatusFailure(error: model.error) { model.start() }
+                        WidgetInboxStatusFailure(error: model.error) { model.retryInbox() }
                         if let showAll { Button("Show all items", action: showAll).buttonStyle(.genHover()) }
                     }.frame(maxWidth: .infinity).padding(.vertical, 12)
                 }

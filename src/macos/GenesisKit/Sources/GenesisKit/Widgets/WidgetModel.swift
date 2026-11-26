@@ -268,7 +268,18 @@ public final class WidgetModel: ObservableObject {
         } else {
             hoverTask?.cancel()
             previewOpenItemID = item.id
+            markPreviewItemRead(item)
         }
+    }
+
+    private func markPreviewItemRead(_ item: WidgetInboxItem) {
+        guard !stopping, !item.isRead, ["answer", "result"].contains(item.kind) else { return }
+        let token = item.key + "|" + item.id + "|" + String(item.at)
+        guard inboxReadRequests.insert(token).inserted else { return }
+        action(["action": "inbox-read", "key": .string(item.key), "id": .string(item.id),
+                "kind": .string(item.kind), "at": .number(item.at)], failed: { [weak self] in
+            self?.inboxReadRequests.remove(token)
+        })
     }
 
     func closePreviewEntry() {
@@ -861,6 +872,13 @@ public final class WidgetModel: ObservableObject {
         guard restarts.count < 3 else { return false }
         restarts.append(now)
         return true
+    }
+
+    public func retryInbox() {
+        stopping = true
+        watcher?.stop()
+        watcher = nil
+        start()
     }
 
     public func start() {

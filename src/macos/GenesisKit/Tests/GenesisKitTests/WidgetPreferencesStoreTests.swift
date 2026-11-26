@@ -103,7 +103,7 @@ final class WidgetPreferencesStoreTests: XCTestCase {
 
     func testInboxDefaultsDecodeFromOlderPreferencesAndKeepSavedOrders() throws {
         var legacy = WidgetTestPreferences.dictionary(["previewFilter": "active"])
-        for key in ["inboxGrouping", "inboxFeedRuns", "inboxFeedHeaders", "previewView"] { legacy.removeValue(forKey: key) }
+        for key in ["inboxGrouping", "inboxFeedRuns", "inboxFeedHeaders", "previewView", "previewReadHours", "markReadOn"] { legacy.removeValue(forKey: key) }
         for order in [nil, "session", "list"] as [String?] {
             if let order { legacy["inboxGrouping"] = order }
             let data = try JSONSerialization.data(withJSONObject: legacy)
@@ -112,6 +112,8 @@ final class WidgetPreferencesStoreTests: XCTestCase {
             XCTAssertEqual(preferences.inboxFeedRuns, "session")
             XCTAssertEqual(preferences.inboxFeedHeaders, "all")
             XCTAssertEqual(preferences.previewView, "sessions")
+            XCTAssertEqual(preferences.previewReadHours, 24)
+            XCTAssertEqual(preferences.markReadOn, "click")
             XCTAssertEqual(preferences.previewFilter, "active")
         }
     }

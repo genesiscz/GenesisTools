@@ -522,7 +522,8 @@ public struct LiveWidgetView: View {
 
     /// No session picked: the sessions that hold inbox items, so nothing waits out of sight.
     private var waitingSessions: some View {
-        ScrollView {
+        let stagedCounts = model.stagedCountsBySession
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("Sessions with inbox items").font(.system(size: 12, weight: .semibold))
@@ -538,7 +539,7 @@ public struct LiveWidgetView: View {
                                                                          enabled: model.preferences.previewQuestion),
                             pulse: model.inboxPulseFor(entry.key), reduceMotion: model.effectiveReduceMotion,
                             complete: model.inbox.complete, panelOpen: waitingCmuxKey == session.key, model: model,
-                            density: .expanded, staged: model.stagedToSend.filter { $0.key == session.key }.count,
+                            density: .expanded, staged: stagedCounts[session.key, default: 0],
                             open: { model.openSessionInbox(session) },
                             openPanel: { waitingCmuxKey = session.key }, closePanel: { waitingCmuxKey = nil })
                             .equatable()
@@ -553,6 +554,12 @@ public struct LiveWidgetView: View {
         .scrollOverflowHints()
         // Like the hover list's: while a row's cmux popover is open the edge panel must not collapse.
         .onChange(of: waitingCmuxKey) { _, key in model.cmuxPopoverOpen = key != nil }
+        .onChange(of: model.inbox.sessions.map(\.key)) { _, keys in
+            if let key = waitingCmuxKey, !keys.contains(key) { waitingCmuxKey = nil }
+        }
+        .onDisappear {
+            if waitingCmuxKey != nil { waitingCmuxKey = nil; model.cmuxPopoverOpen = false }
+        }
     }
 
     /// A sender that is no session (an external message): its small row opens the inbox of every session.

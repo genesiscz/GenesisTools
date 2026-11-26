@@ -398,6 +398,20 @@ public struct WidgetTasksPreferences: Codable, Equatable, Sendable {
     public var showTooltips: Bool?
 }
 
+/// An integer preference added after the original widget wire format.
+@propertyWrapper
+public struct WidgetReadHoursPreference: Codable, Equatable, Sendable {
+    public var wrappedValue: Int
+    public init(wrappedValue: Int) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws {
+        wrappedValue = try decoder.singleValueContainer().decode(Int.self)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(wrappedValue)
+    }
+}
+
 /// A string preference added after the original widget wire format. Older snapshots omit these keys.
 @propertyWrapper
 public struct WidgetInboxPreference: Codable, Equatable, Sendable {
@@ -413,6 +427,11 @@ public struct WidgetInboxPreference: Codable, Equatable, Sendable {
 }
 
 private extension KeyedDecodingContainer {
+    func decode(_ type: WidgetReadHoursPreference.Type, forKey key: Key) throws -> WidgetReadHoursPreference {
+        if contains(key) { return try WidgetReadHoursPreference(from: superDecoder(forKey: key)) }
+        return .init(wrappedValue: WidgetPreferences.hubDefaults.previewReadHours)
+    }
+
     func decode(_ type: WidgetInboxPreference.Type, forKey key: Key) throws -> WidgetInboxPreference {
         if contains(key) { return try WidgetInboxPreference(from: superDecoder(forKey: key)) }
         let defaults = WidgetPreferences.hubDefaults
@@ -421,6 +440,7 @@ private extension KeyedDecodingContainer {
         case "inboxFeedRuns": return .init(wrappedValue: defaults.inboxFeedRuns)
         case "inboxFeedHeaders": return .init(wrappedValue: defaults.inboxFeedHeaders)
         case "previewView": return .init(wrappedValue: defaults.previewView)
+        case "markReadOn": return .init(wrappedValue: defaults.markReadOn)
         default: throw DecodingError.keyNotFound(key, .init(codingPath: codingPath, debugDescription: "Missing inbox preference"))
         }
     }
@@ -469,7 +489,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var previewSort: String
     /// Hours the Items list keeps the messages and answers already read, dimmed below the unread ones; 0 lists none.
     /// Default 24.
-    public var previewReadHours: Int
+    @WidgetReadHoursPreference public var previewReadHours: Int = 24
     /// An answer's sound: "same" (default, `alertSound`), "none" or a system sound name.
     public var alertAnswerSound: String
     /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
@@ -508,7 +528,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     @WidgetInboxPreference public var inboxFeedHeaders: String = "all"
     /// What marks the message or answer the widget shows as read: "click" (default, a click on its card) or
     /// "panel-open" (also the panel opening on it). "Mark all read" marks every item either way.
-    public var markReadOn: String
+    @WidgetInboxPreference public var markReadOn: String = "click"
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
     public var inboxFilter: String
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".

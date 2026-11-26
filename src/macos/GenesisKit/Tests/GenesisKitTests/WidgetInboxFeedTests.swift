@@ -346,7 +346,8 @@ final class WidgetInboxFeedTests: XCTestCase {
         let view = AgentWidgetPreview(model: model, surface: .init(edge: .right))
         let size = CGSize(width: 480, height: 480)
         _ = try WidgetInboxRender.draw(view, size: size, name: "hover-before")
-        model.actionRunner = { _ in ["ok": true] }
+        var calls: [WidgetJSON] = []
+        model.actionRunner = { value in calls.append(value); return ["ok": true] }
         model.choosePreviewSegment("items")
         let lines = try WidgetInboxRender.draw(view, size: size, name: "hover-after") { _, _ in
             model.togglePreviewEntry(answer)
@@ -354,6 +355,14 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertTrue(lines.contains("Answer"), lines.description)
         XCTAssertTrue(lines.joined(separator: " ").contains("Pick the pears today"), lines.description)
         XCTAssertTrue(lines.joined(separator: " ").contains("Open in its session"), lines.description)
+        WidgetInboxRender.settle()
+        XCTAssertEqual(calls.filter { value in
+            guard case .object(let fields) = value else { return false }
+            return fields["action"] == .string("inbox-read") && fields["id"] == .string(answer.id)
+        }.count, 1)
+        model.togglePreviewEntry(answer)
+        WidgetInboxRender.settle()
+        XCTAssertEqual(calls.count, 1, "closing the preview sends no additional read")
     }
 
     /// Decision 30 a: the Items list also lists the messages and answers already read, grey and below the unread ones
@@ -494,9 +503,14 @@ final class WidgetInboxFeedTests: XCTestCase {
             guard let button = Self.recognized(host).first(where: { $0.text.contains(send) }) else {
                 return XCTFail("no \(send) in \(Self.recognized(host).map(\.text))")
             }
+            calls.removeAll()
             Self.click(button.box, in: window, host: host)
             WidgetInboxRender.settle()
-            XCTAssertTrue(model.sendingDecisionIDs.contains("d1") || !calls.isEmpty, "Send reaches sendStaged")
+            XCTAssertTrue(calls.contains { value in
+                guard case .object(let fields) = value, fields["action"] == .string("send-staged"),
+                      case .array(let ids) = fields["ids"] else { return false }
+                return ids.contains(.string("d1"))
+            }, "Send targets d1: \(calls)")
         }
     }
 
@@ -520,6 +534,41 @@ final class WidgetInboxFeedTests: XCTestCase {
                                                size: CGSize(width: 480, height: 480)).joined(separator: " ")
         XCTAssertTrue(lines.contains("Inbox status unavailable"), lines)
         XCTAssertTrue(lines.contains("Try again"), lines)
+    }
+
+    func testTryAgainRestartsAnAlreadyRunningWatch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-retry-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let binary = root.appendingPathComponent("tools")
+        let starts = root.appendingPathComponent("watch-starts")
+        let script = """
+        #!/bin/sh
+        for arg in "$@"; do
+            if [ "$arg" = "--restart-on-code-change" ]; then
+                echo started >> "\(starts.path)"
+                while IFS= read -r line; do :; done
+                exit 0
+            fi
+        done
+        echo '{}'
+        """
+        try script.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.retry." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: UUID().uuidString,
+                                                 observeExternalChanges: false))
+        defer { model.stop() }
+        func countStarts() -> Int {
+            ((try? String(contentsOf: starts, encoding: .utf8)) ?? "").split(separator: "\n").count
+        }
+        model.start()
+        for _ in 0..<10 where countStarts() < 1 { WidgetInboxRender.settle() }
+        XCTAssertEqual(countStarts(), 1)
+        model.retryInbox()
+        for _ in 0..<10 where countStarts() < 2 { WidgetInboxRender.settle() }
+        XCTAssertEqual(countStarts(), 2, "Try again replaces an active watch")
     }
 
     /// A window that takes window-local clicks, so a test presses a drawn button without the pointer.

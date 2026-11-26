@@ -139,7 +139,8 @@ struct AgentWidgetPreview: View {
                 FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
                              measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                     LazyVStack(spacing: 6) {
-                        ForEach(model.previewList) { session in row(session) }
+                        let stagedCounts = model.stagedCountsBySession
+                        ForEach(model.previewList) { session in row(session, staged: stagedCounts[session.key, default: 0]) }
                     }
                 }
             }
@@ -172,7 +173,7 @@ struct AgentWidgetPreview: View {
         // Like the row button's own popover: while it is open the edge panel must not collapse.
         .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
         .onDisappear {
-            if cmuxPanelKey != nil { model.cmuxPopoverOpen = false }
+            if cmuxPanelKey != nil { cmuxPanelKey = nil; model.cmuxPopoverOpen = false }
             model.closePreviewEntry()
         }
         .onChange(of: showsItems) { _, items in
@@ -195,7 +196,7 @@ struct AgentWidgetPreview: View {
                 WidgetEmptyState(size: .compact, text: "Nothing new in the inbox.",
                                  detail: "Questions, answers and finished work from every session land here.")
             } else {
-                WidgetInboxStatusFailure(error: model.error) { model.start() }.padding(.horizontal, 5)
+                WidgetInboxStatusFailure(error: model.error) { model.retryInbox() }.padding(.horizontal, 5)
             }
         } else {
             FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
@@ -207,7 +208,7 @@ struct AgentWidgetPreview: View {
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 5).padding(.vertical, 4)
                         } else {
-                            WidgetInboxStatusFailure(error: model.error) { model.start() }.padding(.horizontal, 5)
+                            WidgetInboxStatusFailure(error: model.error) { model.retryInbox() }.padding(.horizontal, 5)
                         }
                     }
                     WidgetFeedRows(runs: model.inboxFeeds.all, model: model, surface: surface) { item, context in
@@ -274,7 +275,7 @@ struct AgentWidgetPreview: View {
         return question.map { label + ", " + $0 } ?? label
     }
 
-    private func row(_ session: WidgetSession) -> some View {
+    private func row(_ session: WidgetSession, staged: Int) -> some View {
         let inbox = model.inboxFor(session.key)
         let question = Self.pendingQuestion(inbox?.pendingItem,
             enabled: model.preferences.previewQuestion)
@@ -282,7 +283,7 @@ struct AgentWidgetPreview: View {
             session: session, inbox: inbox, question: question, pulse: model.inboxPulseFor(session.key),
             reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete,
             panelOpen: cmuxPanelKey == session.key, model: model, density: .preview,
-            staged: model.stagedToSend.filter { $0.key == session.key }.count,
+            staged: staged,
             open: { model.openInboxNotification(on: surface, key: session.key) },
             openPanel: { cmuxPanelKey = session.key }, closePanel: { cmuxPanelKey = nil })
             .equatable()

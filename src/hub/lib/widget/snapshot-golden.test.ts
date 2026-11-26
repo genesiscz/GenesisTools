@@ -541,7 +541,8 @@ it("counts configured message groups beyond the visible rows while showing uncou
 
 describe("the read messages and answers of the Items list", () => {
     async function snapshotWith(
-        hours?: number
+        hours?: number,
+        extraRead: RecentlyReadEntry[] = []
     ): Promise<{ since: number[]; snapshot: Awaited<ReturnType<typeof widgetSnapshot>> }> {
         const root = await mkdtemp(join(tmpdir(), "widget-read-items-"));
         const since: number[] = [];
@@ -557,7 +558,10 @@ describe("the read messages and answers of the Items list", () => {
                 ...everyKindSources,
                 recentlyRead: (from) => {
                     since.push(from);
-                    return everyKindSources.recentlyRead?.(from) ?? [];
+                    return [
+                        ...(everyKindSources.recentlyRead?.(from, { answer: true, message: true }) ?? []),
+                        ...extraRead,
+                    ];
                 },
             };
             return { since, snapshot: await widgetSnapshot({ root, sources, now: NOW }) };
@@ -589,6 +593,28 @@ describe("the read messages and answers of the Items list", () => {
         expect(snapshot.notifications?.unread).toBe(none.notifications?.unread);
         expect(snapshot.notifications?.badgeCount).toBe(none.notifications?.badgeCount);
         expect(snapshot.notifications?.sessions).toEqual(none.notifications?.sessions);
+    });
+
+    it("keeps read answers with their reply and excludes unread duplicates after an interleaved read", async () => {
+        const readAnswer: RecentlyReadEntry = {
+            ...READ_MESSAGE,
+            id: "qa_read_answer",
+            itemTag: "question",
+            itemTitle: "Which shelf?",
+            reply: { question: "Which shelf?", text: "The upper shelf." },
+            messageText: undefined,
+            sender: undefined,
+        };
+        const duplicate: RecentlyReadEntry = { ...readAnswer, id: "qa_answer_fixture" };
+        const { snapshot } = await snapshotWith(24, [readAnswer, duplicate]);
+        const { snapshot: withoutRead } = await snapshotWith(0);
+        expect(snapshot.notifications?.recentlyRead.map((row) => row.sourceId)).toEqual([
+            "qa_message_fixture",
+            "qa_read_answer",
+        ]);
+        expect(snapshot.notifications?.recentlyRead[1]).toMatchObject({ read: true, reply: readAnswer.reply });
+        expect(snapshot.notifications?.unread).toBe(withoutRead.notifications?.unread);
+        expect(snapshot.notifications?.badgeCount).toBe(withoutRead.notifications?.badgeCount);
     });
 
     it("are not read at all while the setting is none, and the window follows the setting", async () => {

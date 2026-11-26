@@ -41,13 +41,13 @@ public struct DecisionStageValue: Equatable, Sendable {
 struct WidgetCardStagingHost: DecisionStagingHost {
     let model: WidgetModel
     let card: WidgetCard
+    private let renderedBatch: [WidgetInboxItem]
 
     init(model: WidgetModel, card: WidgetCard) {
         self.model = model
         self.card = card
+        renderedBatch = [WidgetModel.inboxItem(card)] + model.stagedForLeave.filter { $0.sourceId != card.sourceId }
     }
-
-    private var others: [WidgetInboxItem] { model.stagedForLeave.filter { $0.sourceId != card.sourceId } }
 
     var stage: DecisionStageValue {
         let staged = card.kind == "decision" && card.needsAnswer
@@ -57,15 +57,14 @@ struct WidgetCardStagingHost: DecisionStagingHost {
             recommendedSet: card.takesSeveral ? DecisionAnswering.recommendedSet(
                 card.choices.filter(\.recommended).map(\.id).joined(), count: card.choices.count) : nil,
             phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt), staged: staged,
-            busy: model.sendingDecisionIDs.contains(card.sourceId), othersStaged: staged ? others.count : 0)
+            busy: model.sendingDecisionIDs.contains(card.sourceId), othersStaged: staged ? renderedBatch.count - 1 : 0)
     }
 
     func choose(_ letter: String) { model.choose(card, option: letter) }
     func pickSet(_ letters: String) { model.pickSet(card, option: letters) }
     func send() { model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)]) }
     func sendAll() {
-        let all = [WidgetModel.inboxItem(card)] + others
-        model.sendStaged(all.map(\.sourceId), known: all)
+        model.sendStaged(renderedBatch.map(\.sourceId), known: renderedBatch)
     }
     func unstage() { model.unstage(card) }
     /// Writes the dismissal at once. The session card's own Dismiss holds it for its Undo note
@@ -82,6 +81,7 @@ struct WidgetItemStagingHost: DecisionStagingHost {
     let item: WidgetInboxItem
     let surface: WidgetSurfaceID?
     let sendsAll: Bool
+    private let renderedBatch: [WidgetInboxItem]
     /// What the surface does after its send (the alert leaves for the session when its setting says so).
     var afterSend: (() -> Void)?
     /// The surface's own Open, in place of opening the item in its session (the alert's, which flashes the card).
@@ -93,11 +93,10 @@ struct WidgetItemStagingHost: DecisionStagingHost {
         self.item = item
         self.surface = surface
         self.sendsAll = sendsAll
+        renderedBatch = [item] + model.stagedForLeave.filter { $0.sourceId != item.sourceId }
         self.afterSend = afterSend
         self.opens = opens
     }
-
-    private var others: [WidgetInboxItem] { model.stagedForLeave.filter { $0.sourceId != item.sourceId } }
 
     var stage: DecisionStageValue {
         let staged = item.kind == "decision" && item.needsAnswer
@@ -107,7 +106,7 @@ struct WidgetItemStagingHost: DecisionStagingHost {
             recommendedSet: item.takesSeveral
                 ? DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0) : nil,
             phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt), staged: staged,
-            busy: model.sendingDecisionIDs.contains(item.sourceId), othersStaged: sendsAll && staged ? others.count : 0)
+            busy: model.sendingDecisionIDs.contains(item.sourceId), othersStaged: sendsAll && staged ? renderedBatch.count - 1 : 0)
     }
 
     func choose(_ letter: String) { model.choose(item, option: letter) }
@@ -117,8 +116,7 @@ struct WidgetItemStagingHost: DecisionStagingHost {
         afterSend?()
     }
     func sendAll() {
-        let all = [item] + others
-        model.sendStaged(all.map(\.sourceId), known: all)
+        model.sendStaged(renderedBatch.map(\.sourceId), known: renderedBatch)
     }
     func unstage() { model.holdDiscard([item.sourceId]) }
     /// Writes the dismissal of the item's card at once, when the session's cards are cached; no surface calls it yet.

@@ -1317,9 +1317,60 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertNotNil(FrameProbe.frames[field], "every open decision has the compact own answer")
 
         let opened = try XCTUnwrap(bare.inboxFor(key + "0")?.pendingItem)
-        bare.openAlert(opened, on: nil, ownAnswer: true)
+        let (window, host) = WidgetInboxFeedTests.clickableHost(
+            WidgetInboxEntryDetail(model: bare, item: opened, session: bare.session(forKey: opened.key),
+                                   compact: false, context: .inlineSource),
+            size: CGSize(width: 480, height: 700))
+        defer { window.close() }
+        WidgetInboxRender.settle()
+        let button = try XCTUnwrap(WidgetInboxFeedTests.recognized(host).first { $0.text.contains("own answer") })
+        WidgetInboxFeedTests.click(button.box, in: window, host: host)
+        WidgetInboxRender.settle()
         XCTAssertEqual(bare.selectedCardID, opened.id, "the click opens the decision in its session")
         XCTAssertEqual(bare.ownAnswerFocusRequest, opened.id, "with its full field ready to type")
+    }
+
+    func testAFeedEntryRejectsCardsFromAnotherRevisionOrSession() throws {
+        let model = try self.model(cards: [Self.contextCard(key + "0")])
+        defer { model.stop() }
+        let card = try XCTUnwrap(model.cards.first)
+        var item = WidgetModel.inboxItem(card)
+        XCTAssertNotNil(model.card(for: item))
+        item.revision = (item.revision ?? 0) + 1
+        XCTAssertNil(model.card(for: item))
+        item = WidgetModel.inboxItem(card)
+        item.key = key + "other"
+        XCTAssertNil(model.card(for: item))
+    }
+
+    func testTheRenderedSendAllBatchKeepsLaterStagesForTheirOwnSend() throws {
+        for useItemHost in [false, true] {
+            let first = Self.card(key + "0", number: 1, draftOption: "a")
+            let third = Self.card(key + "0", number: 3)
+            let picks = [Self.item(key + "0", number: 1, options: Self.threeOptions, draftOption: "a"),
+                         Self.item(key + "0", number: 2, options: Self.threeOptions, draftOption: "b")]
+            let model = try self.model(cards: [first, third], staged: picks)
+            defer { model.stop() }
+            var calls: [WidgetJSON] = []
+            model.actionRunner = { value in calls.append(value); return ["ok": true] }
+            let card = try XCTUnwrap(model.cards.first { $0.number == 1 })
+            let host: any DecisionStagingHost = useItemHost
+                ? WidgetItemStagingHost(model: model, item: WidgetModel.inboxItem(card), surface: nil, sendsAll: true)
+                : WidgetCardStagingHost(model: model, card: card)
+            XCTAssertEqual(host.stage.othersStaged, 1)
+            model.pickSet(try XCTUnwrap(model.cards.first { $0.number == 3 }), option: "c")
+            WidgetInboxRender.settle()
+            XCTAssertTrue(model.stagedForLeave.contains { $0.sourceId == "d3" })
+            host.sendAll()
+            WidgetInboxRender.settle()
+            let sent = calls.compactMap { value -> [WidgetJSON]? in
+                guard case .object(let fields) = value, fields["action"] == .string("send-staged"),
+                      case .array(let ids) = fields["ids"] else { return nil }
+                return ids
+            }
+            XCTAssertEqual(sent, [[.string("d1"), .string("d2")]])
+            XCTAssertTrue(model.stagedForLeave.contains { $0.sourceId == "d3" })
+        }
     }
 
     /// Decision 31's card in its session's inbox: the options say their words, and the agent's reasoning sits under

@@ -297,7 +297,7 @@ export interface WidgetSources {
     inboxKinds?(): Promise<InboxKinds>;
     inboxData?(window: WidgetInboxWindow): WidgetInboxData;
     /** The answers and messages read and recorded at or after `since` (epoch ms), newest first, bounded in SQL. */
-    recentlyRead?(since: number): RecentlyReadEntry[];
+    recentlyRead?(since: number, enabled: { answer: boolean; message: boolean }): RecentlyReadEntry[];
     rosterStatus?(): { loading: boolean; error?: string };
     /** The lines a decision card's refs cite, for a card the snapshot publishes; else `widgetExcerpts` reads them. */
     excerpts?(refs: readonly InboxRef[], cwd: string | undefined): InboxRef[];
@@ -680,7 +680,7 @@ export const realWidgetSources: WidgetSources = {
     agents: (refresh) => widgetAgents({ refresh }),
     inboxKinds: readInboxKinds,
     inboxData: readInboxData,
-    recentlyRead: (since) => readRecentlyReadEntries({ since }),
+    recentlyRead: (since, enabled) => readRecentlyReadEntries({ since, enabled }),
     events: (ids) => readWidgetDecisionEvents({ ids }),
     excerpts: widgetExcerpts,
     excerptRound: () => widgetExcerptReads.nextRound(),
@@ -1028,7 +1028,15 @@ export async function widgetSnapshot({
     const recentlyReadSource = sources.recentlyRead;
     const readRows =
         readHours > 0 && recentlyReadSource
-            ? await read("read inbox items", () => recentlyReadSource(now - readHours * HOUR_MS), [])
+            ? await read(
+                  "read inbox items",
+                  () =>
+                      recentlyReadSource(now - readHours * HOUR_MS, {
+                          answer: kinds.answer.show,
+                          message: kinds.message.show,
+                      }),
+                  []
+              )
             : [];
     const sessions = new Map<string, WidgetSession>();
     // The sessions by the fields the lookups below match on. Each lookup copied and scanned every session, for every
@@ -1514,8 +1522,14 @@ export async function widgetSnapshot({
     }
     // The answers and messages already read in the Items list's window. They take no session of their own: a row whose
     // session the roster does not hold keeps its key and shows without one, as an external sender's message does.
+    const unreadAnswerIds = new Set(
+        [...inboxSessions.values()].flatMap((session) => session.items ?? []).map((item) => item.sourceId)
+    );
     const recentlyRead: WidgetInboxItem[] = [];
     for (const row of readRows) {
+        if (unreadAnswerIds.has(row.id)) {
+            continue;
+        }
         if (!kinds[row.itemTag === "message" ? "message" : "answer"].show) {
             continue;
         }

@@ -186,7 +186,7 @@ struct WidgetHostView: View {
                     HStack(spacing: 0) {
                         ForEach(Array(model.railActivitySessions.prefix(Self.topBubbleLimit))) { session in
                             sessionBubble(session, size: nil, hitPadding: EdgeInsets(
-                                top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2), glyph: true)
+                                top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2))
                         }
                     }
                     // The outer bubbles' halves of the gap reach past the row; the row keeps its old width.
@@ -319,7 +319,7 @@ struct WidgetHostView: View {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
                         sessionBubble(session, size: CGSize(width: WidgetSideStripMetrics.sessionWidth,
                                                             height: WidgetSideStripMetrics.sessionHeight),
-                                      hitPadding: WidgetSideStripMetrics.sessionHitPadding, glyph: true)
+                                      hitPadding: WidgetSideStripMetrics.sessionHitPadding)
                     }
                 }
                 // The first and last bubbles' halves of the gap reach into the stack's neighbours' spacing, so the
@@ -465,7 +465,7 @@ struct WidgetHostView: View {
     /// One session's bubble, the same in the notch bar and the side rail: its activity and count, the provider glyph on
     /// its corner, its attention flash and its hit area. `size` nil sizes it to at least 30 pt (the notch); the rail
     /// passes its own size and hit padding.
-    private func sessionBubble(_ session: WidgetSession, size: CGSize?, hitPadding: EdgeInsets, glyph: Bool) -> some View {
+    private func sessionBubble(_ session: WidgetSession, size: CGSize?, hitPadding: EdgeInsets) -> some View {
         Button {
             model.toggleSession(session.key, on: surface)
         } label: {
@@ -480,12 +480,10 @@ struct WidgetHostView: View {
             .overlay(alignment: .bottomTrailing) {
                 // Which agent the count belongs to, at a glance; the tooltip names the session. Inset by the hit
                 // padding, so it sits on the bubble's corner, and an overlay, so the bar's measured width stays.
-                if glyph {
-                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
-                        .opacity(0.85).allowsHitTesting(false)
-                        .padding(.bottom, hitPadding.bottom)
-                        .padding(.trailing, hitPadding.trailing)
-                }
+                AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
+                    .opacity(0.85).allowsHitTesting(false)
+                    .padding(.bottom, hitPadding.bottom)
+                    .padding(.trailing, hitPadding.trailing)
             }
         }
         .buttonStyle(.plain)

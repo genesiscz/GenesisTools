@@ -236,9 +236,11 @@ export type RecentlyReadEntry = Pick<
 export function readRecentlyReadEntries({
     since,
     limit = RECENTLY_READ_MAX,
+    enabled = { answer: true, message: true },
 }: {
     since: number;
     limit?: number;
+    enabled?: { answer: boolean; message: boolean };
 }): RecentlyReadEntry[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > RECENTLY_READ_MAX) {
         throw new Error(`Choose a read entry limit between 1 and ${RECENTLY_READ_MAX}.`);
@@ -251,11 +253,12 @@ export function readRecentlyReadEntries({
             const rows = db
                 .query<
                     RecentlyReadEntry & { questionText: string | null; answerText: string | null },
-                    [number, number]
+                    [number, number, number, number]
                 >(`
                 WITH RECURSIVE seen AS (
                     SELECT ${INBOX_COLUMNS}
                     FROM entries WHERE read_at IS NOT NULL AND ts >= ?1 AND ${INBOX_LISTED}
+                      AND ((?3 = 1 AND COALESCE(tag, '') <> 'message') OR (?4 = 1 AND tag = 'message'))
                     ORDER BY ts DESC,id DESC LIMIT ?2
                 ), preview_source AS (
                     SELECT seen.id,entries.question,entries.answer_md AS answer
@@ -270,7 +273,7 @@ export function readRecentlyReadEntries({
                     LEFT JOIN previews a ON a.id=seen.id AND a.field='answer'
                   ORDER BY at DESC,seen.id DESC
             `)
-                .all(since, limit);
+                .all(since, limit, Number(enabled.answer), Number(enabled.message));
             return rows.map(({ questionText, answerText, ...row }) => ({
                 ...row,
                 ...(answerText != null ? { reply: visibleReply(questionText ?? "", answerText) } : {}),

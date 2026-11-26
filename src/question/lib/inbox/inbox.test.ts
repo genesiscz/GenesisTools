@@ -2199,6 +2199,11 @@ test("the read entries of a window come newest first, bounded in SQL, and the un
         expect(read[2]).toMatchObject({ sessionId: "unknown", sender: "Nightly job" });
         expect(readRecentlyReadEntries({ since: 50, limit: 1 }).map((row) => row.id)).toEqual(["read-note"]);
         expect(readRecentlyReadEntries({ since: 101 })).toEqual([]);
+        expect(
+            readRecentlyReadEntries({ since: 50, limit: 1, enabled: { answer: true, message: false } }).map(
+                (row) => row.id
+            )
+        ).toEqual(["read-answer"]);
         expect(() => readRecentlyReadEntries({ since: 0, limit: 0 })).toThrow(/limit/);
         expect(readInboxData({ clearedAt: 0, staleBefore: 0 }).answers.map((row) => row.id)).toEqual(["unread"]);
     });

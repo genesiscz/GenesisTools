@@ -577,10 +577,18 @@ public struct WidgetStagedActions: View {
         pickRecommended != nil && (recommendedSet.map { $0 != letters } ?? false)
     }
 
-    private var sendButton: some View {
+    @Environment(\.rowLive) private var rowLive
+
+    @ViewBuilder private var sendButton: some View {
         let title = phase.sendTitle(letters, multiple: takesSeveral)
-        return Button(action: send) {
-            if let sendSymbol { Label(title, systemImage: sendSymbol) } else { Text(title) }
+        Group {
+            if rowLive {
+                Button(action: send) {
+                    if let sendSymbol { Label(title, systemImage: sendSymbol) } else { Text(title) }
+                }
+            } else {
+                Text(title).restingButton(enabled: !busy && !phase.onItsWay, action: send)
+            }
         }
         .buttonStyle(.genPrimary())
         .fixedSize()
