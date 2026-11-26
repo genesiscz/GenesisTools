@@ -1,5 +1,7 @@
 import { chmod, copyFile, link, mkdtemp, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
@@ -11,6 +13,7 @@ import { claudeBinaryCandidates } from "../../../lib/teammate-wrapper";
 import { replaceBunModule } from "../lib/bun-binary";
 import {
     applyManagedPlan,
+    assertManagedReplacement,
     backupManagedTarget,
     embeddedClaudeVersion,
     listManagedPatches,
@@ -195,8 +198,10 @@ interface PickerOptions {
 async function managePatches(options: PickerOptions): Promise<void> {
     const path = await resolvePatchBinary(options.binary);
 
-    if (!options.backup && (!process.stdin.isTTY || !process.stdout.isTTY)) {
-        throw new Error("The patch picker requires an interactive terminal.");
+    if (!options.backup && (!isInteractive() || !process.stdout.isTTY)) {
+        throw new Error(
+            "The patch picker requires an interactive terminal. Use patch check for inspection, or patch repack to write a separate executable."
+        );
     }
 
     const target = await readManagedTarget(path);
@@ -220,6 +225,7 @@ async function managePatches(options: PickerOptions): Promise<void> {
 
     const applied = edits.filter((edit) => edit.applied).map(({ patch }) => patch.id);
     out.println(`Installed patches recognized by this picker: ${applied.join(", ") || "none"}`);
+    assertManagedReplacement(target);
     const current = planManagedPatches(edits, new Set(applied), target.version).modules;
     const mismatches: string[] = [];
 
@@ -353,7 +359,7 @@ async function managePatches(options: PickerOptions): Promise<void> {
 }
 
 async function resolvePatchBinary(explicit?: string): Promise<string> {
-    const onPath = explicit ?? Bun.which("claude", { PATH: process.env.PATH ?? "" });
+    const onPath = explicit ?? Bun.which("claude", { PATH: env.get("PATH") ?? "" });
 
     if (!onPath) {
         throw new Error("Claude Code was not found on PATH. Pass --binary <path-to-native-claude>.");
@@ -383,13 +389,6 @@ async function resolvePatchBinary(explicit?: string): Promise<string> {
         if (bytes.length === 4 && bytes.readUInt32LE(0) === 0xfeedfacf) {
             native.add(file);
         }
-    }
-
-    const [candidate] = native;
-
-    if (candidate && native.size === 1) {
-        out.println(`Claude on PATH is a launcher at ${resolved}. Using native executable ${candidate}.`);
-        return candidate;
     }
 
     const found = native.size ? ` Candidates: ${[...native].join(", ")}.` : "";

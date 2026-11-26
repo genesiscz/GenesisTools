@@ -11,6 +11,12 @@ const patch = definePatch({
 const original = 'p()?"first":q()?"second":void 0';
 const replacement = "1".padEnd(original.length);
 
+test("recovery still shows source when the formatter rejects it", () => {
+    const preview = renderRecoveryPreview("main.js", Buffer.from("const = old"), Buffer.from("const = new"));
+    expect(preview).toContain("-const = old");
+    expect(preview).toContain("+const = new");
+});
+
 test("shows formatted JavaScript and the following guard for a minified edit", () => {
     const source = `function f(){let n=${original};if(n===void 0)return;return restart(n)}`;
     const start = source.indexOf(original);

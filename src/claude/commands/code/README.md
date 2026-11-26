@@ -205,7 +205,7 @@ selected edits cannot be applied together. `patch` writes the edited source for
 inspection. `repack` applies the same definitions directly to the executable,
 clears the edited module's cached bytecode, and ad-hoc signs the new file.
 `install` verifies the signature and copies the executable to the specified
-destination. Output paths must be unused and their parent directories must exist.
+destination. Output paths must be unused. Native `repack` and `install` destinations need an existing parent directory. JavaScript output creates missing parent directories.
 
 Register an opt-in `definePatch({ id, description, find, replace })` in
 `src/claude/lib/patches/`. Each edit needs a unique literal match in the target

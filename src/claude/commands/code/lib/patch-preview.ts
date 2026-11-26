@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { colorizeUnifiedDiff, renderUnifiedDiff } from "@genesiscz/utils/diff";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { parseSync, type Span, Visitor } from "oxc-parser";
 import type { ManagedEdit } from "./managed-patches";
 
@@ -38,26 +40,27 @@ function enclosingCode(source: string, edit: Span): Span | undefined {
 function formatSnippet(source: string): string | undefined {
     try {
         const binary = fileURLToPath(new URL("./bin/biome", import.meta.resolve("@biomejs/biome/package.json")));
-        const result = Bun.spawnSync(
-            [
-                process.execPath,
-                binary,
-                "format",
-                "--stdin-file-path=patch-preview.js",
-                "--line-width=88",
-                "--indent-style=space",
-            ],
+        const result = spawnSync(
+            process.execPath,
+            [binary, "format", "--stdin-file-path=patch-preview.js", "--line-width=88", "--indent-style=space"],
             {
                 // The caller's project may disable formatting. Preview uses
                 // GenesisTools' configuration regardless of the launch directory.
                 cwd: fileURLToPath(new URL("../../../../../", import.meta.url)),
-                stdin: Buffer.from(source),
-                stdout: "pipe",
-                stderr: "pipe",
+                input: Buffer.from(source),
+                timeout: 5_000,
+                maxBuffer: 8 * 1024 * 1024,
+                stdio: ["pipe", "pipe", "pipe"],
             }
         );
-        return result.exitCode === 0 ? result.stdout.toString() : undefined;
-    } catch {
+        if (result.status === 0) {
+            return result.stdout.toString();
+        }
+
+        logger.debug({ error: result.error, status: result.status }, "patch preview formatter failed");
+        return undefined;
+    } catch (error) {
+        logger.debug({ error }, "patch preview formatter unavailable");
         return undefined;
     }
 }
@@ -105,15 +108,25 @@ export function renderRecoveryPreview(module: string, before: Buffer, after: Uin
         const newSource = decoder.decode(after);
         const originalCode = formatSnippet(oldSource);
         const patchedCode = formatSnippet(newSource);
-        const diff =
-            originalCode && patchedCode
-                ? renderUnifiedDiff({ before: originalCode, after: patchedCode, label: module, context: 6 })
-                : "";
+        const diff = renderUnifiedDiff({
+            before: originalCode ?? oldSource,
+            after: patchedCode ?? newSource,
+            label: module,
+            context: 6,
+        });
 
+        if ((!originalCode || !patchedCode) && diff.length > MAX_CONTEXT_BYTES) {
+            throw new Error(
+                "Recovery source diff exceeds the preview limit. Write a separate repack output for inspection."
+            );
+        }
         if (diff) {
             return colorizeUnifiedDiff(diff);
         }
-    } catch {
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Recovery source diff")) {
+            throw error;
+        }
         // The backup can restore embedded assets as well as JavaScript.
     }
 

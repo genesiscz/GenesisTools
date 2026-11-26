@@ -51,6 +51,10 @@ export interface ManagedPatchTarget {
 
 export async function readManagedTarget(path: string, { requireBackup = false } = {}): Promise<ManagedPatchTarget> {
     const resolved = await realpath(path);
+    return withFileLock(`${resolved}.genesis-patch-state.lock`, () => readManagedSnapshot(resolved, requireBackup));
+}
+
+async function readManagedSnapshot(resolved: string, requireBackup: boolean): Promise<ManagedPatchTarget> {
     const backup = `${resolved}.genesis-original`;
     const receipt = `${resolved}.genesis-patch-state`;
     const hasBackup = existsSync(backup);
@@ -249,10 +253,17 @@ export async function backupManagedTarget(target: ManagedPatchTarget): Promise<"
     });
 }
 
+export function assertManagedReplacement(target: ManagedPatchTarget): void {
+    for (const module of target.originalModules.filter((entry) => entry.loader === 1)) {
+        replaceBunModule(Buffer.from(target.original), module.name, module.contents);
+    }
+}
+
 export async function applyManagedPlan(
     target: ManagedPatchTarget,
     modules: ReadonlyMap<string, Buffer>
 ): Promise<void> {
+    assertManagedReplacement(target);
     if (process.platform !== "darwin" || target.original.readUInt32LE(0) !== 0xfeedfacf) {
         throw new Error("Applying patches requires a thin Mach-O executable on macOS.");
     }
