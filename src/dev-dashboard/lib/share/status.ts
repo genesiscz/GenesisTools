@@ -5,14 +5,14 @@ import { findPublication } from "@genesiscz/utils/genesis-tools/publish/store";
 import { transportFor } from "@genesiscz/utils/publish/transports";
 
 export async function shareStatusFor(note: PublishedNote): Promise<ShareTargetStatusDto[]> {
-    const [{ client }, publication] = await Promise.all([
+    const [config, publication] = await Promise.all([
         loadSharePublishConfig(),
         findPublication({ kind: "md", id: note.slug }),
     ]);
     const syncs = publication?.syncs ?? legacyPublication(note).syncs;
     const rows: ShareTargetStatusDto[] = [];
 
-    for (const target of client.targets) {
+    for (const target of config.targets) {
         const driver = transportFor(target);
         const sync = Object.hasOwn(syncs, target.name) ? syncs[target.name] : undefined;
         if (!driver.live && !sync) {
@@ -28,7 +28,7 @@ export async function shareStatusFor(note: PublishedNote): Promise<ShareTargetSt
             target: target.name,
             driver: driver.kind,
             live: driver.live,
-            isDefault: target.name === client.defaults.target,
+            isDefault: target.name === config.defaults.target,
             url,
             syncedAt: driver.live ? null : (sync?.syncedAt ?? null),
             sourceModifiedAt: driver.live ? null : (sync?.sourceModifiedAt ?? null),

@@ -15,7 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import { env } from "@genesiscz/utils/env";
-import { updatePublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import { updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { artifactKindServer } from "@genesiscz/utils/publish/kinds/artifact";
@@ -1294,18 +1294,16 @@ test("publishes the built artifact to a paired server and reuses its id on repub
         }
 
         const token = await (await secrets()).set("publish/targets/remote/token", device.token);
-        await updatePublishConfig((config) => ({
+        await updateShareConfig((config) => ({
             ...config,
-            client: {
-                defaults: { target: "remote" },
-                targets: [
-                    {
-                        name: "remote",
-                        publicBase: server.url,
-                        transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
-                    },
-                ],
-            },
+            defaults: { target: "remote" },
+            targets: [
+                {
+                    name: "remote",
+                    publicBase: server.url,
+                    transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
+                },
+            ],
         }));
 
         const first = await publishArtifact(input);

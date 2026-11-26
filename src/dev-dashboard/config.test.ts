@@ -11,10 +11,10 @@ import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import {
-    loadPublishConfig,
+    loadShareConfig,
     publicationsPath,
-    publishConfigPath,
-    updatePublishConfig,
+    shareConfigPath,
+    updateShareConfig,
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
@@ -82,24 +82,23 @@ describe("dev-dashboard share migration", () => {
     it("imports both targets and note sync records once and keeps the note registry", async () => {
         expect(await importLegacyShare()).toEqual({ imported: ["mac", "remote"] });
 
-        const first = [configPath, publishConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"));
+        const first = [configPath, shareConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"));
         expect(SafeJSON.parse(first[1])).toEqual({
-            version: 1,
-            client: {
-                defaults: { target: "remote" },
-                targets: [
-                    {
-                        name: "mac",
-                        publicBase: livePublicBase,
-                        transport: { kind: "mac-live", mounts: { md: "/share" } },
-                    },
-                    {
-                        name: "remote",
-                        publicBase: "https://share.example.com",
-                        transport: { kind: "paired", url: "https://share.example.com", deviceId: "fixture", token },
-                    },
-                ],
-            },
+            version: 2,
+            servers: [],
+            defaults: { target: "remote" },
+            targets: [
+                {
+                    name: "mac",
+                    publicBase: livePublicBase,
+                    transport: { kind: "mac-live", mounts: { md: "/share" } },
+                },
+                {
+                    name: "remote",
+                    publicBase: "https://share.example.com",
+                    transport: { kind: "paired", url: "https://share.example.com", deviceId: "fixture", token },
+                },
+            ],
         });
         expect(SafeJSON.parse(first[2])).toEqual({
             version: 1,
@@ -122,18 +121,18 @@ describe("dev-dashboard share migration", () => {
             { slug: "other", vaultPath: "Other.md", publishedAt: published },
         ]);
         expect(saved.allowedHosts).toEqual(["mac.example.com"]);
-        expect(statSync(publishConfigPath()).mode & 0o777).toBe(0o600);
+        expect(statSync(shareConfigPath()).mode & 0o777).toBe(0o600);
         expect(statSync(publicationsPath()).mode & 0o777).toBe(0o600);
 
         expect(await importLegacyShare()).toEqual({ imported: [] });
-        expect([configPath, publishConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"))).toEqual(
+        expect([configPath, shareConfigPath(), publicationsPath()].map((path) => readFileSync(path, "utf8"))).toEqual(
             first
         );
     });
 
     it("preserves a target already in the store and keeps status reads free of writes", async () => {
         const before = readFileSync(configPath, "utf8");
-        expect((await loadSharePublishConfig()).client.defaults.target).toBe("remote");
+        expect((await loadSharePublishConfig()).defaults.target).toBe("remote");
         expect(await shareStatusFor(note)).toMatchObject([
             { target: "mac", live: true, url: "https://mac.example.com/share/fixture" },
             {
@@ -146,7 +145,7 @@ describe("dev-dashboard share migration", () => {
             },
         ]);
         expect(readFileSync(configPath, "utf8")).toBe(before);
-        expect(existsSync(publishConfigPath())).toBe(false);
+        expect(existsSync(shareConfigPath())).toBe(false);
         expect(existsSync(publicationsPath())).toBe(false);
 
         const existing = {
@@ -154,9 +153,9 @@ describe("dev-dashboard share migration", () => {
             publicBase: "https://new.example.com",
             transport: { kind: "mac-live", mounts: { md: "/other" } },
         } as const;
-        await updatePublishConfig((config) => ({ ...config, client: { ...config.client, targets: [existing] } }));
+        await updateShareConfig((config) => ({ ...config, targets: [existing] }));
         expect(await importLegacyShare()).toEqual({ imported: ["mac"] });
-        expect((await loadPublishConfig()).client.targets.find((entry) => entry.name === "remote")).toEqual(existing);
+        expect((await loadShareConfig()).targets.find((entry) => entry.name === "remote")).toEqual(existing);
     });
 
     it("converts the first share.target format, defaults incomplete settings to Mac and refuses duplicate or plaintext targets", () => {

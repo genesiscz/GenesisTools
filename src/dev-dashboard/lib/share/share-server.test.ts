@@ -14,9 +14,9 @@ import { env } from "@genesiscz/utils/env";
 import { type ZipEntry, zip } from "@genesiscz/utils/fs/zip";
 import {
     findPublication,
-    loadPublishConfig,
-    publishConfigPath,
-    updatePublishConfig,
+    loadShareConfig,
+    shareConfigPath,
+    updateShareConfig,
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -221,18 +221,16 @@ describe("published note snapshots", () => {
             }
 
             const token = await (await secrets()).set("publish/targets/remote/token", device.token);
-            await updatePublishConfig((config) => ({
+            await updateShareConfig((config) => ({
                 ...config,
-                client: {
-                    defaults: { target: "remote" },
-                    targets: [
-                        {
-                            name: "remote",
-                            publicBase: "https://share.example.com",
-                            transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
-                        },
-                    ],
-                },
+                defaults: { target: "remote" },
+                targets: [
+                    {
+                        name: "remote",
+                        publicBase: "https://share.example.com",
+                        transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
+                    },
+                ],
             }));
             const { note, outcomes } = await shareToTargets({ vaultPath: "Note.md", targetNames: [] });
             const url = `https://share.example.com/md/${note.slug}`;
@@ -291,7 +289,7 @@ describe("published note snapshots", () => {
             expect(rows.find(({ label }) => label === "Paired devices")?.detail).toBe("0");
             const failed = await collectShareServerStatus({ ...opts, minFreeGb: 1_000_000 });
             expect(failed.find(({ label }) => label === "Free disk")?.ok).toBe(false);
-            expect(existsSync(publishConfigPath())).toBe(false);
+            expect(existsSync(shareConfigPath())).toBe(false);
             expect(existsSync(getDevDashboardStorage().getConfigPath())).toBe(false);
         } finally {
             await server.stop();
@@ -320,7 +318,7 @@ describe("published note snapshots", () => {
                 deviceName: "desk",
                 default: true,
             });
-            const previous = (await loadPublishConfig()).client.targets.find(({ name }) => name === "remote");
+            const previous = (await loadShareConfig()).targets.find(({ name }) => name === "remote");
             if (previous?.transport.kind !== "paired") {
                 throw new Error("fixture has no paired target");
             }
@@ -332,8 +330,8 @@ describe("published note snapshots", () => {
                 code: server.context.devices.createPairingCode().code,
                 deviceName: "desk",
             });
-            const { client } = await loadPublishConfig();
-            const named = client.targets.filter(({ name }) => name === "remote");
+            const config = await loadShareConfig();
+            const named = config.targets.filter(({ name }) => name === "remote");
             expect(named).toHaveLength(1);
             const target = named[0];
             if (target.transport.kind !== "paired") {
@@ -343,7 +341,7 @@ describe("published note snapshots", () => {
             expect(target.transport.deviceId).not.toBe(previous.transport.deviceId);
             expect(await resolveSecret(target.transport.token)).not.toBe(previousToken);
             expect(target.publicBase).toBe(previous.publicBase);
-            expect(client.defaults.target).toBe("remote");
+            expect(config.defaults.target).toBe("remote");
             expect((await transportFor(target).check(target)).every(({ ok }) => ok)).toBe(true);
             expect(printed.mock.calls.flat().join("\n")).toContain(
                 `dev-dashboard share-server devices --revoke ${previous.transport.deviceId}`

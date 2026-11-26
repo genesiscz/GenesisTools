@@ -6,7 +6,7 @@ import { writeShareSnapshot } from "@app/dev-dashboard/lib/share/snapshot";
 import { shareTitle } from "@app/dev-dashboard/lib/share/source";
 import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import { publisher, type TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
-import { loadPublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import { loadShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveTargets } from "@genesiscz/utils/publish/targets";
 
@@ -61,8 +61,8 @@ export async function shareToTargets(options: {
     targetNames: readonly string[];
 }): Promise<{ note: PublishedNote; outcomes: TargetOutcome[] }> {
     await importLegacyShare();
-    const { client } = await loadPublishConfig();
-    resolveTargets({ targets: client.targets, defaultTarget: client.defaults.target, names: options.targetNames });
+    const config = await loadShareConfig();
+    resolveTargets({ targets: config.targets, defaultTarget: config.defaults.target, names: options.targetNames });
     const note = await publishNote(options.vaultPath);
 
     return { note, outcomes: await sendNote(note, options.targetNames) };
@@ -74,7 +74,7 @@ export async function syncShares(options: {
     targetNames: readonly string[];
 }): Promise<Array<{ note: PublishedNote; outcomes: TargetOutcome[] }>> {
     await importLegacyShare();
-    const [{ publishedNotes }, { client }, ledger] = await Promise.all([getConfig(), loadPublishConfig(), md.list()]);
+    const [{ publishedNotes }, config, ledger] = await Promise.all([getConfig(), loadShareConfig(), md.list()]);
     const published = new Set(publishedNotes.map((note) => note.slug));
     const missing = options.slugs.filter((slug) => !published.has(slug));
     if (missing.length > 0) {
@@ -88,7 +88,7 @@ export async function syncShares(options: {
         const syncs = byId.get(note.slug)?.syncs ?? {};
         const targetNames = options.targetNames.length
             ? options.targetNames
-            : client.targets.map(({ name }) => name).filter((name) => Object.hasOwn(syncs, name));
+            : config.targets.map(({ name }) => name).filter((name) => Object.hasOwn(syncs, name));
         results.push({ note, outcomes: targetNames.length ? await sendNote(note, targetNames) : [] });
     }
 

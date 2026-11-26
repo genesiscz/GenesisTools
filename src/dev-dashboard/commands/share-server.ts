@@ -281,7 +281,7 @@ async function serverStatusRows(opts: ShareServerStatusOptions): Promise<ShareSe
 export async function collectShareServerStatus(opts: ShareServerStatusOptions): Promise<ShareServerStatusRow[]> {
     const [server, config] = await Promise.all([serverStatusRows(opts), loadSharePublishConfig()]);
     const clients = await Promise.all(
-        config.client.targets.map(async (target) => {
+        config.targets.map(async (target) => {
             const rows = await transportFor(target).check(target);
             return rows.map((row) => ({ ...row, target: target.name }));
         })
