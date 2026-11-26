@@ -325,7 +325,7 @@ final class MarkdownPageExtrasWebTests: XCTestCase {
             s.textContent,s.getAttribute('title')].join('|');})()
             """) as? String
         XCTAssertEqual(result, "true|false|false|the docs|/docs/")
-        for tag in ["small", "sub", "sup", "mark", "del"] {
+        for tag in ["small", "sub", "sup", "mark", "del", "big", "font", "strike", "tt", "kbd", "samp", "var", "cite", "dfn", "abbr", "ins", "q", "bdi", "bdo"] {
             try await render("<\(tag)>\n\nAfter")
             let leaked = try await eval("!!document.querySelector('#gn-article p').closest('\(tag)')") as? Bool
             XCTAssertEqual(leaked, false, tag)

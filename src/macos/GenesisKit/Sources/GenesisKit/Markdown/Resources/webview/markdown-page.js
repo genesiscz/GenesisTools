@@ -239,6 +239,20 @@
         sup: 1,
         mark: 1,
         del: 1,
+        big: 1,
+        font: 1,
+        strike: 1,
+        tt: 1,
+        kbd: 1,
+        samp: 1,
+        var: 1,
+        cite: 1,
+        dfn: 1,
+        abbr: 1,
+        ins: 1,
+        q: 1,
+        bdi: 1,
+        bdo: 1,
     };
     // A comment, and the text of an element whose content is raw text, hold no tags.
     var GN_BLOCK_TAG =
@@ -3281,7 +3295,8 @@
         for (var i = 0; i < marked.length; i++) {
             var el = marked[i],
                 git = el.hasAttribute("data-gn-git"),
-                r = gnShownBox(el).getBoundingClientRect();
+                shown = gnShownBox(el),
+                r = shown.getBoundingClientRect();
             var idx = git ? el.getAttribute("data-gn-git-i") : "d" + el.getAttribute("data-gn-diff-i");
             if (!r.width && !r.height) {
                 continue;
@@ -3292,11 +3307,13 @@
                     k: git ? el.getAttribute("data-gn-git") : el.getAttribute("data-gn-diff"),
                     t: r.top,
                     b: r.bottom,
+                    folded: shown !== el,
                 };
                 order.push(idx);
             } else {
                 g.t = Math.min(g.t, r.top);
                 g.b = Math.max(g.b, r.bottom);
+                g.folded = g.folded || shown !== el;
             }
         }
         var lanes = [];
@@ -3321,10 +3338,12 @@
                 bar.setAttribute("aria-hidden", "true");
             }
             var lane = 0;
-            while (lanes[lane] !== undefined && lanes[lane] > gg.t - 10) {
-                lane++;
+            if (gg.folded) {
+                while (lanes[lane] !== undefined && lanes[lane] > gg.t - 10) {
+                    lane++;
+                }
+                lanes[lane] = gg.b + 10;
             }
-            lanes[lane] = gg.b + 10;
             bar.style.left = x - lane * 14 + "px";
             if (gg.k === "deleted") {
                 bar.style.top = gg.t - c.top - 5 + "px";

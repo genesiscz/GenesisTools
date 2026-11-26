@@ -97,7 +97,27 @@ describe("markdown page text passes", () => {
         expect(html).toContain("inside </details>");
         expect(html).not.toContain("&lt;/details&gt;");
         expect(text.render("See <span title=/docs/>the docs</span>.")).toContain("<span title=/docs/>the docs</span>");
-        for (const tag of ["small", "sub", "sup", "mark", "del"]) {
+        for (const tag of [
+            "small",
+            "sub",
+            "sup",
+            "mark",
+            "del",
+            "big",
+            "font",
+            "strike",
+            "tt",
+            "kbd",
+            "samp",
+            "var",
+            "cite",
+            "dfn",
+            "abbr",
+            "ins",
+            "q",
+            "bdi",
+            "bdo",
+        ]) {
             expect(text.render("<" + tag + ">\n\nAfter")).toContain("<" + tag + "></" + tag + ">\n");
         }
     });
