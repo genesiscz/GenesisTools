@@ -50,6 +50,19 @@ describe("device pairing", () => {
         expect(await devices.pair(live.code, "too late")).toBeNull();
     });
 
+    test("concurrent redemptions preserve both devices in the version 1 file", async () => {
+        const first = devices.createPairingCode();
+        const second = devices.createPairingCode();
+        const paired = await Promise.all([devices.pair(first.code, "desk"), devices.pair(second.code, "laptop")]);
+
+        const reloaded = new DeviceStore({ file, tokenPrefix: "gtshare_", now: () => clock });
+        const saved = await reloaded.list();
+        expect(saved.map(({ name }) => name).sort()).toEqual(["desk", "laptop"]);
+        expect(saved.map(({ tokenHash }) => tokenHash).sort()).toEqual(
+            paired.map((entry) => hashToken(entry?.token ?? "")).sort()
+        );
+    });
+
     test("a token on disk from the old server authenticates after reload", async () => {
         const token = "gtshare_0123456789abcdef0123456789abcdef0123456789a";
         const device = {
