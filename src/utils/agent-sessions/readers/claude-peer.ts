@@ -93,7 +93,10 @@ export function isClaudeLaunchProcess(entry: Pick<ProcessEntry, "name" | "comman
     if (!["claude", "gt-claude", "GenesisTools", "bun", "node", "zsh", "bash", "sh"].includes(entry.name)) {
         return false;
     }
-    const kind = classifyCommand(entry.name === "claude" ? entry.name : (entry.command ?? entry.name));
+    const kind = classifyCommand(entry.command ?? entry.name);
+    if (kind.kind === "other" && entry.name === "claude") {
+        return true;
+    }
     return (kind.kind === "agent" || kind.kind === "wrapper") && kind.provider === "claude" && !kind.service;
 }
 

@@ -1142,6 +1142,38 @@ test("the pair check passes a clean move and fails a changed row and REPL in the
     expect((await run())["conversation copied whole"]).toBe("fail");
 });
 
+test("a copy must reach the final Code Mode boundary even when an earlier run had Code Mode", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-boundary-"));
+    const sessionPath = join(directory, `${FORK_SOURCE}.jsonl`);
+    const copyPath = join(directory, `${FORK_ID}.jsonl`);
+    const turn = (text: string) => ({ type: "user", sessionId: FORK_SOURCE, message: { content: text } });
+    writeFileSync(sessionPath, jsonl(turn("first")));
+    await writeSessionCopy({
+        sourceId: FORK_SOURCE,
+        copyId: FORK_ID,
+        sourcePath: sessionPath,
+        copyPath,
+        title: "Fixture-without-codemode",
+    });
+    appendClaudeCodeModePin(sessionPath, FORK_SOURCE);
+    appendFileSync(
+        sessionPath,
+        jsonl(
+            turn("earlier Code Mode turn"),
+            { type: "repl-mode", replMode: false, sessionId: FORK_SOURCE },
+            turn("before final move")
+        )
+    );
+    appendClaudeCodeModePin(sessionPath, FORK_SOURCE);
+    const checks = await checkCodeModePair({
+        ids: { sourceId: FORK_SOURCE, copyId: FORK_ID },
+        sessionPath,
+        copyPath,
+        suffix: "-without-codemode",
+    });
+    expect(checks.find((check) => check.name === "conversation copied whole")?.status).toBe("fail");
+});
+
 test("a transcript copy refuses a preexisting temporary path and removes a failed publication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "gt-copy-failure-"));
     const sourcePath = join(directory, "source.jsonl");
@@ -1161,6 +1193,7 @@ test("a transcript copy refuses a preexisting temporary path and removes a faile
 test("the Claude launch-chain predicate admits native launchers and rejects supervisors", () => {
     expect(isClaudeLaunchProcess({ name: "claude", command: "/opt/versions/2.1.0" })).toBe(true);
     expect(isClaudeLaunchProcess({ name: "bun", command: "bun /work/src/claude/index.ts start" })).toBe(true);
+    expect(isClaudeLaunchProcess({ name: "claude", command: "claude mcp serve" })).toBe(false);
     expect(isClaudeLaunchProcess({ name: "Python", command: "python /work/jobs.py" })).toBe(false);
     expect(isClaudeLaunchProcess({ name: "Python", command: "python runner.py zsh -ic exec claude" })).toBe(false);
 });

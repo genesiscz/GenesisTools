@@ -309,6 +309,8 @@ export async function checkCodeModePair(input: {
     let sessionPin: boolean | null = null;
     let copyPin: boolean | null = null;
     let sessionLine = 0;
+    let copyableRows = 0;
+    let boundaryRows: number | null = null;
     // The move appends a Code Mode pin to a session whose newest pin was not one, so its rows after the move start at
     // the first pin of the session's last run of Code Mode pins. Counting from there works also when the rows before
     // it do not line up with the copy.
@@ -341,8 +343,10 @@ export async function checkCodeModePair(input: {
 
                 if (!sessionPin) {
                     sessionAfter = null;
+                    boundaryRows = null;
                 } else if (sessionAfter === null) {
                     sessionAfter = emptyAfter();
+                    boundaryRows = copyableRows;
                 }
 
                 continue;
@@ -357,6 +361,7 @@ export async function checkCodeModePair(input: {
                 countAfterFork(row, sessionAfter);
             }
 
+            copyableRows += 1;
             return { line: sessionLine, raw: next.value, row };
         }
     };
@@ -427,10 +432,10 @@ export async function checkCodeModePair(input: {
 
     let remaining = await nextSessionRow();
     while (remaining !== null) {
-        if (sessionAfter === null && mismatch === null) {
-            mismatch = `copy omits session line ${remaining.line} before the Code Mode boundary`;
-        }
         remaining = await nextSessionRow();
+    }
+    if (mismatch === null && boundaryRows !== null && compared !== boundaryRows) {
+        mismatch = `copy has ${compared} rows; source has ${boundaryRows} before the Code Mode boundary`;
     }
 
     const after: AfterFork = sessionAfter ?? emptyAfter();

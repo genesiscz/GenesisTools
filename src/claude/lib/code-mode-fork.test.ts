@@ -58,7 +58,7 @@ test("concurrent admissions create one backup and preserve the source account", 
 });
 
 test("process stop refuses a different process identity and a non-launcher process", async () => {
-    const child = Bun.spawn(["/bin/sleep", "20"], { stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn(["/bin/sleep", "20"], { env: process.env, stdout: "ignore", stderr: "ignore" });
     try {
         const start = readProcess(child.pid)?.startMs;
         expect(start).toBeNumber();
