@@ -16,6 +16,7 @@ import { withSpawnCounter } from "@app/benchmark/lib";
 import { fakeDriver } from "@genesiscz/utils/fs/watch-driver/fake";
 import { startGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/host";
 import { createWorktreeService } from "@genesiscz/utils/genesis-tools/worktree/service";
+import { readNarrowStatus } from "@genesiscz/utils/git/narrow-status";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MetricsRecorder } from "@genesiscz/utils/metrics";
@@ -183,6 +184,51 @@ describe("the status seam", () => {
         ]);
     });
 
+    it("pre marks follow their roots when post roots are reordered", async () => {
+        const observations: Array<[string, string | null]> = [];
+        const reference: StatusArm = {
+            id: "git",
+            mode: "git",
+            observe: async () => ({
+                state: "ok",
+                view: { head: null, entries: [] },
+                mark: null,
+                source: "fixture",
+                cost: { cpuMs: 0, wallMs: 0, gitSpawns: 0, serviceCpuMs: null, fullStatus: false },
+            }),
+        };
+        const active: StatusArm = {
+            ...reference,
+            id: "root-marks",
+            mode: "narrow-git",
+            observe: async (request) => {
+                observations.push([request.root, request.mark]);
+                const answer = await reference.observe(request);
+                return answer.state === "ok" ? { ...answer, mark: request.root } : answer;
+            },
+        };
+        const config = statusConfig((value) => {
+            value.active.write = "narrow-git";
+        });
+        const roots = [repo.dir, join(repo.dir, "second")].map((root) => ({ root, head: null }));
+        const invocation = { ...call, toolUseId: "toolu_root_marks" };
+        const shared = {
+            need: "all" as const,
+            call: invocation,
+            config,
+            arms: { active, reference, shadow: [] },
+            recorder: memoryRecorder(),
+        };
+        await prepareStatus({ ...shared, phase: "pre", roots });
+        await prepareStatus({ ...shared, phase: "post", roots: [...roots].reverse() });
+        expect(observations).toEqual([
+            [roots[0].root, null],
+            [roots[1].root, null],
+            [roots[1].root, roots[1].root],
+            [roots[0].root, roots[0].root],
+        ]);
+    });
+
     it("a shadow arm past the budget is skipped", async () => {
         const recorder = memoryRecorder();
         await prepareStatus({
@@ -244,6 +290,17 @@ describe("parity and eligibility", () => {
                 got: { head: "a", entries: [entry("y", "D"), entry("x", "M")] },
             }).parity
         ).toBe("order");
+        expect(
+            compareToReference({ need: "all", phase: "pre", reference, got: { ...reference, head: null } }).parity
+        ).toBe("head");
+        expect(
+            compareToReference({
+                need: "all",
+                phase: "pre",
+                reference: { head: null, entries: [] },
+                got: { head: null, entries: [] },
+            }).parity
+        ).toBe("same");
         expect(PARITY_CLASSES).toContain("unconfirmed");
     });
 
@@ -284,7 +341,7 @@ describe("the narrow-git mode", () => {
 
         const counted = await withSpawnCounter(() => arm.observe(request(repo.dir)));
         expect(counted.result.state === "ok" && counted.result.source).toBe("narrow");
-        expect(counted.spawns.length).toBe(2);
+        expect(counted.spawns.length).toBe(3);
         expect(counted.spawns.some((spawn) => spawn.cmd.includes("status"))).toBe(false);
         expect(counted.result.state === "ok" && counted.result.view.entries.map((entry) => entry.path)).toEqual([
             "a.txt",
@@ -296,6 +353,23 @@ describe("the narrow-git mode", () => {
         const refused = await arm.observe(request(repo.dir));
         expect(refused.state === "unavailable" && refused.reason).toBe("refused-staged");
         await repo.git(["reset", "-q", "a.txt"]);
+    });
+
+    it("narrow reads honor configured untracked modes", async () => {
+        const fixture = await TestRepo.create({ prefix: "narrow-untracked-" });
+        try {
+            await fixture.commitMany({ files: { "tracked.txt": "base" }, message: "base" });
+            fixture.write({ file: "fresh/a.txt", content: "a" });
+            fixture.write({ file: "fresh/b.txt", content: "b" });
+            for (const mode of ["no", "normal", "all"]) {
+                await fixture.git(["config", "status.showUntrackedFiles", mode]);
+                const narrow = readNarrowStatus(fixture.dir, { need: "all" });
+                expect(narrow.ok).toBe(true);
+                expect(narrow.ok && narrow.value).toEqual(statusOf(fixture.dir).entries);
+            }
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it("a write to a clean tracked file that stays open is in the pre view", async () => {
@@ -382,8 +456,8 @@ describe("the snapshot mode", () => {
         expect(pre.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
         const marksPath = join(callDir("claude", snapshotCall.sessionId, snapshotCall.toolUseId), "status-marks.json");
         const marks = SafeJSON.parse(readFileSync(marksPath, "utf8"), { strict: true });
-        expect(marks.v).toBe(1);
-        expect(marks.arms["snapshot:watchman"][0].startsWith("v1:watchman:")).toBe(true);
+        expect(marks.v).toBe(2);
+        expect(marks.arms["snapshot:watchman"][repo.dir].startsWith("v1:watchman:")).toBe(true);
 
         const recorder = memoryRecorder();
         const post = await prepareStatus({

@@ -110,15 +110,21 @@ const CAUSES: ReadonlyArray<{ id: string; explains(differences: readonly ParityD
     },
     {
         id: "untracked-collapse",
-        explains: (differences) =>
-            differences.every((difference) =>
-                differences.some(
-                    (other) =>
-                        other !== difference &&
-                        ((other.path.endsWith("/") && difference.path.startsWith(other.path)) ||
-                            (difference.path.endsWith("/") && other.path.startsWith(difference.path)))
-                )
-            ),
+        explains: (differences) => {
+            const sorted = differences.map((difference) => difference.path).sort();
+            const directories = new Set(sorted.filter((path) => path.endsWith("/")));
+            return sorted.every((path, index) => {
+                if (path.endsWith("/")) {
+                    return sorted[index + 1]?.startsWith(path) ?? false;
+                }
+                for (let slash = path.indexOf("/"); slash >= 0; slash = path.indexOf("/", slash + 1)) {
+                    if (directories.has(path.slice(0, slash + 1))) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+        },
     },
 ];
 
@@ -170,8 +176,7 @@ export function compareToReference(options: {
     }
 
     const cause = causeOf(differences);
-    const headDiffers =
-        options.reference.head !== null && options.got.head !== null && options.reference.head !== options.got.head;
+    const headDiffers = options.reference.head !== options.got.head;
     const parity: ParityClass = missingTracked
         ? "missing-dirty"
         : missingOther

@@ -277,8 +277,21 @@ export function readNarrowStatus(
         return { ok: true, value: entries, cost: tracked.cost };
     }
 
-    const untracked = runGitSync(root, NARROW_UNTRACKED_ARGS, options.timeoutMs);
-    const cost = addCost(tracked.cost, untracked.cost);
+    const configured = runGitSync(root, ["config", "--get", "status.showUntrackedFiles"], options.timeoutMs);
+    const mode = configured.ok ? configured.value.trim() : "normal";
+    const configCost = addCost(tracked.cost, configured.cost);
+    if (!configured.ok) {
+        return { ...configured, cost: configCost };
+    }
+    if (mode === "no") {
+        return { ok: true, value: entries, cost: configCost };
+    }
+    const args =
+        mode === "all"
+            ? NARROW_UNTRACKED_ARGS.filter((arg) => arg !== "--directory" && arg !== "--no-empty-directory")
+            : NARROW_UNTRACKED_ARGS;
+    const untracked = runGitSync(root, args, options.timeoutMs);
+    const cost = addCost(configCost, untracked.cost);
 
     if (!untracked.ok) {
         return { ...untracked, cost };

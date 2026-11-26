@@ -1,4 +1,5 @@
 import { defineApi, type MethodDescriptor } from "@genesiscz/utils/api-descriptor";
+import { WATCH_DRIVER_IDS } from "@genesiscz/utils/fs/watch-driver/registry";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { requestViewSchema } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import {
@@ -6,7 +7,64 @@ import {
     requestOutcomeSchema,
     requestSchema,
 } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { WORKTREE_UNAVAILABLE } from "@genesiscz/utils/genesis-tools/worktree/types";
+import { RESEED_REASONS } from "@genesiscz/utils/git/status-inventory";
 import { z } from "zod";
+
+const statusEntrySchema = z.object({
+    kind: z.enum(["changed", "renamed", "unmerged", "untracked", "ignored"]),
+    path: z.string(),
+    origPath: z.string().optional(),
+    index: z.string(),
+    worktree: z.string(),
+    score: z.number().optional(),
+    submodule: z.string().optional(),
+});
+const inventoryCostSchema = z.object({
+    cpuMs: z.number(),
+    gitRuns: z.number(),
+    fullStatus: z.boolean(),
+    fenceMs: z.number(),
+});
+export const worktreeSnapshotSchema = z.union([
+    z.object({
+        state: z.literal("ok"),
+        mark: z.string(),
+        head: z.string().nullable(),
+        entries: z.array(statusEntrySchema),
+        source: z.enum(["inventory", "seed", "reseed"]),
+        reseed: z.enum(RESEED_REASONS).optional(),
+        changed: z.array(z.object({ path: z.string(), exists: z.boolean() })).nullable(),
+        verifiedMsAgo: z.number(),
+        cost: inventoryCostSchema,
+    }),
+    z.object({ state: z.literal("unavailable"), reason: z.enum(WORKTREE_UNAVAILABLE) }),
+]);
+export const worktreeWatchersSchema = z.array(
+    z.object({
+        root: z.string(),
+        driver: z.enum(WATCH_DRIVER_IDS),
+        openedAt: z.string(),
+        lastAnswerAt: z.string().nullable(),
+        instance: z.string(),
+        counters: z.object({
+            answers: z.number(),
+            seeds: z.number(),
+            reseeds: z.object({
+                "git-state": z.number(),
+                "ignore-rules": z.number(),
+                "too-many-paths": z.number(),
+                "fresh-instance": z.number(),
+                recrawl: z.number(),
+                overflow: z.number(),
+                drift: z.number(),
+            }),
+            reconciles: z.number(),
+            drifts: z.number(),
+            fenceTimeouts: z.number(),
+        }),
+    })
+);
 
 export const skippedWaySchema = z.object({
     way: z.string(),
@@ -165,18 +223,18 @@ export const serviceMethods = [
         name: "worktree.snapshot",
         params: z.object({
             root: z.string(),
-            driver: z.string(),
+            driver: z.enum(WATCH_DRIVER_IDS),
             since: z.string().optional(),
             fenceMs: z.number().int().min(1).max(5_000).optional(),
         }),
-        result: z.unknown(),
+        result: worktreeSnapshotSchema,
         doc: "The Git status of a worktree kept current by a file watcher; the first call opens the watch and answers opening",
         effect: "read",
     },
     {
         name: "worktree.watchers",
         params: z.object({}),
-        result: z.unknown(),
+        result: worktreeWatchersSchema,
         doc: "The worktrees this service watches, with their counters; opens no root",
         effect: "read",
     },

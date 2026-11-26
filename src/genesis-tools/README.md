@@ -149,7 +149,7 @@ Every entry is still printed by Git: the watcher only names the paths to ask Git
 `--json`. `worktree watchers` takes `--json`.
 
 ```bash
-tools genesis-tools worktree snapshot . --driver watchman --json   # opening, then ok on the next call
+tools genesis-tools worktree snapshot . --driver watchman --json   # no-service requests startup; retry after startup and opening until ok
 tools genesis-tools worktree watchers
 ```
 

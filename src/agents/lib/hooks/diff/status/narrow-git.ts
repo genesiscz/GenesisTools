@@ -103,7 +103,7 @@ const narrowArm: StatusArm = {
                 return { state: "unavailable", reason: `narrow-${narrow.reason}`, cost: costOf(narrow.cost, false) };
             }
 
-            if (indexHash(gitDir) !== hash) {
+            if (indexHash(gitDir) !== hash || headOf(gitDir) !== head) {
                 return { state: "unavailable", reason: "raced", cost: costOf(narrow.cost, false) };
             }
 

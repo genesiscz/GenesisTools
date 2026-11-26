@@ -11794,16 +11794,167 @@
     "method": "worktree.snapshot",
     "params": {
       "root": "fixture",
-      "driver": "fixture",
+      "driver": "watchman",
       "since": "fixture",
       "fenceMs": 1
     },
-    "result": null
+    "result": {
+      "state": "ok",
+      "mark": "fixture",
+      "head": "fixture",
+      "entries": [],
+      "source": "inventory",
+      "reseed": "git-state",
+      "changed": [],
+      "verifiedMsAgo": 1,
+      "cost": {
+        "cpuMs": 1,
+        "gitRuns": 1,
+        "fullStatus": true,
+        "fenceMs": 1
+      }
+    }
+  },
+  {
+    "method": "worktree.snapshot",
+    "params": {
+      "root": "fixture",
+      "driver": "watchman",
+      "since": "fixture",
+      "fenceMs": 1
+    },
+    "result": {
+      "state": "ok",
+      "mark": "fixture",
+      "head": null,
+      "entries": [
+        {
+          "kind": "changed",
+          "path": "fixture",
+          "origPath": "fixture",
+          "index": "fixture",
+          "worktree": "fixture",
+          "score": 1,
+          "submodule": "fixture"
+        }
+      ],
+      "source": "inventory",
+      "reseed": "git-state",
+      "changed": [
+        {
+          "path": "fixture",
+          "exists": true
+        }
+      ],
+      "verifiedMsAgo": 1,
+      "cost": {
+        "cpuMs": 1,
+        "gitRuns": 1,
+        "fullStatus": true,
+        "fenceMs": 1
+      }
+    }
+  },
+  {
+    "method": "worktree.snapshot",
+    "params": {
+      "root": "fixture",
+      "driver": "watchman",
+      "since": "fixture",
+      "fenceMs": 1
+    },
+    "result": {
+      "state": "ok",
+      "mark": "fixture",
+      "head": "fixture",
+      "entries": [],
+      "source": "inventory",
+      "reseed": "git-state",
+      "changed": null,
+      "verifiedMsAgo": 1,
+      "cost": {
+        "cpuMs": 1,
+        "gitRuns": 1,
+        "fullStatus": true,
+        "fenceMs": 1
+      }
+    }
+  },
+  {
+    "method": "worktree.snapshot",
+    "params": {
+      "root": "fixture",
+      "driver": "watchman",
+      "since": "fixture",
+      "fenceMs": 1
+    },
+    "result": {
+      "state": "unavailable",
+      "reason": "no-driver"
+    }
   },
   {
     "method": "worktree.watchers",
     "params": {},
-    "result": null
+    "result": []
+  },
+  {
+    "method": "worktree.watchers",
+    "params": {},
+    "result": [
+      {
+        "root": "fixture",
+        "driver": "watchman",
+        "openedAt": "fixture",
+        "lastAnswerAt": "fixture",
+        "instance": "fixture",
+        "counters": {
+          "answers": 1,
+          "seeds": 1,
+          "reseeds": {
+            "git-state": 1,
+            "ignore-rules": 1,
+            "too-many-paths": 1,
+            "fresh-instance": 1,
+            "recrawl": 1,
+            "overflow": 1,
+            "drift": 1
+          },
+          "reconciles": 1,
+          "drifts": 1,
+          "fenceTimeouts": 1
+        }
+      }
+    ]
+  },
+  {
+    "method": "worktree.watchers",
+    "params": {},
+    "result": [
+      {
+        "root": "fixture",
+        "driver": "watchman",
+        "openedAt": "fixture",
+        "lastAnswerAt": null,
+        "instance": "fixture",
+        "counters": {
+          "answers": 1,
+          "seeds": 1,
+          "reseeds": {
+            "git-state": 1,
+            "ignore-rules": 1,
+            "too-many-paths": 1,
+            "fresh-instance": 1,
+            "recrawl": 1,
+            "overflow": 1,
+            "drift": 1
+          },
+          "reconciles": 1,
+          "drifts": 1,
+          "fenceTimeouts": 1
+        }
+      }
+    ]
   },
   {
     "method": "request.present",

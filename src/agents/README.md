@@ -732,7 +732,9 @@ status. A call that began on Git ends on Git: a post boundary without a mark fro
 **The shadow run.** `diff.status.shadow.modes` names modes that also run for the same call. Their answers are
 recorded and never used. On one call in `shadow.every`, a boundary reads the git reference, then each shadow arm (an
 arm is a mode, plus its driver for `snapshot`: `git`, `narrow-git`, `snapshot:watchman`, `snapshot:parcel`) until
-`shadow.budgetMs` is spent. Each arm is compared with the reference at the same boundary, and a difference is read
+`shadow.budgetMs` no longer allows another arm to start. It is an admission budget. An admitted arm and its
+confirmation reads use their own deadlines and can finish after it. Each arm is compared with the reference at the
+same boundary, and a difference is read
 again before it counts. Every arm, root and boundary writes two metrics events (project `agent-context`:
 `hook.status.cpu_ms` and `hook.status.wall_ms`) with the parity class (`same`, `missing-dirty`, `missing-other`,
 `extra`, `letters`, `order`, `head`, `unconfirmed`, `none`). A background call, a command that leaves a writer behind
@@ -749,11 +751,12 @@ tools agents hooks config set diff.status.shadow.modes snapshot,narrow-git --wri
 tools agents hooks diff modes report --since 2d
 ```
 
-**Roll back** by setting both active keys to `git`; the hooks then run today's two status reads and load no mode:
+**Roll back** by setting both active keys to `git` and clearing shadow modes. The hooks then run today's two status reads and load no optional mode:
 
 ```bash
 tools agents hooks config set diff.status.active.read git --write
 tools agents hooks config set diff.status.active.write git --write
+tools agents hooks config set diff.status.shadow.modes "" --write
 ```
 
 **A known limit.** A clean tracked file that a detached child still holds open while it writes can be missing from a
@@ -1330,7 +1333,7 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `diff.othersSummary` | `line` | `line` or `hidden`. |
 | `diff.status.active.read` / `.write` | `git` / `git` | The status mode the hooks use, per command shape: `git`, `snapshot`, `narrow-git`. |
 | `diff.status.shadow.modes` | empty | Comma list of modes that also run and are only recorded. |
-| `diff.status.shadow.every` / `.budgetMs` | `1` / `400` | One call in N runs the shadow arms; their time budget per call. |
+| `diff.status.shadow.every` / `.budgetMs` | `1` / `400` | One call in N runs the shadow arms; the budget for starting another arm. |
 | `diff.status.modes.snapshot.driver` | `watchman` | The watch driver of the snapshot mode: `watchman`, `parcel`. |
 | `diff.status.modes.snapshot.shadowDrivers` | empty | More drivers that run only in shadow. |
 | `diff.status.modes.snapshot.deadlineMs` / `.fenceMs` | `700` / `500` | Deadline of one service call; the watcher's fence. |

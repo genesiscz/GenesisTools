@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, openSync, statSync, unlinkSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import type { AsyncSubscription } from "@parcel/watcher";
 import { nativeWatcherBackend } from "../watcher";
 import type { WatchChange, WatchChanges, WatchDriver, WatchedRoot, WatchOpen } from "./types";
@@ -9,7 +9,7 @@ const DEFAULT_MAX_EVENTS = 50_000;
 const COOKIE_PREFIX = "genesis-watch-cookie-";
 
 function toPosix(path: string): string {
-    return path.replace(/\\/g, "/");
+    return sep === "\\" ? path.replace(/\\/g, "/") : path;
 }
 
 /** True when `child` is `parent` or below it. */
@@ -52,7 +52,7 @@ export function parcelDriver(options: { maxEvents?: number } = {}): WatchDriver 
         }
 
         const instance = `parcel-${randomBytes(6).toString("hex")}`;
-        const events: Array<{ seq: number; change: WatchChange }> = [];
+        const events: Array<{ seq: number; change: WatchChange }> = new Array(maxEvents);
         const waiters = new Map<string, () => void>();
         let seq = 0;
         let droppedThrough = 0;
@@ -81,15 +81,11 @@ export function parcelDriver(options: { maxEvents?: number } = {}): WatchDriver 
                 }
 
                 seq += 1;
-                events.push({
+                events[(seq - 1) % maxEvents] = {
                     seq,
                     change: { path: toPosix(relative(root, absolute)), exists: event.type !== "delete" },
-                });
-            }
-
-            if (events.length > maxEvents) {
-                const dropped = events.splice(0, events.length - maxEvents);
-                droppedThrough = dropped[dropped.length - 1]?.seq ?? droppedThrough;
+                };
+                droppedThrough = Math.max(0, seq - maxEvents);
             }
         };
 
@@ -178,7 +174,13 @@ export function parcelDriver(options: { maxEvents?: number } = {}): WatchDriver 
                     };
                 }
 
-                const changes = events.filter((event) => event.seq > sinceSeq).map((event) => event.change);
+                const changes: WatchChange[] = [];
+                for (let next = sinceSeq + 1; next <= seq; next++) {
+                    const event = events[(next - 1) % maxEvents];
+                    if (event?.seq === next) {
+                        changes.push(event.change);
+                    }
+                }
                 return { kind: "changes", clock, changes, fenceMs };
             },
             async close() {

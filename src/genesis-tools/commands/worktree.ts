@@ -60,6 +60,16 @@ export function registerWorktreeCommand(program: Command): void {
                     ["status", "path"]
                 )
             );
+            if (options.since) {
+                out.println(
+                    result.changed === null
+                        ? "Changed paths unavailable for this mark."
+                        : formatTable(
+                              result.changed.map((change) => [change.exists ? "present" : "removed", change.path]),
+                              ["change", "path"]
+                          )
+                );
+            }
             out.println(`mark: ${result.mark}`);
         });
 

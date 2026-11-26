@@ -19,6 +19,7 @@ interface RootEntry {
     root: string;
     generation: string;
     state: "opening" | "ready" | "failed";
+    closed: boolean;
     failure: WorktreeUnavailable | null;
     failedAt: number;
     watched: WatchedRoot | null;
@@ -79,7 +80,11 @@ export function createWorktreeService(
 
     const closeEntry = (key: string, entry: RootEntry) => {
         roots.delete(key);
-        void entry.watched?.close().catch((error) => log.debug({ error, root: entry.root }, "closing a watch failed"));
+        entry.closed = true;
+        const watched = entry.watched;
+        entry.watched = null;
+        entry.inventory = null;
+        void watched?.close().catch((error) => log.debug({ error, root: entry.root }, "closing a watch failed"));
     };
 
     const makeRoom = (driver: WatchDriverId): boolean => {
@@ -89,7 +94,9 @@ export function createWorktreeService(
             return true;
         }
 
-        const idle = ofDriver.filter(([, entry]) => entry.busy === 0).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+        const idle = ofDriver
+            .filter(([, entry]) => entry.busy === 0 && entry.state !== "opening")
+            .sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
 
         if (!idle) {
             return false;
@@ -112,6 +119,11 @@ export function createWorktreeService(
                 return;
             }
 
+            if (entry.closed) {
+                await opened.watched.close();
+                return;
+            }
+
             entry.watched = opened.watched;
             entry.inventory = new StatusInventory({ root: entry.root, gitDir, watched: opened.watched });
             const seeded = await entry.inventory.snapshot({ since: null, fenceMs: 5_000 });
@@ -120,12 +132,27 @@ export function createWorktreeService(
                 entry.state = "failed";
                 entry.failure = seeded.reason;
                 entry.failedAt = Date.now();
+                await opened.watched.close();
+                entry.watched = null;
+                entry.inventory = null;
+                return;
+            }
+
+            if (entry.closed) {
                 return;
             }
 
             entry.state = "ready";
             log.debug({ root: entry.root, driver: entry.driver }, "worktree inventory seeded");
         } catch (error) {
+            const watched = entry.watched;
+            entry.watched = null;
+            entry.inventory = null;
+            await watched
+                ?.close()
+                .catch((closeError) =>
+                    log.debug({ error: closeError, root: entry.root }, "closing a failed watch failed")
+                );
             entry.state = "failed";
             entry.failure = "no-driver";
             entry.failedAt = Date.now();
@@ -168,6 +195,7 @@ export function createWorktreeService(
                     root,
                     generation: generationOf(root, gitDir),
                     state: "opening",
+                    closed: false,
                     failure: null,
                     failedAt: 0,
                     watched: null,
