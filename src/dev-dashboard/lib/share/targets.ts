@@ -8,6 +8,7 @@ import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import { publisher, type TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
 import { loadShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { logger } from "@genesiscz/utils/logger";
+import { isEditedAfterSync } from "@genesiscz/utils/publish/freshness";
 import { resolveTargets } from "@genesiscz/utils/publish/targets";
 
 export type { TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
@@ -73,6 +74,8 @@ export async function syncShares(options: {
     all: boolean;
     targetNames: readonly string[];
     pickFallback?: (candidates: string[]) => Promise<string | null>;
+    /** Only notes edited since their last sync to each target (or never sent there); a note whose vault file is gone is skipped. */
+    changedOnly?: boolean;
 }): Promise<Array<{ note: PublishedNote; outcomes: TargetOutcome[] }>> {
     await importLegacyShare();
     const [{ publishedNotes }, config, ledger] = await Promise.all([getConfig(), loadShareConfig(), md.list()]);
@@ -105,6 +108,16 @@ export async function syncShares(options: {
     for (const note of notes) {
         const previous = previousTargets(note);
         const targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
+        if (options.changedOnly && previous.length > 0) {
+            const { editedAt } = await vaultShareSource().freshness(note);
+            const syncs = byId.get(note.slug)?.syncs ?? {};
+            const names = targetNames.length ? targetNames : previous;
+            if (!editedAt || names.every((name) => syncs[name] && !isEditedAfterSync(editedAt, syncs[name]))) {
+                log.debug({ slug: note.slug, editedAt, missing: !editedAt }, "share sync --changed: skipped");
+                continue;
+            }
+        }
+
         // One note that cannot be built (its vault file moved or was deleted) must not stop the notes after it.
         try {
             results.push({ note, outcomes: await sendNote(note, targetNames) });
