@@ -76,7 +76,7 @@ export function obsidianRoutes(): RouteDef[] {
                 const source = await readNote(obsidianVault, path);
                 const vaultEntries = await listVault(obsidianVault);
                 const published = await listPublished();
-                const publishedNote = published.find((note) => note.vaultPath === path);
+                const publishedNote = published.find((note) => note.vaultPath === path.normalize("NFC"));
                 const publishedSlug = publishedNote?.slug ?? null;
                 const shares = publishedNote ? await shareStatusFor(publishedNote) : [];
                 const info = await stat(resolve(obsidianVault, path)).catch((err: unknown) => {

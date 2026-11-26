@@ -1,7 +1,8 @@
 import { getConfig, type PublishedNote, saveConfig, withConfigMutation } from "@app/dev-dashboard/config";
 import { newSnapshotId } from "@genesiscz/utils/publish/ids";
 
-export function publishNote(vaultPath: string): Promise<PublishedNote> {
+export function publishNote(input: string): Promise<PublishedNote> {
+    const vaultPath = input.normalize("NFC");
     return withConfigMutation(async () => {
         const config = await getConfig();
         const existing = config.publishedNotes.find((note) => note.vaultPath === vaultPath);
@@ -46,7 +47,9 @@ export async function findPublishedBySlug(slug: string): Promise<PublishedNote |
 export async function findPublishedByPath(vaultPath: string): Promise<PublishedNote | undefined> {
     const config = await getConfig();
 
-    return config.publishedNotes.find((note) => note.vaultPath === vaultPath);
+    const wanted = vaultPath.normalize("NFC");
+
+    return config.publishedNotes.find((note) => note.vaultPath === wanted);
 }
 
 export async function listPublished(): Promise<PublishedNote[]> {

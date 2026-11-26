@@ -184,7 +184,7 @@ export async function writeShareSnapshot(options: {
     }
 
     const published = await source.listPublished();
-    const linkedPaths = new Set([...index.byTarget.values()].map((asset) => asset.vaultPath));
+    const linkedPaths = new Set([...index.byTarget.values()].map((asset) => asset.vaultPath.normalize("NFC")));
     const noteFile = `note${extOf(note.vaultPath)}`;
     const manifest: ShareSnapshotManifest = {
         version: SHARE_SNAPSHOT_VERSION,
@@ -196,7 +196,7 @@ export async function writeShareSnapshot(options: {
         sourceModifiedAt: (await source.freshness(note)).editedAt,
         noteFile,
         links: published
-            .filter((other) => other.slug !== note.slug && linkedPaths.has(other.vaultPath))
+            .filter((other) => other.slug !== note.slug && linkedPaths.has(other.vaultPath.normalize("NFC")))
             .map(({ slug, vaultPath }) => ({ slug, vaultPath })),
         assets: serializeIndex(index, (asset) => !missing.has(asset)),
     };

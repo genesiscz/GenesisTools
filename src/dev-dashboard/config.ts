@@ -32,7 +32,8 @@ const DashboardAuthSchema = z.object({
 
 const PublishedNoteSchema = z.object({
     slug: z.string(),
-    vaultPath: z.string(),
+    /** Read as NFC, so an entry stored decomposed by an older build matches a typed path (normalizeVaultPath). */
+    vaultPath: z.string().transform((path) => path.normalize("NFC")),
     publishedAt: z.string(),
     /** Legacy fields read only for import into the publication ledger. */
     targets: z.array(z.string()).optional(),

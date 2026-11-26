@@ -107,9 +107,13 @@ async function guarded(fn: () => Promise<boolean>): Promise<void> {
  */
 export async function runShare(path: string, opts: ShareCommandOptions): Promise<void> {
     await guarded(async () => {
-        const { vaultPath, outcomes } = await shareNote(path, opts.targets);
+        const { vaultPath, outcomes, alreadyPublished, slug } = await shareNote(path, opts.targets);
         const ok = printOutcomes(outcomes);
-        out.printlnErr(`published ${vaultPath}`);
+        out.printlnErr(
+            alreadyPublished
+                ? `already published as ${slug}: ${vaultPath} was sent again, the link stays the same`
+                : `published ${vaultPath}`
+        );
         const first = outcomes.find((outcome) => outcome.url)?.url;
 
         if (opts.clipboard && first) {
