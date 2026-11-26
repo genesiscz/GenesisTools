@@ -120,8 +120,12 @@ function overrideNote(change: ShowResult["log"][number]): string {
         return "";
     }
 
-    const rules = facts.filter((fact) => fact.path === "role-override.rule").map((fact) => fact.value);
-    return `  [override: ${why.value}${rules.length > 0 ? `; ${rules.join("; ")}` : ""}]`;
+    const singleLine = (value: string) =>
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: audit display must remove terminal controls.
+        value.replaceAll(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").slice(0, 100);
+    const reason = singleLine(why.value);
+    const rules = facts.filter((fact) => fact.path === "role-override.rule").map((fact) => singleLine(fact.value));
+    return `  [override: ${reason}${rules.length > 0 ? `; ${rules.join("; ")}` : ""}]`;
 }
 
 function showText(data: ShowResult, section: string | undefined): string[] {

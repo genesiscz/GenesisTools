@@ -449,6 +449,24 @@ describe("the role override", () => {
         );
     });
 
+    test("override audit output escapes terminal controls and bounds its reason while the journal keeps it", async () => {
+        const id = await spotIdea("finder");
+        const reason = `owner\nasked\u001b[31m ${"x".repeat(140)}`;
+        const result = await write(ctx("finder", { override: reason }), { verb: "finish", ref: id, proof: "done" });
+        expect(result.ok).toBe(true);
+        const shown = showItem(db, id);
+        if (!shown) {
+            throw new Error("fixture item is missing");
+        }
+        const text = workFormatters({ section: "log" }).show.text(shown, { tty: false, width: 120 }).join("\n");
+        const renderedReason = text.split("[override: ")[1]?.split(";")[0];
+        expect(renderedReason).toHaveLength(100);
+        expect(renderedReason).toStartWith("owner asked [31m ");
+        expect(renderedReason).not.toContain("\u001b");
+        expect(renderedReason).not.toContain("\n");
+        expect(overrideFacts(id)[0].value).toBe(reason);
+    });
+
     test("the built-in rules allow no override of accept, and a rule of nobody is never overridden", async () => {
         const id = await spotIdea("finder");
         const accept = await write(ctx("finder", { override: "I think it is good" }), { verb: "accept", refs: [id] });

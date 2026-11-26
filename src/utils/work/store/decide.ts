@@ -79,7 +79,7 @@ export interface WriteEnv {
     /** Why this session does a write that a role rule refuses (`--override`), trimmed; absent when not given. */
     override?: string;
     /** The role rules the override passed in this write; `decide` sets it from the guard, `base` stamps it. */
-    overrides?: readonly OverrideUse[];
+    overrides?: ReadonlyMap<ItemId, readonly ContextStampFact[]>;
 }
 
 /** One role rule that an override passed: the item, the verb, the roles the rule needs and the roles the caller held. */
@@ -134,7 +134,7 @@ function base(
     env: WriteEnv,
     item: ItemId
 ): Pick<NewChange, "v" | "ts" | "item" | "actor" | "origin" | "request" | "stamp"> {
-    const traced = overrideFacts(env.overrides ?? [], item);
+    const traced = env.overrides?.get(item) ?? [];
     const stamp = traced.length > 0 ? { facts: [...(env.stamp?.facts ?? []), ...traced] } : env.stamp;
     return {
         v: 1,
@@ -152,22 +152,19 @@ function overrideRuleText(use: OverrideUse): string {
 }
 
 /** The stamp facts of the overrides this write used on one item: the reason once, then each rule it passed. */
-function overrideFacts(uses: readonly OverrideUse[], item: ItemId): ContextStampFact[] {
-    const mine = uses.filter((use) => use.item === item);
+function overrideFacts(uses: readonly OverrideUse[]): ReadonlyMap<ItemId, ContextStampFact[]> {
+    const indexed = new Map<ItemId, ContextStampFact[]>();
+    for (const use of uses) {
+        let facts = indexed.get(use.item);
+        if (!facts) {
+            facts = [{ path: "role-override", value: use.why, method: "given", source: "--override" }];
+            indexed.set(use.item, facts);
+        }
 
-    if (mine.length === 0) {
-        return [];
+        facts.push({ path: "role-override.rule", value: overrideRuleText(use), method: "read", source: "rules" });
     }
 
-    return [
-        { path: "role-override", value: mine[0].why, method: "given", source: "--override" },
-        ...mine.map((use) => ({
-            path: "role-override.rule",
-            value: overrideRuleText(use),
-            method: "read" as const,
-            source: "rules",
-        })),
-    ];
+    return indexed;
 }
 
 /** The slots of the old log that hold an item: the one the ref named first, then the others. */
@@ -1427,7 +1424,7 @@ export function decide(command: WorkCommand, view: StoreView, env: WriteEnv): De
         return guarded.refused;
     }
 
-    const decision = decideVerb(command, view, { ...env, overrides: guarded.uses });
+    const decision = decideVerb(command, view, { ...env, overrides: overrideFacts(guarded.uses) });
 
     if (!decision.ok || decision.noop === true || env.override === undefined || env.override.trim() === "") {
         return decision;
