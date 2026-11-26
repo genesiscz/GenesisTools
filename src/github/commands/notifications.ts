@@ -2,6 +2,8 @@
 
 import { formatNotifications } from "@app/github/lib/output";
 import { Browser } from "@genesiscz/utils/browser";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { getOctokit, getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
 import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@genesiscz/utils/github/types";
@@ -11,6 +13,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
+
+const NOTIFICATION_STATES = ["unread", "read", "all"] as const;
+type NotificationState = (typeof NOTIFICATION_STATES)[number];
+
+function isNotificationState(value: string): value is NotificationState {
+    return (NOTIFICATION_STATES as readonly string[]).includes(value);
+}
 
 /**
  * Convert raw GitHub notification to simplified NotificationItem
@@ -202,7 +211,7 @@ export function createNotificationsCommand(): Command {
         .option("--title <pattern>", "Filter by title (regex)")
         .option("--since <date>", "Notifications since date/time (e.g., 7d, 24h, 2025-01-01)")
         .option("--type <types>", "Filter by subject type (Issue,PullRequest,Release,Discussion)")
-        .option("--state <state>", "Filter: read|unread|all (default: unread)")
+        .option("--state [state]", "Filter: read|unread|all (default: unread)")
         .option("--participating", "Only participating notifications")
         .option("--open", "Open matching notifications in browser")
         .option("--mark-read", "Mark matching notifications as read")
@@ -213,8 +222,22 @@ export function createNotificationsCommand(): Command {
         .option("-v, --verbose", "Enable verbose logging")
         .action(async (opts) => {
             try {
+                const state = await pickEnumFlag({
+                    tool: toolCommand("github", "notifications"),
+                    subcommand: ["notifications"],
+                    flag: "--state",
+                    given: opts.state,
+                    values: NOTIFICATION_STATES,
+                    fallback: "unread",
+                    accepts: isNotificationState,
+                });
+                if (!state) {
+                    return;
+                }
+
                 await notificationsCommand({
                     ...opts,
+                    state,
                     titleMatch: opts.title,
                 });
             } catch (error) {
