@@ -108,11 +108,14 @@ export async function syncShares(options: {
     for (const note of notes) {
         const previous = previousTargets(note);
         const targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
-        if (options.changedOnly && previous.length > 0) {
+        if (options.changedOnly) {
+            // A note whose vault file is gone is skipped too: the timed run must not fail on it every time.
             const { editedAt } = await vaultShareSource().freshness(note);
             const syncs = byId.get(note.slug)?.syncs ?? {};
             const names = targetNames.length ? targetNames : previous;
-            if (!editedAt || names.every((name) => syncs[name] && !isEditedAfterSync(editedAt, syncs[name]))) {
+            const unchanged =
+                previous.length > 0 && names.every((name) => syncs[name] && !isEditedAfterSync(editedAt, syncs[name]));
+            if (!editedAt || unchanged) {
                 log.debug({ slug: note.slug, editedAt, missing: !editedAt }, "share sync --changed: skipped");
                 continue;
             }
