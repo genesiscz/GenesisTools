@@ -2,7 +2,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { runShare, runShareSync, runUnshare } from "@app/dev-dashboard/commands/share";
+import { resolveShareTargetFlags, runShare, runShareSync, runUnshare } from "@app/dev-dashboard/commands/share";
 import {
     runShareServerDevices,
     runShareServerPair,
@@ -42,7 +42,7 @@ import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 
 export async function killChild(child: ChildProcess | Subprocess, opts: { graceMs?: number } = {}): Promise<boolean> {
     return killWithEscalation(child, opts);
@@ -258,7 +258,11 @@ program
         });
     });
 
-const collectTargets = (value: string, previous: string[]) => [...previous, value];
+const targetOption = (description: string) =>
+    new Option("--target [name]", description)
+        .preset(true)
+        .default([])
+        .argParser((value: string | true, previous: Array<string | true>) => [...previous, value]);
 const portOption = (value: string): number => Number.parseInt(value, 10);
 const minFreeOption = (value: string): number => {
     const gb = Number(value);
@@ -273,15 +277,13 @@ const share = program
     .command("share")
     .description("Publish an Obsidian note to /share/<slug> on your share targets and copy the link")
     .argument("<path>", "Vault-relative or absolute path to a .md note")
-    .option(
-        "--target <name>",
-        'share target (repeatable, or "all"); uses the configured default when omitted',
-        collectTargets,
-        []
-    )
+    .addOption(targetOption('share target (repeatable, or "all"); uses the configured default when omitted'))
     .option("--no-clipboard", "Print the URL without copying it")
-    .action(async (path: string, opts: { clipboard?: boolean; target: string[] }) => {
-        await runShare(path, { clipboard: opts.clipboard !== false, targets: opts.target });
+    .action(async (path: string, opts: { clipboard?: boolean; target: Array<string | true> }) => {
+        const targets = await resolveShareTargetFlags(opts.target, ["share", path]);
+        if (targets) {
+            await runShare(path, { clipboard: opts.clipboard !== false, targets });
+        }
     });
 
 share
@@ -289,31 +291,37 @@ share
     .description("Send published notes to their targets again (after an edit, or a target that was offline)")
     .argument("[notes...]", "notes (vault paths) or slugs")
     .option("--all", "every published note")
-    .option("--target <name>", 'send to this target instead (repeatable, or "all")', collectTargets, [])
+    .addOption(targetOption('send to this target instead (repeatable, or "all")'))
     .option("--prune", "also remove snapshots a target holds for notes no longer shared there")
-    .action(async (notes: string[], opts: { all?: boolean; target: string[]; prune?: boolean }) => {
-        await runShareSync(notes, {
-            all: opts.all === true,
-            targets: shareTargets(opts.target),
-            prune: opts.prune === true,
-        });
+    .action(async (notes: string[], opts: { all?: boolean; target: Array<string | true>; prune?: boolean }) => {
+        const targets = await resolveShareTargetFlags(shareTargets(opts.target), [
+            "share",
+            "sync",
+            ...notes,
+            ...(opts.all ? ["--all"] : []),
+            ...(opts.prune ? ["--prune"] : []),
+        ]);
+        if (targets) {
+            await runShareSync(notes, { all: opts.all === true, targets, prune: opts.prune === true });
+        }
     });
 
 share
     .command("unshare")
     .description("Take a note off share targets (all of them, and unpublish, when no --target is given)")
     .argument("<note>", "note (vault path) or slug")
-    .option("--target <name>", "only this target (repeatable)", collectTargets, [])
-    .action(async (input: string, opts: { target: string[] }) => {
-        await runUnshare(input, { targets: shareTargets(opts.target) });
+    .addOption(targetOption("only this target (repeatable)"))
+    .action(async (input: string, opts: { target: Array<string | true> }) => {
+        const targets = await resolveShareTargetFlags(shareTargets(opts.target), ["share", "unshare", input]);
+        if (targets) {
+            await runUnshare(input, { targets });
+        }
     });
 
-/** `share sync x --target y`: commander hands --target to `share` itself, so a subcommand reads both. */
-function shareTargets(own: string[]): string[] {
-    const parent: unknown = share.opts().target;
-    const inherited = Array.isArray(parent) ? parent.filter((value): value is string => typeof value === "string") : [];
-
-    return [...new Set([...own, ...inherited])];
+/** Commander can assign a subcommand's --target to share itself. */
+function shareTargets(own: Array<string | true>): Array<string | true> {
+    const parent = share.opts<{ target: Array<string | true> }>().target;
+    return [...new Set([...own, ...parent])];
 }
 
 const shareTarget = share.command("target").description("Manage share targets (where shared notes are served)");
