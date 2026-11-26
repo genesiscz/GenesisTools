@@ -88,6 +88,7 @@ import { duplicateRecording } from "./duplicate";
 import {
     audioFactsOf,
     defaultExportName,
+    EDITOR_VIDEO_LIMITS,
     EXPORT_FORMATS,
     type ExportFormat,
     type ExportRun,
@@ -2278,7 +2279,7 @@ export class Movie {
         }
 
         // An HEVC export of an HDR movie is HDR itself.
-        const info = await probeVideo({ input: answer.path, hdr: "allow" });
+        const info = await probeVideo({ input: answer.path, limits: EDITOR_VIDEO_LIMITS, hdr: "allow" });
         // outputSeconds is the movie as info() names it (without its cards, or the part asked); exportSeconds is the
         // file's own length, intro and end cards included (a part has none).
         const movieUs = outputDurationUs(opened.project);

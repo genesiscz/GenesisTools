@@ -2438,7 +2438,6 @@ private struct ShapeHandles: View {
                         .accessibilityAddTraits(.isButton)
                 }
                 ForEach(showing.filter { model.selectedShape == $0.id }) { shape in
-                    let selected = true
                     let a = toView(CGPoint(x: shape.x1, y: shape.y1))
                     let b = toView(CGPoint(x: shape.x2, y: shape.y2))
                     ForEach([true, false], id: \.self) { first in
@@ -2447,7 +2446,7 @@ private struct ShapeHandles: View {
                         // reasonable time").
                         let point: CGPoint = first ? a : b
                         let end: Int = first ? 1 : 2
-                        let fill: Color = selected ? RecorderPalette.zoom : Color.white.opacity(0.9)
+                        let fill: Color = RecorderPalette.zoom
                         let arrowTip: String = first ? "The arrow's tail: drag it" : "Where the arrow points: drag it"
                         let tip: String = shape.kind == .arrow ? arrowTip : "A corner: drag it"
                         let endName: String = first ? "start" : "end"

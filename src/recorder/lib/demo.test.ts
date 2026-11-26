@@ -763,12 +763,16 @@ describe("movie.export() lengths", () => {
                 bytes: 1,
                 seconds: 0,
             })),
-            spyOn(probe, "probeVideo").mockImplementation(
-                async () =>
-                    ({ durationUs: fileSeconds * 1_000_000, width: 496, height: 1080 }) as Awaited<
-                        ReturnType<typeof probe.probeVideo>
-                    >
-            ),
+            spyOn(probe, "probeVideo").mockImplementation(async (options) => {
+                expect(options).toMatchObject({
+                    input: "/x/out.mp4",
+                    limits: edit.EDITOR_VIDEO_LIMITS,
+                    hdr: "allow",
+                });
+                return { durationUs: fileSeconds * 1_000_000, width: 496, height: 1080 } as Awaited<
+                    ReturnType<typeof probe.probeVideo>
+                >;
+            }),
         ];
 
         try {
@@ -790,6 +794,11 @@ describe("movie.export() lengths", () => {
         const answer = await exported(path, 13);
         expect(answer.outputSeconds).toBe(info.outputSeconds);
         expect(answer.exportSeconds).toBeCloseTo(13, 3);
+    });
+
+    test("a completed export over the evidence duration limit still reports its file length", async () => {
+        const answer = await exported(cutEdit(), 601);
+        expect(answer.exportSeconds).toBe(601);
     });
 
     test("a part export has both lengths near the part", async () => {
