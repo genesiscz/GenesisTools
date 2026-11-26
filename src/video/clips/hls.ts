@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { type HlsMediaPlaylist, type HlsVariant, parsePlaylist } from "@genesiscz/utils/hls/playlist";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
-import { requireRemoteHttpsUrl } from "./files";
+import { redactUrlQueries } from "@genesiscz/utils/video/process";
+import { fileNamePart, requireRemoteHttpsUrl } from "./files";
 import type { VodPlayback } from "./types";
 
 /** A fetched text file and the URL it came from after redirects, which relative playlist entries resolve against. */
@@ -68,7 +70,7 @@ async function readMedia({
     const { playlist } = await readPlaylist({ url, fetchText, signal });
 
     if (playlist.kind !== "media") {
-        throw new Error(`${url} is a master playlist, not a media playlist`);
+        throw new Error(`${redactUrlQueries(url)} is a master playlist, not a media playlist`);
     }
 
     return playlist;
@@ -108,7 +110,21 @@ function baseName(variant: HlsVariant): string {
 export function variantName(variant: HlsVariant, variants: HlsVariant[] = [variant]): string {
     const base = baseName(variant);
     const twins = variants.filter((other) => baseName(other) === base);
-    return twins.length > 1 ? `${base}-${folderOf(variant) || twins.indexOf(variant) + 1}` : base;
+    if (twins.length < 2) {
+        return base;
+    }
+
+    const folder = fileNamePart(folderOf(variant));
+    const sameFolder = twins.filter((other) => fileNamePart(folderOf(other)) === folder);
+    if (folder && sameFolder.length === 1) {
+        return `${base}-${folder}`;
+    }
+
+    const identity = new URL(variant.uri);
+    identity.search = "";
+    identity.hash = "";
+    const hash = createHash("sha256").update(identity.href).digest("hex").slice(0, 16);
+    return `${base}-${folder ? `${folder}-` : ""}${hash}`;
 }
 
 /** The variant `quality` names (see `chooseQuality`), else the highest bitrate. */

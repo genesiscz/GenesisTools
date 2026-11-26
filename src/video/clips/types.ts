@@ -1,6 +1,6 @@
 /**
  * The sites `tools video` reads clips and VODs from. Adding one is a folder, its id here and its entry in
- * `CLIP_PROVIDERS` (`providers.ts`); that table's key type makes a missing id or entry a compile error.
+ * `CLIP_PROVIDERS` (`providers.ts`), plus its HTTPS CDN hosts in `MEDIA_HOSTS` (`files.ts`). The registry's key type checks coverage.
  */
 export const CLIP_PROVIDER_IDS = ["kick", "twitch"] as const;
 export type ClipProviderId = (typeof CLIP_PROVIDER_IDS)[number];
@@ -56,8 +56,8 @@ export type ClipTarget =
     | { kind: "channel"; channel: string; sort?: string; range?: ClipRange };
 
 /**
- * How a clip's place in its VOD was found. `site`: the site names the offset (Twitch; Kick in whole seconds, used only
- * when the VOD playlist is closed). `vod-playlist`: clip and VOD playlists both carry stream time (Kick, public VOD),
+ * How a clip's place in its VOD was found. `site`: Twitch's reported offset, Kick's whole-second offset or a fitted
+ * origin when the VOD playlist has no usable start time. `vod-playlist`: clip and VOD playlists carry stream time,
  * exact to the segment. `stream-start`: neither, so the offset counts from the site's stream start, which the VOD's
  * first frame follows by a few seconds.
  */

@@ -1,21 +1,195 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mapPool } from "@genesiscz/utils/async";
+import { fetchWithCheckedRedirects, readResponseTextBounded } from "@genesiscz/utils/http/checked-response";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { redactUrlQueries } from "@genesiscz/utils/video/process";
-import { kickTimeSchema, parseKickTarget, retryAfterMs, siteOffset } from "../kick/api";
-import { fitVodStart, placeBySpan } from "../kick/provider";
-import { parseTwitchTarget } from "../twitch/api";
+import { fetchKickText, kickTimeSchema, listKickVods, parseKickTarget, retryAfterMs, siteOffset } from "../kick/api";
+import { fitVodStart, kickProvider, placeBySpan } from "../kick/provider";
+import { listTwitchVods, parseTwitchTarget } from "../twitch/api";
 import { clipFileName } from "./download";
-import { requireRemoteHttpsUrl, writeThenPublish } from "./files";
-import { type FetchText, readVodPlayback, spanOf } from "./hls";
+import { requireProviderMediaUrl, requireRemoteHttpsUrl, validateProviderPlaylist, writeThenPublish } from "./files";
+import { type FetchText, readVodPlayback, spanOf, variantName } from "./hls";
 import { type ClipsManifest, findOverlaps, type ManifestClip, providerSection, recordClips } from "./manifest";
 import { CLIP_PROVIDERS } from "./providers";
 import type { Clip, ClipSource, Vod } from "./types";
 import { vodPartFileName } from "./vod";
 
 const CLIP = "clip_01M7RY9637GFHTX1SEQE9EWJ88";
+
+function stubFetch(
+    run: (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>
+): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
+describe("remaining review regressions", () => {
+    it("checks redirects before following them and bounds successful and error bodies", async () => {
+        const calls: string[] = [];
+        const fake = spyOn(globalThis, "fetch").mockImplementation(
+            stubFetch(async (input) => {
+                calls.push(String(input));
+                return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/secret" } });
+            })
+        );
+        try {
+            await expect(
+                fetchWithCheckedRedirects({
+                    url: "https://cdn.example.com/a",
+                    validate: (value) => {
+                        requireRemoteHttpsUrl(value, "fixture");
+                    },
+                })
+            ).rejects.toThrow("not https");
+            expect(calls).toEqual(["https://cdn.example.com/a"]);
+            await expect(readResponseTextBounded({ response: new Response("12345"), maxBytes: 4 })).rejects.toThrow(
+                "exceeds 4"
+            );
+            expect(
+                await readResponseTextBounded({ response: new Response("12345"), maxBytes: 4, truncate: true })
+            ).toBe("1234");
+        } finally {
+            fake.mockRestore();
+        }
+    });
+
+    it("keeps completed undefined pool values and stops scheduling after cancellation", async () => {
+        expect(await mapPool({ items: [1, 2], jobs: 2, task: async () => undefined })).toEqual([undefined, undefined]);
+        const stop = new AbortController();
+        const values = await mapPool({
+            items: [1, 2, 3],
+            jobs: 1,
+            signal: stop.signal,
+            task: async () => {
+                stop.abort();
+                return undefined;
+            },
+        });
+        expect(values).toEqual([undefined]);
+    });
+
+    it("accepts a falsy option and disambiguates playlist files sharing a folder", () => {
+        expect(
+            chooseQuality({
+                options: [1, 0],
+                quality: "zero",
+                names: (value) => [value === 0 ? "zero" : "one"],
+                height: (value) => value,
+            })
+        ).toBe(0);
+        expect(
+            chooseQuality({ options: [1, 0], quality: "0", names: () => ["source"], height: (value) => value })
+        ).toBe(0);
+        const variants = ["a.m3u8", "b.m3u8"].map((name) => ({
+            uri: `https://cdn.example.com/720p/${name}`,
+            bandwidth: 1000,
+            height: 720,
+            frameRate: 30,
+        }));
+        expect(variantName(variants[0], variants)).not.toBe(variantName(variants[1], variants));
+    });
+
+    it("refuses unsupported Twitch paths and trailing clip or VOD components", () => {
+        for (const url of [
+            "https://clips.twitch.tv/LongClipSlug/extra",
+            "https://www.twitch.tv/videos/123456/extra",
+            "https://www.twitch.tv/desk/clip/LongClipSlug/extra",
+            "https://www.twitch.tv/desk/settings",
+        ]) {
+            expect(() => parseTwitchTarget(url)).toThrow();
+        }
+    });
+
+    it("paginates Twitch VODs and rejects malformed timestamps with the shape diagnostic", async () => {
+        const queries: string[] = [];
+        const raw = (id: string) => ({ id, title: id, createdAt: "2026-01-01T00:00:00Z", lengthSeconds: 20 });
+        let count = 0;
+        const fake = spyOn(globalThis, "fetch").mockImplementation(
+            stubFetch(async (_input, init) => {
+                queries.push(String(init?.body));
+                count++;
+                return Response.json({
+                    data: {
+                        user: {
+                            videos: {
+                                edges: [{ cursor: `cursor${count}`, node: raw(String(count)) }],
+                                pageInfo: { hasNextPage: count < 2 },
+                            },
+                        },
+                    },
+                });
+            })
+        );
+        try {
+            expect((await listTwitchVods("desk")).map((vod) => vod.id)).toEqual(["1", "2"]);
+            expect(queries[1]).toContain("cursor1");
+            fake.mockImplementation(
+                stubFetch(async () =>
+                    Response.json({
+                        data: {
+                            user: {
+                                videos: {
+                                    edges: [{ cursor: "last", node: { ...raw("3"), createdAt: "tomorrow" } }],
+                                    pageInfo: { hasNextPage: false },
+                                },
+                            },
+                        },
+                    })
+                )
+            );
+            await expect(listTwitchVods("desk")).rejects.toThrow("changed shape");
+        } finally {
+            fake.mockRestore();
+        }
+    });
+
+    it("keeps an explicit Kick private flag and falls back to the site offset after a CDN failure", async () => {
+        const fake = spyOn(globalThis, "fetch").mockImplementation(
+            stubFetch(async () =>
+                Response.json([
+                    {
+                        id: 100,
+                        is_live: false,
+                        duration: 100000,
+                        start_time: "2026-01-01 00:00:00",
+                        source: "https://cdn.example.com/video.m3u8",
+                        video: { uuid: "a1c8e6f0-a768-4ef9-b7bb-c0de5c52d30e", is_private: true, status: "public" },
+                    },
+                ])
+            )
+        );
+        try {
+            const info = (await listKickVods("desk"))[0];
+            expect(info.vod.access).toBe("private");
+            expect(info.playlistUrl).toBeNull();
+            fake.mockImplementation(stubFetch(async () => new Response("unavailable", { status: 503 })));
+            await expect(fetchKickText("https://clips.kick.com/a.m3u8?token=fixture-secret")).rejects.toThrow(
+                "https://clips.kick.com/a.m3u8?[redacted]"
+            );
+            const c = { ...kickClip(), vodOffsetSec: 25, streamId: "100" };
+            const placed = await kickProvider.placeClips({
+                clips: [c],
+                jobs: 1,
+                vod: {
+                    vod: info.vod,
+                    playback: {
+                        variantUrl: "https://cdn.example.com/v.m3u8",
+                        variantName: "source",
+                        startAt: null,
+                        bandwidth: 1000,
+                        durationSec: 100,
+                    },
+                },
+            });
+            expect(placed.sources.get(c.id)).toMatchObject({ offsetFrom: "site", vodOffsetSec: 25, startAt: null });
+        } finally {
+            fake.mockRestore();
+        }
+    });
+});
 
 describe("parseKickTarget", () => {
     it("reads a VOD page and a bare VOD uuid", () => {
@@ -138,7 +312,7 @@ describe("file names from a site's answer", () => {
         expect(name(100.1, 110.1)).not.toBe(name(100.9, 110.9));
         expect(name(100.25, 110)).toContain("0-01-40.250_0-01-50");
         expect(name(0, 996)).not.toBe(name(0, 1000));
-        expect(name(0, 1000)).toBe("somechannel-2026-11-18-stream-a1c8e6f0-720p60.mp4");
+        expect(name(0, 1000)).toBe("somechannel-2026-11-18-stream-a1c8e6f0-a768-4ef9-b7bb-c0de5c52d30e-720p60.mp4");
     });
 });
 
@@ -151,6 +325,25 @@ describe("media URLs and logs", () => {
         expect(() => requireRemoteHttpsUrl("https://localhost/a.m3u8", "clip")).toThrow("not https");
     });
 
+    it("restricts provider media and nested HLS requests to the supported CDN hosts", () => {
+        expect(requireProviderMediaUrl("https://clips.kick.com/fixture.m3u8", "kick")).toContain("clips.kick.com");
+        expect(() => requireProviderMediaUrl("https://example.com/a.m3u8", "kick")).toThrow("outside");
+        expect(() =>
+            validateProviderPlaylist(
+                "#EXTM3U\n#EXTINF:4,\nhttps://127.0.0.1/segment.ts",
+                "https://clips.kick.com/a.m3u8",
+                "kick"
+            )
+        ).toThrow("not https");
+        expect(() =>
+            validateProviderPlaylist(
+                '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="https://example.com/key"',
+                "https://clips.kick.com/a.m3u8",
+                "kick"
+            )
+        ).toThrow("outside");
+    });
+
     it("shows a URL without its query in logs and errors", () => {
         expect(redactUrlQueries("ffmpeg -i https://cdn.example.com/a.mp4?sig=abc&token=xyz -c copy")).toBe(
             "ffmpeg -i https://cdn.example.com/a.mp4?[redacted] -c copy"
@@ -159,6 +352,27 @@ describe("media URLs and logs", () => {
 });
 
 describe("writeThenPublish", () => {
+    it("refuses exclusive publication when the filesystem cannot link without replacement", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "clips-no-link-"));
+        const failure = spyOn(fs, "linkSync").mockImplementation(() => {
+            throw Object.assign(new Error("no links"), { code: "ENOTSUP" });
+        });
+        try {
+            const output = join(dir, "a.mp4");
+            await expect(
+                writeThenPublish({
+                    output,
+                    force: false,
+                    write: async (part) => writeFileSync(part, "new"),
+                })
+            ).rejects.toThrow("cannot publish");
+            expect(existsSync(output)).toBe(false);
+            expect(readdirSync(dir)).toEqual([]);
+        } finally {
+            failure.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
     it("publishes a finished file, keeps a file that appeared meanwhile, and leaves no part behind on failure", async () => {
         const dir = mkdtempSync(join(tmpdir(), "clips-publish-"));
 
@@ -488,7 +702,7 @@ function kickClip(): Clip {
         id: CLIP,
         title: "a clip",
         pageUrl: `https://kick.com/somechannel/clips/${CLIP}`,
-        mediaUrl: "https://example.com/clip/playlist.m3u8",
+        mediaUrl: "https://clips.kick.com/clip/playlist.m3u8",
         thumbnailUrl: null,
         durationSec: 33,
         views: 0,

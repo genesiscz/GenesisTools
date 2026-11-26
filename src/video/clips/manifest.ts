@@ -362,9 +362,7 @@ function overlapOf({
  * Pairs of clips from one stream that overlap. Each pair is compared on one axis: VOD offsets when both clips have
  * them, else stream time when both have it; a clip with neither changes no other pair.
  */
-export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
-    const overlaps: ClipOverlap[] = [];
-
+export function visitOverlaps(manifest: ClipsManifest, visit: (overlap: ClipOverlap) => void): void {
     for (const provider of CLIP_PROVIDER_IDS) {
         const clips = Object.values(manifest.providers[provider]?.clips ?? {}).filter((clip) => clip.source);
         const byStream = Map.groupBy(clips, (clip) => clip.source?.streamId ?? "");
@@ -376,20 +374,37 @@ export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
             });
             const withOffset = new Set(byOffset.map((entry) => entry.clip.id));
             sweepOverlaps(byOffset, (first, second) => {
-                overlaps.push(overlapOf({ provider, streamId, first, second }));
+                visit(overlapOf({ provider, streamId, first, second }));
             });
 
             const byWall = group.flatMap((clip) => {
                 const span = wallSpan(clip);
                 return span ? [{ clip, span }] : [];
             });
-            sweepOverlaps(byWall, (first, second) => {
-                if (!withOffset.has(first.clip.id) || !withOffset.has(second.clip.id)) {
-                    overlaps.push(overlapOf({ provider, streamId, first, second }));
+            const wallOnly = byWall.filter((entry) => !withOffset.has(entry.clip.id));
+            sweepOverlaps(wallOnly, (first, second) => visit(overlapOf({ provider, streamId, first, second })));
+            if (wallOnly.length > 0) {
+                const withBoth = byWall
+                    .filter((entry) => withOffset.has(entry.clip.id))
+                    .sort((a, b) => a.span.start - b.span.start);
+                for (const wall of wallOnly) {
+                    for (const timed of withBoth) {
+                        if (timed.span.start >= wall.span.end) {
+                            break;
+                        }
+                        if (timed.span.end > wall.span.start) {
+                            const [first, second] = wall.span.start <= timed.span.start ? [wall, timed] : [timed, wall];
+                            visit(overlapOf({ provider, streamId, first, second }));
+                        }
+                    }
                 }
-            });
+            }
         }
     }
+}
 
+export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
+    const overlaps: ClipOverlap[] = [];
+    visitOverlaps(manifest, (overlap) => overlaps.push(overlap));
     return overlaps;
 }

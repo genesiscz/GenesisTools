@@ -268,5 +268,5 @@ export async function mapPool<T, R>({
     }
 
     await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, items.length)) }, worker));
-    return results.filter((result) => result !== undefined);
+    return results.filter((_, index) => Object.hasOwn(results, index));
 }

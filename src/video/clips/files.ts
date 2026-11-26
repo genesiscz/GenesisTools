@@ -1,6 +1,7 @@
 import { existsSync, linkSync, mkdtempSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import type { ClipProviderId } from "./types";
 
 /**
  * ffmpeg may open only these protocols for a clip or VOD input and every playlist and segment it names: a remote answer
@@ -52,16 +53,49 @@ export function requireRemoteHttpsUrl(url: string, what: string): string {
 
     try {
         parsed = new URL(url);
-    } catch (error) {
-        logger.debug({ error, what }, "Media URL does not parse");
+    } catch {
+        logger.debug({ what }, "Media URL does not parse");
         throw new Error(`${what}: the site answered a media URL that does not parse`);
     }
 
-    if (parsed.protocol !== "https:" || isLocalHost(parsed.hostname)) {
+    if (parsed.protocol !== "https:" || isLocalHost(parsed.hostname) || parsed.username || parsed.password) {
         throw new Error(`${what}: the site answered a media URL that is not https on a public host (${parsed.origin})`);
     }
 
     return url;
+}
+
+const MEDIA_HOSTS: Record<ClipProviderId, readonly string[]> = {
+    kick: ["kick.com", "live-video.net", "cloudfront.net"],
+    twitch: ["twitch.tv", "ttvnw.net", "twitchcdn.net", "cloudfront.net"],
+};
+
+export function requireProviderMediaUrl(url: string, provider: ClipProviderId): string {
+    requireRemoteHttpsUrl(url, `${provider} media`);
+    const parsed = new URL(url);
+    if (
+        (parsed.port && parsed.port !== "443") ||
+        !MEDIA_HOSTS[provider].some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))
+    ) {
+        throw new Error(`${provider} answered a media URL outside its supported CDN hosts`);
+    }
+    return url;
+}
+
+/** Check the playlists, segments and encryption keys before an external media process reads the playlist. */
+export function validateProviderPlaylist(text: string, base: string, provider: ClipProviderId): void {
+    if (!text.trimStart().startsWith("#EXTM3U")) {
+        return;
+    }
+    for (const line of text.split(/\r?\n/)) {
+        const value = line.trim();
+        if (value && !value.startsWith("#")) {
+            requireProviderMediaUrl(new URL(value, base).href, provider);
+        }
+        for (const match of value.matchAll(/URI="([^"]+)"/g)) {
+            requireProviderMediaUrl(new URL(match[1], base).href, provider);
+        }
+    }
 }
 
 /** `ffmpeg -c copy` from `input` into an MP4 at `output`; `cut` seeks to a keyframe and stops after `lengthSec`. */
@@ -137,15 +171,10 @@ export async function writeThenPublish({
                 return "exists";
             }
 
-            // A disk without hard links (exFAT): fall back to a check and a rename.
-            logger.debug({ error, output }, "Hard link refused; publishing with a rename");
-
-            if (regularFileBytes(output) > 0) {
-                return "exists";
-            }
-
-            renameSync(part, output);
-            return "saved";
+            throw new Error(
+                "The filesystem cannot publish this file without replacement; use --force to permit replacement",
+                { cause: error }
+            );
         }
     } finally {
         rmSync(staging, { recursive: true, force: true });

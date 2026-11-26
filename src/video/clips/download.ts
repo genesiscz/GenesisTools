@@ -9,7 +9,7 @@ import {
     fileNamePart,
     mp4FileName,
     regularFileBytes,
-    requireRemoteHttpsUrl,
+    requireProviderMediaUrl,
     writeThenPublish,
 } from "./files";
 import type { Clip, ClipMedia, ClipProvider } from "./types";
@@ -96,7 +96,7 @@ export async function downloadClip({
 
         const chosen = media ?? (await provider.clipMedia({ clip, signal }));
         media = chosen;
-        const input = requireRemoteHttpsUrl(chosen.url, `${provider.label} clip ${clip.id}`);
+        const input = requireProviderMediaUrl(chosen.url, provider.id);
         const status = await writeThenPublish({
             output,
             force,

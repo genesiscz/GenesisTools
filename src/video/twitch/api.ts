@@ -1,7 +1,9 @@
+import { fetchWithCheckedRedirects, readResponseTextBounded } from "@genesiscz/utils/http/checked-response";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { z } from "zod";
+import { requireProviderMediaUrl, validateProviderPlaylist } from "../clips/files";
 import type { FetchedText } from "../clips/hls";
 import { CLIP_RANGES, type Clip, type ClipMedia, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
 
@@ -72,7 +74,7 @@ function byQuality(qualities: TwitchQuality[]): TwitchQuality[] {
 const vodSchema = z.object({
     id: z.string(),
     title: z.string().nullish(),
-    createdAt: z.string(),
+    createdAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value).toISOString()),
     lengthSeconds: z.number(),
     /** `RECORDING` while the stream is live. */
     status: z.string().nullish(),
@@ -139,13 +141,14 @@ export function parseTwitchTarget(input: string): ClipTarget {
         throw new Error(`"${input}" is not a twitch.tv URL`);
     }
 
-    const [first, second, third] = url.pathname.split("/").filter(Boolean);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const [first, second, third] = parts;
 
-    if (/^clips\.twitch\.tv$/i.test(url.hostname) && first && CLIP_SLUG.test(first)) {
+    if (/^clips\.twitch\.tv$/i.test(url.hostname) && parts.length === 1 && first && CLIP_SLUG.test(first)) {
         return { kind: "clip", id: first };
     }
 
-    if (first === "videos" && second && VOD_ID.test(second)) {
+    if (parts.length === 2 && first === "videos" && second && VOD_ID.test(second)) {
         return { kind: "vod", id: second };
     }
 
@@ -154,11 +157,19 @@ export function parseTwitchTarget(input: string): ClipTarget {
     }
 
     if (second === "clip") {
-        if (!third || !CLIP_SLUG.test(third)) {
+        if (parts.length !== 3 || !third || !CLIP_SLUG.test(third)) {
             throw new Error(`"${input}" names no Twitch clip`);
         }
 
         return { kind: "clip", id: third };
+    }
+
+    if (
+        parts.length > 2 ||
+        (second !== undefined && !["clips", "videos"].includes(second)) ||
+        /^clips\.twitch\.tv$/i.test(url.hostname)
+    ) {
+        throw new Error(`"${input}" is not a supported Twitch target URL`);
     }
 
     const range = PAGE_RANGE[url.searchParams.get("range") ?? ""];
@@ -179,11 +190,16 @@ async function gql<T>({
     logger.debug({ query: query.slice(0, 200) }, "Twitch GQL request");
     const response = await fetch(GQL_URL, {
         method: "POST",
+        redirect: "error",
         headers: { "client-id": WEB_CLIENT_ID, "content-type": "application/json" },
         body: SafeJSON.stringify({ query }),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
-    const text = await response.text();
+    const text = await readResponseTextBounded({
+        response,
+        maxBytes: response.ok ? 8 * 1024 * 1024 : 512,
+        truncate: !response.ok,
+    });
 
     if (!response.ok) {
         logger.warn({ status: response.status, body: text.slice(0, 500) }, "Twitch GQL request failed");
@@ -247,7 +263,7 @@ function toVod(raw: z.infer<typeof vodSchema>, channel: string): Vod {
         streamId: raw.id,
         title: raw.title ?? "",
         channel: raw.owner?.login ?? channel,
-        startedAt: new Date(raw.createdAt).toISOString(),
+        startedAt: raw.createdAt,
         durationSec: raw.lengthSeconds,
         live: raw.status === "RECORDING",
         // Twitch's VOD record says nothing about who may watch; its CDN refuses a subscriber-only VOD at the cut.
@@ -395,19 +411,43 @@ export async function twitchClipMedia({
 
 /** The channel's past broadcasts, newest first. */
 export async function listTwitchVods(channel: string, signal?: AbortSignal): Promise<Vod[]> {
-    const { user } = await gql({
-        query: `query { user(login: ${literal(channel)}) { videos(first: ${PAGE_SIZE}, type: ARCHIVE, sort: TIME) { edges { node { ${vodFields} } } } } }`,
-        pick: z.object({
-            user: z.object({ videos: z.object({ edges: z.array(z.object({ node: vodSchema })) }) }).nullish(),
-        }),
-        signal,
-    });
+    const vods: Vod[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (;;) {
+        const after: string = cursor ? `, after: ${literal(cursor)}` : "";
+        const page = await gql({
+            query: `query { user(login: ${literal(channel)}) { videos(first: ${PAGE_SIZE}${after}, type: ARCHIVE, sort: TIME) { edges { cursor node { ${vodFields} } } pageInfo { hasNextPage } } } }`,
+            pick: z.object({
+                user: z
+                    .object({
+                        videos: z.object({
+                            edges: z.array(z.object({ cursor: z.string().nullish(), node: vodSchema })),
+                            pageInfo: z.object({ hasNextPage: z.boolean() }),
+                        }),
+                    })
+                    .nullish(),
+            }),
+            signal,
+        });
+        if (!page.user) {
+            throw new TwitchApiError(`Twitch has no channel "${channel}"`, 404);
+        }
 
-    if (!user) {
-        throw new TwitchApiError(`Twitch has no channel "${channel}"`, 404);
+        const { edges, pageInfo } = page.user.videos;
+        vods.push(...edges.map((edge) => toVod(edge.node, channel)));
+        if (!pageInfo.hasNextPage || edges.length === 0) {
+            return vods;
+        }
+
+        const next = edges.at(-1)?.cursor;
+        if (!next || seen.has(next)) {
+            throw new TwitchApiError("Twitch's VOD pages repeat a cursor or omit the next cursor", null);
+        }
+
+        seen.add(next);
+        cursor = next;
     }
-
-    return user.videos.edges.map((edge) => toVod(edge.node, channel));
 }
 
 export async function fetchTwitchVod(id: string, signal?: AbortSignal): Promise<Vod> {
@@ -448,8 +488,19 @@ export async function twitchVodPlaylistUrl(id: string, signal?: AbortSignal): Pr
 /** A playlist from Twitch's CDN, with the URL it came from; HTTP 403 there means a subscriber-only VOD. */
 export async function fetchTwitchText(url: string, signal?: AbortSignal): Promise<FetchedText> {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
-    const text = await response.text();
+    const fetched = await fetchWithCheckedRedirects({
+        url,
+        init: { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
+        validate: (value) => {
+            requireProviderMediaUrl(value, "twitch");
+        },
+    });
+    const { response } = fetched;
+    const text = await readResponseTextBounded({
+        response,
+        maxBytes: response.ok ? 8 * 1024 * 1024 : 512,
+        truncate: !response.ok,
+    });
 
     if (response.status === 403) {
         throw new TwitchApiError("Twitch refuses this VOD without a login (subscriber-only)", 403);
@@ -460,5 +511,6 @@ export async function fetchTwitchText(url: string, signal?: AbortSignal): Promis
         throw new TwitchApiError(`Twitch's CDN answered HTTP ${response.status}`, response.status);
     }
 
-    return { text, url: response.url || url };
+    validateProviderPlaylist(text, fetched.url, "twitch");
+    return { text, url: fetched.url };
 }

@@ -216,7 +216,8 @@ async function placeKickClips({
                 spans.set(clip.id, await readStreamSpan({ url: clip.mediaUrl, fetchText: fetchKickText, signal }));
             } catch (error) {
                 signal?.throwIfAborted();
-                logger.warn({ error, clip: clip.id }, "Kick clip playlist unreadable; the clip keeps no place");
+                spans.set(clip.id, null);
+                logger.warn({ error, clip: clip.id }, "Kick clip playlist unreadable; keeping the site offset");
             }
         },
     });
@@ -281,13 +282,14 @@ export const kickProvider: ClipProvider = {
     clipQualities: false,
     clipTimesFromPlaylist: true,
     // Kick's clip playlist is one media playlist in the stream's own quality; no other rendition exists.
-    clipMedia: async ({ clip, quality }) => {
+    clipMedia: async ({ clip, quality, signal }) => {
         chooseQuality({ options: ["source"], quality, names: (name) => [name], height: () => null });
 
         if (!clip.mediaUrl) {
             throw new Error(`Kick names no playlist for clip ${clip.id}`);
         }
 
+        await fetchKickText(clip.mediaUrl, signal);
         return { url: clip.mediaUrl, quality: "source", best: true };
     },
     clipFileId: (clip) => clip.id.replace(/^clip_/, ""),

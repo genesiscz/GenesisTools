@@ -1,7 +1,10 @@
 import { abortableSleep } from "@genesiscz/utils/async";
+import { fetchWithCheckedRedirects, readResponseTextBounded } from "@genesiscz/utils/http/checked-response";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { redactUrlQueries } from "@genesiscz/utils/video/process";
 import { z } from "zod";
+import { requireProviderMediaUrl, validateProviderPlaylist } from "../clips/files";
 import type { FetchedText } from "../clips/hls";
 import { CLIP_RANGES, type Clip, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
 
@@ -266,13 +269,24 @@ async function request(
 ): Promise<{ status: number; ok: boolean; text: string; url: string }> {
     for (let attempt = 0; ; attempt++) {
         const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-        logger.debug({ url, attempt }, "Kick request");
-        const response = await fetch(url, {
-            headers: { accept: "application/json, */*", "user-agent": BROWSER_USER_AGENT },
-            signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        logger.debug({ url: redactUrlQueries(url), attempt }, "Kick request");
+        const fetched = await fetchWithCheckedRedirects({
+            url,
+            init: {
+                headers: { accept: "application/json, */*", "user-agent": BROWSER_USER_AGENT },
+                signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+            },
+            validate: (value) => {
+                requireProviderMediaUrl(value, "kick");
+            },
         });
-        const text = await response.text();
-        const answer = { status: response.status, ok: response.ok, text, url: response.url || url };
+        const { response } = fetched;
+        const text = await readResponseTextBounded({
+            response,
+            maxBytes: response.ok ? 8 * 1024 * 1024 : 512,
+            truncate: !response.ok,
+        });
+        const answer = { status: response.status, ok: response.ok, text, url: fetched.url };
 
         if (response.status !== 429 || attempt >= RATE_LIMIT_RETRIES) {
             return answer;
@@ -281,14 +295,17 @@ async function request(
         const wait = retryAfterMs(response.headers.get("retry-after"), attempt);
 
         if (wait > RETRY_AFTER_MAX_MS) {
-            logger.warn({ url, wait }, "Kick rate limit asks for a longer wait than this run waits out");
+            logger.warn(
+                { url: redactUrlQueries(url), wait },
+                "Kick rate limit asks for a longer wait than this run waits out"
+            );
             throw new KickApiError(
                 `Kick's rate limit asks to wait ${Math.ceil(wait / 60_000)} min; try again then`,
                 429
             );
         }
 
-        logger.debug({ url, attempt, wait }, "Kick rate limit; waiting");
+        logger.debug({ url: redactUrlQueries(url), attempt, wait }, "Kick rate limit; waiting");
         await abortableSleep(wait, signal);
     }
 }
@@ -298,10 +315,11 @@ export async function fetchKickText(url: string, signal?: AbortSignal): Promise<
     const answer = await request(url, signal);
 
     if (!answer.ok) {
-        logger.warn({ url, status: answer.status, body: answer.text.slice(0, 300) }, "Kick CDN request failed");
-        throw new KickApiError(`Kick answered HTTP ${answer.status} for ${url}`, answer.status);
+        logger.warn({ url: redactUrlQueries(url), status: answer.status }, "Kick CDN request failed");
+        throw new KickApiError(`Kick answered HTTP ${answer.status} for ${redactUrlQueries(url)}`, answer.status);
     }
 
+    validateProviderPlaylist(answer.text, answer.url, "kick");
     return { text: answer.text, url: answer.url };
 }
 
@@ -356,7 +374,7 @@ function toVod({
     channel: string;
     video: { uuid: string; is_private?: boolean | null; status?: string | null; source?: string | null } | null;
 }): KickVodInfo {
-    const access = video?.status ?? (video?.is_private ? "private" : "public");
+    const access = video?.is_private ? "private" : (video?.status ?? "public");
     const source = video?.source || stream.source;
     return {
         vod: {

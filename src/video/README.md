@@ -406,7 +406,7 @@ API now) and one entry in `STREAM_PROVIDERS`.
 (`src/video/kick/provider.ts`, `src/video/twitch/provider.ts`) in the `CLIP_PROVIDERS` table
 (`src/video/clips/providers.ts`); the commands, the download, the manifest and the VOD cut in `src/video/clips/` are
 shared. A new site is one folder, its id in `CLIP_PROVIDER_IDS` (`src/video/clips/types.ts`) and one entry in that
-table; the table's key type makes a missing id or entry a compile error.
+table, with its permitted HTTPS CDN hosts in `MEDIA_HOSTS` (`src/video/clips/files.ts`). The table's key type makes a missing id or entry a compile error.
 
 ```sh
 tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"
@@ -452,7 +452,7 @@ the best one instead of replacing it. `ffmpeg -c copy` copies Kick's HLS playlis
 hidden folder made for that run (`.video-part-XXXXXX/` in `--out-dir`), and the file takes its final name only after
 ffmpeg exits 0. Without `--force` a file another run published meanwhile stays, and the clip reports `exists`. A
 failed or stopped copy leaves nothing behind, and one clip's failure (ffmpeg or the disk) is a `failed` row that does
-not stop the others. ffmpeg opens only https media on a public host (`-protocol_whitelist https,tls,tcp,crypto`), and
+not stop the others. A filesystem without hard-link publication requires `--force`. Provider URLs, redirects and HLS references must use the provider's HTTPS CDN hosts. ffmpeg uses `-protocol_whitelist https,tls,tcp,crypto`, and
 the day log shows media URLs without their query, which carries Twitch's playback token. No command needs a login:
 Kick's public web API, and Twitch's GQL with the client id twitch.tv itself sends.
 
@@ -523,7 +523,7 @@ Where data lives:
 
 What it calls:
 
-- `ffprobe` and `ffmpeg` for everything. The encoders are `hevc_videotoolbox` (macOS only), `libx264`, `libx265` and
+- `ffprobe` and `ffmpeg` for local inspection, conversion and clip downloads. Listing and manifest commands need neither. The encoders are `hevc_videotoolbox` (macOS only), `libx264`, `libx265` and
   `libsvtav1`; scores need the `libvmaf` filter (without it, SSIM only). Check what your ffmpeg has with
   `ffmpeg -encoders` and `ffmpeg -filters`.
 - The `tools rm` trash for `--replace` originals and finished parts folders.

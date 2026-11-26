@@ -9,7 +9,7 @@ import {
     fileNamePart,
     mp4FileName,
     regularFileBytes,
-    requireRemoteHttpsUrl,
+    requireProviderMediaUrl,
     writeThenPublish,
 } from "./files";
 import type { Vod, VodPlayback } from "./types";
@@ -58,7 +58,7 @@ export function vodPartFileName({
         fileNamePart(vod.channel),
         fileNamePart(vod.startedAt.slice(0, 10)),
         slugify(vod.title).slice(0, 60),
-        fileNamePart(vod.id.split("-")[0] ?? ""),
+        fileNamePart(vod.id),
         whole ? "" : `${stamp(fromSec)}_${stamp(toSec)}`,
         fileNamePart(quality),
     ]);
@@ -115,7 +115,7 @@ export async function downloadVodPart({
         );
     }
 
-    const input = requireRemoteHttpsUrl(playback.variantUrl, `${vod.provider} VOD ${vod.id}`);
+    const input = requireProviderMediaUrl(playback.variantUrl, vod.provider);
     const status = await writeThenPublish({
         output,
         force,

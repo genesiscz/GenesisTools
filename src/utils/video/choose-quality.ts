@@ -1,7 +1,7 @@
 /**
  * Picks one of the qualities a site offers. `quality` is `best` (also the default), `worst`, a height such as `720`
  * or `720p`, or one of an option's own names (`720p60`, `chunked`). `options` come best first; of two options with the
- * asked height, the first wins. A quality no option has throws, and the message lists what is offered.
+ * asked height, the first wins only when no exact name matches. A quality no option has throws with the offered names.
  */
 export function chooseQuality<T>({
     options,
@@ -31,14 +31,14 @@ export function chooseQuality<T>({
 
     const byName = options.find((option) => names(option).some((name) => name.toLowerCase() === wanted));
 
-    if (byName) {
+    if (byName !== undefined) {
         return byName;
     }
 
     const asked = /^\d+p?$/.test(wanted) ? Number(wanted.replace(/p$/, "")) : null;
     const byHeight = asked === null ? undefined : options.find((option) => height(option) === asked);
 
-    if (byHeight) {
+    if (byHeight !== undefined) {
         return byHeight;
     }
 

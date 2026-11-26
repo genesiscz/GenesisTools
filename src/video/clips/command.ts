@@ -30,6 +30,7 @@ import {
     recordClips,
     recordVods,
     updateManifestFile,
+    visitOverlaps,
 } from "./manifest";
 import { CLIP_PROVIDERS } from "./providers";
 import { CLIP_PROVIDER_IDS, CLIP_RANGES, type Clip, type ClipProvider, type ClipRange, type Vod } from "./types";
@@ -285,7 +286,12 @@ async function updateManifest({
 function reportManifest(provider: ClipProvider, dir: string, manifest: ClipsManifest): void {
     const clips = CLIP_PROVIDER_IDS.flatMap((id) => Object.values(manifest.providers[id]?.clips ?? {}));
     const placed = clips.filter((clip) => clip.source?.vodOffsetSec != null).length;
-    const duplicates = findOverlaps(manifest).filter((overlap) => overlap.duplicate).length;
+    let duplicates = 0;
+    visitOverlaps(manifest, (overlap) => {
+        if (overlap.duplicate) {
+            duplicates++;
+        }
+    });
     out.log.info(
         `Manifest ${join(dir, CLIPS_MANIFEST_FILE)}: ${clips.length} clips, ${placed} placed in their VOD, ${duplicates} duplicate pairs. Show it: ${command(provider, "manifest", dir)}`
     );
@@ -457,13 +463,16 @@ function renderManifest(manifest: ClipsManifest): number {
     const duplicateOf = new Map<string, string>();
     const insideOf = new Map<string, string>();
 
-    for (const overlap of findOverlaps(manifest)) {
+    visitOverlaps(manifest, (overlap) => {
         if (overlap.duplicate) {
-            duplicateOf.set(overlap.b.id, overlap.a.id);
+            duplicateOf.set(`${overlap.provider}:${overlap.b.id}`, overlap.a.id);
         } else if (overlap.containedId) {
-            insideOf.set(overlap.containedId, overlap.containedId === overlap.a.id ? overlap.b.id : overlap.a.id);
+            insideOf.set(
+                `${overlap.provider}:${overlap.containedId}`,
+                overlap.containedId === overlap.a.id ? overlap.b.id : overlap.a.id
+            );
         }
-    }
+    });
 
     let count = 0;
 
@@ -489,7 +498,8 @@ function renderManifest(manifest: ClipsManifest): number {
             );
 
             for (const clip of sorted) {
-                const twin = duplicateOf.get(clip.id);
+                const identity = `${providerId}:${clip.id}`;
+                const twin = duplicateOf.get(identity);
                 table.push([
                     offsetCell(clip),
                     clip.source?.startAt ? new Date(clip.source.startAt).toLocaleTimeString("en-GB") : "",
@@ -497,8 +507,8 @@ function renderManifest(manifest: ClipsManifest): number {
                     formatDuration(clip.durationSec, "s"),
                     twin
                         ? `same as ${twin.slice(-6)}`
-                        : insideOf.has(clip.id)
-                          ? `inside ${insideOf.get(clip.id)?.slice(-6)}`
+                        : insideOf.has(identity)
+                          ? `inside ${insideOf.get(identity)?.slice(-6)}`
                           : clip.status === "failed"
                             ? "failed"
                             : "",
