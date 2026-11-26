@@ -99,6 +99,23 @@ export function queryEntriesSnapshot({ dbPath, opts = {} }: { dbPath: string; op
     });
 }
 
+/** One entry by id, after a catch-up on a read copy, so an entry still only in today's log file is found. */
+export function getEntryByIdSnapshot({
+    dbPath,
+    id,
+    logBase,
+}: {
+    dbPath: string;
+    id: string;
+    logBase?: string;
+}): QaRow | null {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: initializeReadModel,
+        read: (db) => getEntryById(db, id, { logBase }),
+    });
+}
+
 function dedupeKey(en: QaEntry): string {
     return `${en.sessionId}|${Math.round(en.ts / 2000)}|${en.question}`;
 }
