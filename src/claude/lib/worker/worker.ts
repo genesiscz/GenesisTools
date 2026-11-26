@@ -1,6 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
+import { tokenLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -206,13 +206,10 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
         // another Claude Code session… unset the CLAUDECODE environment variable."
         // The session markers go with it so the child never mistakes itself for
         // the parent's session.
-        const childEnv: Record<string, string | undefined> = {
-            ...env.getProcessEnv(),
-            ...pinnedLaunchEnv(
-                { name: account.name, label: account.label },
-                { value: account.token, scopes: account.tokenScopes }
-            ),
-        };
+        const childEnv = tokenLaunchEnv(
+            { name: account.name, label: account.label },
+            { value: account.token, scopes: account.tokenScopes }
+        );
         if (meta.sourceHome) {
             if (meta.usesDefaultConfig) {
                 childEnv.HOME = dirname(meta.sourceHome);

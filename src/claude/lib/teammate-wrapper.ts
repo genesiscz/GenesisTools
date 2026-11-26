@@ -178,6 +178,7 @@ export function buildTeammateWrapperScript(input: { claudeBin: string; env: Team
 # Injects OAuth launch env into Claude Code agent-team tmux teammates
 # (CC's spawn allowlist does not forward CLAUDE_CODE_OAUTH_TOKEN).
 set -euo pipefail
+unset CLAUDE_CODE_SUBSCRIPTION_TYPE CLAUDE_CODE_OAUTH_SCOPES
 ${exportLines}
 exec ${shellQuote(claudeBin)} "$@"
 `;

@@ -26,10 +26,10 @@ describe("resolveOpenAiSubModel", () => {
 
 describe("native Codex model names", () => {
     it.each([
-        ["astra", "gpt-6-astra"],
+        ["astra", "gpt-6.2-astra"],
         ["terra", "gpt-6.1-terra"],
         ["luna", "gpt-6-luna"],
-        ["sol", "gpt-6.1-sol"],
+        ["sol", "gpt-6.2-sol"],
     ])("resolves %s consistently", (alias, expected) => {
         expect(resolveOpenAiSubModel(alias)).toBe(expected);
     });

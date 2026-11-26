@@ -73,6 +73,11 @@ export function withoutSessionArgs(args: readonly string[]): string[] {
     const kept: string[] = [];
 
     for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--") {
+            kept.push(...args.slice(i));
+            break;
+        }
+
         const flag = args[i].split("=")[0];
 
         if (SESSION_FLAGS_ALONE.has(flag)) {
@@ -125,6 +130,6 @@ export function switchRelaunch<O extends SwitchedOptions>(input: {
             pick: true,
             autopick: undefined,
         },
-        passthrough: input.sessionId ? [...passthrough, "--resume", input.sessionId] : passthrough,
+        passthrough: input.sessionId ? ["--resume", input.sessionId, ...passthrough] : passthrough,
     };
 }

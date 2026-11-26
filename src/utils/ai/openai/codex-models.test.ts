@@ -100,7 +100,7 @@ describe("mergeCodexModelRecords", () => {
         expect(merged.get("gpt-6-luna")?.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
         expect(OPENAI_SUB_STATIC_CATALOG.some((entry) => entry.slug === "gpt-6-sol")).toBe(true);
         expect(resolveOpenAiSubModel("sol6")).toBe("gpt-6-sol");
-        expect(resolveOpenAiSubModel("sol")).toBe("gpt-6.1-sol");
+        expect(resolveOpenAiSubModel("sol")).toBe("gpt-6.2-sol");
     });
 });
 

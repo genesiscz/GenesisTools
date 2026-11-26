@@ -77,6 +77,7 @@ describe("the relaunch after a yes", () => {
             withoutSessionArgs(["--resume", "abc", "--settings", "{}", "-c", "--session-id", "x", "--model", "opus"])
         ).toEqual(["--settings", "{}", "--model", "opus"]);
         expect(withoutSessionArgs(["--resume", "--model", "opus"])).toEqual(["--model", "opus"]);
+        expect(withoutSessionArgs(["--continue", "--", "--continue"])).toEqual(["--", "--continue"]);
         expect(withoutSessionArgs(["--resume=abc", "-r", "def", "--fork-session", "--effort", "high"])).toEqual([
             "--effort",
             "high",
@@ -98,7 +99,7 @@ describe("the relaunch after a yes", () => {
             pick: true,
             autopick: undefined,
         });
-        expect(next.passthrough).toEqual(["--settings", "{}", "--resume", "new-session"]);
+        expect(next.passthrough).toEqual(["--resume", "new-session", "--settings", "{}"]);
     });
 
     test("an unknown session opens the folder's session picker after the account picker", () => {

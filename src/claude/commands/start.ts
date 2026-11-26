@@ -10,7 +10,7 @@ import {
     FABLE_MODEL_OPTION_DESCRIPTION,
     FABLE_MODEL_OPTION_NAME,
     OPUS_MODEL_OPTION,
-    pinnedLaunchEnv,
+    tokenLaunchEnv,
 } from "@app/claude/lib/launch-env";
 import { type LaunchTag, newLaunchTag, withLaunchTag } from "@app/claude/lib/launch-tag";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
@@ -41,7 +41,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { reclaimTerminalForeground } from "@genesiscz/utils/terminal/foreground";
+import { reclaimTerminalForeground, terminalForegroundOwner } from "@genesiscz/utils/terminal/foreground";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { annotateLimitLine, runClaudeBinaryDirect, steerModeFromEnv } from "../lib/direct-run";
@@ -381,7 +381,7 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
 
     // An explicit --model fable is the user's decision; say the number and move on.
     if (explicitFamily === "fable") {
-        out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left} — launching anyway (--model fable).`));
+        out.printlnErr(pc.yellow(`! Fable weekly on "${accountName}" is ${left} — launching anyway (--model fable).`));
 
         if (alternatives.length > 0) {
             out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
@@ -390,7 +390,7 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
         return;
     }
 
-    out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left}.`));
+    out.printlnErr(pc.yellow(`! Fable weekly on "${accountName}" is ${left}.`));
 
     if (alternatives.length > 0) {
         out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
@@ -479,7 +479,7 @@ async function warnKeychainLimits(
     }
 
     out.printlnErr(
-        pc.yellow(`⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
+        pc.yellow(`! The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
     );
     out.printlnErr(
         pc.dim(
@@ -540,7 +540,7 @@ async function weeklyGate(accountName: string, sdk: boolean): Promise<string | n
         return note;
     }
 
-    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(hit.resetsAt)}).`));
+    out.error(pc.red(`! "${accountName}" has no weekly quota left (${resetPhrase(hit.resetsAt)}).`));
     out.printlnErr(pc.dim("  Every model 429s until it refills, so switching model would not help."));
 
     const withRoom = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
@@ -611,7 +611,7 @@ async function resolveSmartAlias(
     }
 
     if (pick.warning) {
-        out.printlnErr(pc.yellow(`⚠ ${pick.warning}`));
+        out.printlnErr(pc.yellow(`! ${pick.warning}`));
     }
 
     out.printlnErr(`${pc.cyan("▸")} ${pc.bold(alias)} → ${pick.line}`);
@@ -891,7 +891,7 @@ function agePhrase(mtimeMs: number): string {
 }
 
 /**
- * One row: `d8deebf0 · 12m ago · ⚠ limit · in .worktrees/fix · "the prompt"`.
+ * One row: `d8deebf0 · 12m ago · ! limit · in .worktrees/fix · "the prompt"`.
  * The prompt goes in the LABEL rather than clack's `hint` (a hint only renders
  * on the focused row, and every row has to be identifiable) and is trimmed to
  * whatever the terminal has left, so no row wraps.
@@ -904,7 +904,7 @@ function sessionLabel(session: SessionSummary): string {
     ];
 
     if (session.limitStop) {
-        cells.push({ plain: "⚠ limit", colored: pc.yellow("⚠ limit") });
+        cells.push({ plain: "! limit", colored: pc.yellow("! limit") });
     }
 
     if (session.subdir) {
@@ -968,7 +968,7 @@ async function offerLimitKilledResume(): Promise<string[]> {
     }
 
     out.printlnErr(
-        pc.yellow(`⚠ The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
+        pc.yellow(`! The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
     );
     out.printlnErr(pc.dim(`  ${sessions[0].limitStop.slice(0, 160)}`));
 
@@ -1273,13 +1273,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         // A keychain login has its own scopes; a pinned parent's list belongs to the token removed above.
         delete launchEnv.CLAUDE_CODE_OAUTH_SCOPES;
     } else {
-        launchEnv = {
-            ...process.env,
-            ...pinnedLaunchEnv(account, {
-                value: longLivedToken ?? "",
-                scopes: account.credentials.longLivedTokenScopes,
-            }),
-        };
+        launchEnv = tokenLaunchEnv(account, {
+            value: longLivedToken ?? "",
+            scopes: account.credentials.longLivedTokenScopes,
+        });
     }
 
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
@@ -1352,6 +1349,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             if (currentName) {
                 const target = await renameTargetForCurrentSession(currentName, desiredName);
                 await renameTmuxAndBoundTtyd(currentName, target);
+                const foreground = terminalForegroundOwner(0);
                 const proc = Bun.spawn({
                     cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
                     stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
@@ -1359,7 +1357,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 });
                 const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
                 exitCode = await proc.exited;
-                ranHere = takeTerminalBack();
+                ranHere = takeTerminalBack(foreground, proc.pid);
                 if (stderrPump) {
                     await stderrPump;
                 }
@@ -1379,6 +1377,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 exitCode = launched.exitCode;
             }
         } else {
+            const foreground = terminalForegroundOwner(0);
             const proc = Bun.spawn({
                 cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
                 stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
@@ -1388,7 +1387,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
 
             exitCode = await proc.exited;
-            ranHere = takeTerminalBack();
+            ranHere = takeTerminalBack(foreground, proc.pid);
             if (stderrPump) {
                 await stderrPump;
             }
@@ -1450,12 +1449,12 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
  * terminal to its own dead group), so a prompt or the exit does not stop this process with SIGTTOU. True when this
  * process holds the terminal now.
  */
-function takeTerminalBack(): boolean {
+function takeTerminalBack(initial: number | null, childGroup: number): boolean {
     if (!process.stdin.isTTY) {
         return false;
     }
 
-    const state = reclaimTerminalForeground(0);
+    const state = reclaimTerminalForeground(0, { initial, childGroup });
     logger.debug({ state }, "[start] the terminal after claude quit");
     return state.status === "kept" || state.status === "reclaimed";
 }
@@ -1541,7 +1540,7 @@ async function offerAccountSwitch(input: {
 
     out.printlnErr(
         pc.yellow(
-            `⚠ "${input.accountName}" has ${Math.round(hit.leftPct)}% of its ${LOW_QUOTA_WINDOW_NAMES[hit.window]} left (${resetPhrase(hit.resetsAt)}).`
+            `! "${input.accountName}" has ${Math.round(hit.leftPct)}% of its ${LOW_QUOTA_WINDOW_NAMES[hit.window]} left (${resetPhrase(hit.resetsAt)}).`
         )
     );
 
@@ -1556,7 +1555,11 @@ async function offerAccountSwitch(input: {
     }
 
     logger.info({ from: input.accountName, sessionId }, "[start] switching accounts after the quit");
-    return switchRelaunch({ opts: input.opts, passthrough: input.passthrough, sessionId });
+    return switchRelaunch({
+        opts: { ...input.opts, model: model ?? input.opts.model },
+        passthrough: input.passthrough,
+        sessionId,
+    });
 }
 
 /**

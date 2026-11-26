@@ -19,7 +19,7 @@ describe("leadPrompt", () => {
     it("names the Codex subagents with their models and sends Codex work to them, not to tools codex spawn", () => {
         const text = leadPrompt(sessionAgents({ codexModel }));
 
-        expect(text).toContain("sol (gpt-6.1-sol, effort high)");
+        expect(text).toContain("sol (gpt-6.2-sol, effort high)");
         expect(text).toContain("luna (gpt-6-luna, effort high)");
         expect(text).not.toContain("codex-worker (");
         expect(text).toContain("with the Agent tool");
@@ -73,13 +73,13 @@ describe("sessionAgents", () => {
         const agents = sessionAgents({ codexModel });
 
         expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "terra", "luna", "codex-worker"]);
-        expect(agents.sol.model).toBe("codex/gpt-6.1-sol");
+        expect(agents.sol.model).toBe("codex/gpt-6.2-sol");
         expect(agents.sol.effort).toBe("high");
         expect(agents.terra.model).toBe("codex/gpt-6.1-terra");
         expect(agents.terra.effort).toBe("high");
-        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol");
+        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.2-sol");
         expect(agents["sol-xhigh"].effort).toBe("xhigh");
-        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.window);
+        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.2-sol")?.window);
         // A 272K model gets its own window, not the main loop's.
         expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.window);
         expect(agents.luna.autoCompactWindow).toBeLessThan(agents.sol.autoCompactWindow ?? 0);
@@ -154,7 +154,7 @@ describe("writeAgentFiles", () => {
 
         expect(files).toHaveLength(Object.keys(agents).length);
         expect(sol).toStartWith('---\nname: "sol"\n');
-        expect(sol).toContain('model: "codex/gpt-6.1-sol"');
+        expect(sol).toContain('model: "codex/gpt-6.2-sol"');
         expect(sol).toContain('effort: "high"');
         expect(sol).toContain("disallowedTools: Agent");
     });

@@ -29,7 +29,19 @@ export type ForegroundState =
  * POSIX lets a background group take the terminal with `tcsetpgrp` only while it ignores SIGTTOU, so the handler is
  * set to SIG_IGN for that one call and put back right after.
  */
-export function reclaimTerminalForeground(fd = 0): ForegroundState {
+export function terminalForegroundOwner(fd = 0): number | null {
+    const calls = libSystem();
+    if (!calls) {
+        return null;
+    }
+    const holder = calls.tcgetpgrp(fd);
+    return holder >= 0 ? holder : null;
+}
+
+export function reclaimTerminalForeground(
+    fd = 0,
+    launch?: { initial: number | null; childGroup: number }
+): ForegroundState {
     const calls = libSystem();
 
     if (!calls) {
@@ -45,6 +57,10 @@ export function reclaimTerminalForeground(fd = 0): ForegroundState {
 
     if (holder === own) {
         return { status: "kept" };
+    }
+
+    if (!launch || launch.initial !== own || holder !== launch.childGroup) {
+        return { status: "unavailable", reason: "the foreground group does not belong to this launch" };
     }
 
     const previous = calls.signal(SIGTTOU, SIG_IGN);

@@ -3,6 +3,7 @@ import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { byId } from "@genesiscz/utils/ai/catalog";
 import { PROFILE_SCOPE } from "@genesiscz/utils/claude/auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeJsonPath, claudeJsonPathInConfigDir } from "@genesiscz/utils/providers/session-paths";
@@ -102,6 +103,17 @@ export interface PinnedToken {
  */
 export function subscriptionTypeFor(account: Pick<AIAccountEntry, "label">, token: PinnedToken): string | undefined {
     return token.scopes?.includes(PROFILE_SCOPE) ? undefined : subscriptionTypeOf(account);
+}
+
+/** Build a complete environment, clearing token metadata inherited from another account. */
+export function tokenLaunchEnv(
+    account: Pick<AIAccountEntry, "name" | "label">,
+    token: PinnedToken
+): Record<string, string | undefined> {
+    const inherited = { ...env.getProcessEnv() };
+    delete inherited.CLAUDE_CODE_SUBSCRIPTION_TYPE;
+    delete inherited.CLAUDE_CODE_OAUTH_SCOPES;
+    return { ...inherited, ...pinnedLaunchEnv(account, token) };
 }
 
 export function pinnedLaunchEnv(

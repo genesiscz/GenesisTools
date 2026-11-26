@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pinnedLaunchEnv, subscriptionTypeOf } from "./launch-env";
+import { pinnedLaunchEnv, subscriptionTypeOf, tokenLaunchEnv } from "./launch-env";
 
 describe("pinnedLaunchEnv", () => {
     // Pinned key-by-key: dropping any one of these silently changes how the
@@ -53,6 +53,20 @@ describe("pinnedLaunchEnv", () => {
             "CLAUDE_CODE_OAUTH_SCOPES"
         );
     });
+});
+
+test("a selected token clears inherited metadata from another account", async () => {
+    const { env } = await import("@genesiscz/utils/env");
+    await env.testing.withOverrides(
+        { CLAUDE_CODE_SUBSCRIPTION_TYPE: "max", CLAUDE_CODE_OAUTH_SCOPES: "user:profile" },
+        async () => {
+            const profile = tokenLaunchEnv({ name: "work" }, { value: "fixture", scopes: ["user:profile"] });
+            expect(profile).not.toHaveProperty("CLAUDE_CODE_SUBSCRIPTION_TYPE");
+            const unknown = tokenLaunchEnv({ name: "personal" }, { value: "fixture" });
+            expect(unknown).not.toHaveProperty("CLAUDE_CODE_OAUTH_SCOPES");
+            expect(unknown.CLAUDE_CODE_SUBSCRIPTION_TYPE).toBe("max");
+        }
+    );
 });
 
 describe("subscriptionTypeOf", () => {

@@ -69,6 +69,9 @@ function gpt6(
  * unsupported ids surface WHAM's own 400 to the caller.
  */
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
+    // Metadata from the native Codex model cache, 2026-11-26.
+    gpt6("gpt-6.2-astra", "GPT-6.2-Astra", 272_000, { defaultEffort: "low", ultra: "xhigh" }),
+    gpt6("gpt-6.2-sol", "GPT-6.2-Sol", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
     gpt6("gpt-6-astra", "GPT-6-Astra", 272_000, { defaultEffort: "medium", ultra: "xhigh" }),
     gpt6("gpt-6.1-sol", "GPT-6.1-Sol", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
     gpt6("gpt-6.1-terra", "GPT-6.1 Terra", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
