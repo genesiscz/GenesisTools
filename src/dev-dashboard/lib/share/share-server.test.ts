@@ -96,7 +96,8 @@ describe("share freshness", () => {
         expect(freshnessTone(2 * 3_600_000)).toBe("recent");
         expect(freshnessTone(3 * 86_400_000)).toBe("aging");
         expect(freshnessTone(8 * 86_400_000)).toBe("stale");
-        expect(formatAgo(30_000)).toBe("just now");
+        expect(formatAgo(5_000)).toBe("just now");
+        expect(formatAgo(30_000)).toBe("30 s ago");
         expect(formatAgo(5 * 60_000)).toBe("5 min ago");
         expect(formatAgo(86_400_000)).toBe("1 day ago");
         expect(formatAgo(21 * 86_400_000)).toBe("3 weeks ago");

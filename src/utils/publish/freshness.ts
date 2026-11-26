@@ -22,7 +22,10 @@ export interface SyncRecord {
 
 export type FreshnessTone = "fresh" | "recent" | "aging" | "stale";
 
+const SECOND_MS = 1000;
 const MINUTE_MS = 60_000;
+/** "just now" only for a sync this recent; older than that the seconds show, so a sync of a minute ago never reads as fresh. */
+export const JUST_NOW_MS = 10 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -37,12 +40,16 @@ export function freshnessTone(ageMs: number): FreshnessTone {
     return FRESHNESS_TONE_LIMITS.find((limit) => ageMs < limit.underMs)?.tone ?? "stale";
 }
 
-/** "just now", "5 min ago", "3 h ago", "2 days ago", "5 weeks ago". */
+/** "just now" (under 10 s), "25 s ago", "5 min ago", "3 h ago", "2 days ago", "5 weeks ago". */
 export function formatAgo(ageMs: number): string {
     const age = Math.max(0, ageMs);
 
-    if (age < MINUTE_MS) {
+    if (age < JUST_NOW_MS) {
         return "just now";
+    }
+
+    if (age < MINUTE_MS) {
+        return `${Math.floor(age / SECOND_MS)} s ago`;
     }
 
     if (age < HOUR_MS) {
