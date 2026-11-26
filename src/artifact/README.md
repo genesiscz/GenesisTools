@@ -104,7 +104,7 @@ server the first one started, instead of starting another one. The server that `
 
 ### Publish an artifact
 
-Use a paired publish target set up with `tools dev-dashboard share-server setup --mode client`. The publish
+Use a paired publish target set up with `tools dev-dashboard share-server setup --role client`. The publish
 command builds a self-contained HTML file and sends it as a snapshot. Publishing the same entry again keeps its
 URL and updates the snapshot.
 

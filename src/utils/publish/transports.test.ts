@@ -173,7 +173,7 @@ describe("paired transport", () => {
             transport.setup({ name: "remote", values: { url, code: "CODE", "device-name": "desk" }, ask });
         await expect(setup("http://share.example.com")).rejects.toThrow("HTTP requires a private host");
         expect(requested).toEqual([]);
-        await expect(setup("http://10.0.0.5/md")).rejects.toThrow("dev-dashboard share-server setup --mode server");
+        await expect(setup("http://10.0.0.5/md")).rejects.toThrow("dev-dashboard share-server setup --role server");
         expect(requested).toEqual([`http://10.0.0.5${PUBLISH_API.pair}`]);
         expect(stored.size).toBe(0);
     });

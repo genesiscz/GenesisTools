@@ -94,7 +94,7 @@ function mergeConfig(config: ShareConfig, legacy: LegacyShareImport | null, base
     }
 
     let defaultTarget = config.defaults.target ?? legacy?.defaultTarget;
-    if (byName.size === 0 && legacy?.defaultTarget === undefined) {
+    if (byName.size === 0 && legacy?.defaultTarget === undefined && config.servers.length === 0) {
         byName.set("mac", liveTarget("mac", base));
         defaultTarget = "mac";
     }

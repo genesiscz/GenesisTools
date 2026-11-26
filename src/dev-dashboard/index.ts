@@ -11,9 +11,8 @@ import {
     runShareServerSetup,
     runShareServerStatus,
     runShareServerTunnel,
+    runShareServerUnit,
     SHARE_SERVER_PORT,
-    shareServerDirs,
-    shareServerUnit,
 } from "@app/dev-dashboard/commands/share-server";
 import {
     runTargetAdd,
@@ -376,45 +375,63 @@ serverPaths(shareServer.command("serve"))
     .action(runShareServerServe);
 
 serverPaths(shareServer.command("setup"))
-    .description("Set up, update or check a share server, a client, or both; then offer pairing")
-    .option("--mode [mode]", "server | client | both")
-    .option("--public-base <url>", "server: public origin, e.g. https://share.example.com")
-    .option("--port <port>", "server: port", portOption, SHARE_SERVER_PORT)
-    .option("--user <name>", "server: service user", "genesis-share")
-    .option("--root <dir>", "server: GenesisTools checkout", PROJECT_ROOT)
-    .option("--bun <path>", "server: bun binary", process.execPath)
-    .option("--tunnel <name>", "server: run the cloudflared connector too")
-    .option("--pair", "server: print a pairing code at the end")
-    .option("--target <name>", "client: share target name")
-    .option("--url <url>", "client: publish server origin")
-    .option("--code <code>", "client: the pairing code")
+    .description("Configure a publish server, pair this computer, or do both")
+    .option("--role [role]", "server | client | both")
+    .option("--mode [mode]", "alias for --role")
+    .option("--server <name>", "server name")
+    .option("--target [name]", "client target name or picker")
+    .option("--yes", "use defaults and authorize service installation")
+    .option("--public-origin <url>", "public origin of the server")
+    .option("--public-base <url>", "alias for --public-origin")
+    .option("--port <port>", "listen port", portOption)
+    .option("--host <host>", "listen host")
+    .option("--data-dir <dir>", "snapshot directory")
+    .option("--state-dir <dir>", "device and socket directory")
+    .option("--exposure <kind>", "reverse-proxy | cloudflared | local")
+    .option("--proxy <proxy>", "apache | nginx | caddy | other")
+    .option("--tunnel <name>", "cloudflared tunnel name")
+    .option("--service <manager>", "systemd | launchd | none")
+    .option("--service-user <name>", "systemd service account")
+    .option("--user <name>", "alias for --service-user")
+    .option("--adopt-unit <path>", "adopt an existing flag-based systemd unit")
+    .option("--root <dir>", "GenesisTools checkout", PROJECT_ROOT)
+    .option("--bun <path>", "Bun executable", process.execPath)
+    .option("--pair", "print a pairing code when the server is ready")
+    .option("--url <url>", "client: publish server URL")
+    .option("--code <code>", "client: one-time pairing code")
+    .option("--default", "make the client target the default")
     .action(runShareServerSetup);
 
 shareServer
     .command("up")
-    .description("Enable and restart the installed share server service")
-    .action(() => runShareServerService("up"));
+    .description("Enable and restart the configured service")
+    .option("--server <name>", "server to restart")
+    .action((opts: { server?: string }) => runShareServerService("up", opts));
 shareServer
     .command("down")
-    .description("Stop the share server service")
-    .action(() => runShareServerService("down"));
+    .description("Stop the configured service")
+    .option("--server <name>", "server to stop")
+    .action((opts: { server?: string }) => runShareServerService("down", opts));
 
 serverPaths(shareServer.command("status"))
-    .description("Check server health, snapshots, disk space and configured targets")
-    .option("--port <port>", "port", portOption, SHARE_SERVER_PORT)
-    .option("--public-base <url>", "also check health through this public origin")
-    .option("--min-free-gb <n>", "minimum free disk space in GiB (default: 2)", minFreeOption)
+    .description("Check servers, disk space and configured client targets")
+    .option("--server <name>", "check this configured server")
+    .option("--port <port>", "override the listen port", portOption)
+    .option("--public-base <url>", "override the public health origin")
+    .option("--min-free-gb <n>", "override the minimum free disk space in GiB", minFreeOption)
     .option("--json", "print check results as JSON")
     .action(runShareServerStatus);
 
 serverPaths(shareServer.command("pair"))
-    .description("Print a one-time pairing code (valid 10 minutes) for `share target add --driver paired`")
-    .option("--public-base <url>", "the share base to show in the hint")
+    .description("Print a one-time pairing code (valid for 10 minutes)")
+    .option("--server <name>", "server to pair with")
+    .option("--public-base <url>", "override the origin in the pairing command")
     .action(runShareServerPair);
 
 serverPaths(shareServer.command("devices"))
-    .description("List paired devices, or revoke one")
-    .option("--revoke <id>", "revoke this device's upload token")
+    .description("List server and client devices, or revoke a server device")
+    .option("--server <name>", "server to read or change")
+    .option("--revoke <id>", "revoke a device's upload token")
     .action(runShareServerDevices);
 
 serverPaths(shareServer.command("tunnel"))
@@ -425,28 +442,11 @@ serverPaths(shareServer.command("tunnel"))
     .action(runShareServerTunnel);
 
 serverPaths(shareServer.command("unit"))
-    .description("Print the systemd unit for this share server")
-    .option("--root <dir>", "GenesisTools checkout on the server", PROJECT_ROOT)
-    .option("--bun <path>", "bun binary", process.execPath)
-    .option("--port <port>", "port", portOption, SHARE_SERVER_PORT)
-    .option("--public-base <url>", "public base", "https://share.example.com/md")
-    .option("--user <name>", "service user", "genesis-share")
-    .option("--tunnel <name>", "run the cloudflared connector too")
-    .action(
-        (opts: {
-            data?: string;
-            state?: string;
-            root: string;
-            bun: string;
-            port: number;
-            publicBase: string;
-            user: string;
-            tunnel?: string;
-        }) => {
-            const dirs = shareServerDirs(opts);
-            out.print(shareServerUnit({ ...opts, data: dirs.dataDir, state: dirs.stateDir }));
-        }
-    );
+    .description("Print the configured server's systemd unit or launchd plist")
+    .option("--server <name>", "configured server")
+    .option("--root <dir>", "GenesisTools checkout", PROJECT_ROOT)
+    .option("--bun <path>", "Bun executable", process.execPath)
+    .action(runShareServerUnit);
 
 const tunnel = program.command("tunnel").description("Manage remote access tunnels");
 
