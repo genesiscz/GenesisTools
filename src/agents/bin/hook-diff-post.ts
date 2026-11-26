@@ -103,7 +103,7 @@ for (const item of [...flushed, decision]) {
 const rmNotice = await rmRequestNotice(payload);
 // At most once a day: the ids of a code-mode script's calls no longer look as `callHasOwnRow` expects.
 const idNotice = isHarnessName(payload.harness)
-    ? scriptCallIdNotice({
+    ? await scriptCallIdNotice({
           harness: payload.harness,
           facts: HARNESS_HOOK_FACTS[payload.harness],
           toolUseId: payload.toolUseId,

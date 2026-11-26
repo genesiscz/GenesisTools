@@ -14,6 +14,7 @@ import {
     stripShellNoise,
     tokenize,
 } from "@genesiscz/utils/shell/scan";
+import { shellWordSpans } from "@genesiscz/utils/shell/words";
 import { hookDiag } from "../log";
 
 /**
@@ -254,10 +255,12 @@ const SHORT_DIR_FLAG = "-C";
 interface DirTarget {
     kind: "cd" | "flag" | "argument";
     path: string;
+    element?: number;
+    git?: boolean;
 }
 
 /** Every folder target the command names, in order, read from the ORIGINAL text. */
-function dirTargets(command: string): DirTarget[] {
+function dirTargets(command: string, withPrograms = true): DirTarget[] {
     const targets: DirTarget[] = [];
     const scanned = scan(command, "the folders it works in");
 
@@ -286,7 +289,7 @@ function dirTargets(command: string): DirTarget[] {
                     if (target) {
                         targets.push({ kind: "cd", path: target });
                     }
-                } else if (token) {
+                } else if (token && withPrograms) {
                     programTargets({ scanned, element, token, known, script: INTERPRETER.test(word), into: targets });
                 }
 
@@ -315,26 +318,13 @@ function wordValue(raw: string | null, known: Map<string, string>): string | nul
  */
 function rawWords(scanned: ShellScan, from: number, element: Span): string[] {
     const { command, cleaned } = scanned;
-    const words: string[] = [];
     let end = element.start + element.text.length;
-    let at = from;
 
     while (end < cleaned.length && (cleaned[end] === " " || cleaned[end] === "\t")) {
         end += 1;
     }
 
-    while (at < end) {
-        const match = /^[ \t]+('[^']*'|"[^"]*"|\S+)/.exec(command.slice(at, end));
-
-        if (!match) {
-            break;
-        }
-
-        words.push(match[1] as string);
-        at += match[0].length;
-    }
-
-    return words;
+    return shellWordSpans(command.slice(from, end)).map((word) => command.slice(from + word.start, from + word.end));
 }
 
 /**
@@ -367,11 +357,26 @@ function programTargets({
             continue;
         }
 
+        if (commandWord(token.text) === "git") {
+            if (raw === "-c") {
+                at += 1;
+                continue;
+            }
+            if (!raw.startsWith("-")) {
+                break;
+            }
+        }
+
         if (DIR_FLAGS.has(raw) || raw === SHORT_DIR_FLAG) {
             const value = wordValue(words[at + 1] ?? null, known);
 
             if (value) {
-                into.push({ kind: "flag", path: value });
+                into.push({
+                    kind: "flag",
+                    path: value,
+                    element: element.start,
+                    git: commandWord(token.text) === "git",
+                });
             }
 
             at += 1;
@@ -384,7 +389,12 @@ function programTargets({
             const value = wordValue(raw.slice(eq + 1), known);
 
             if (value) {
-                into.push({ kind: "flag", path: value });
+                into.push({
+                    kind: "flag",
+                    path: value,
+                    element: element.start,
+                    git: commandWord(token.text) === "git",
+                });
             }
 
             continue;
@@ -461,11 +471,15 @@ function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: 
     // session cwd stays the fallback for a `cd` that ran in a subshell, which the text alone
     // cannot always tell apart; a guess that does not exist is dropped below either way.
     let current = cwd;
+    let previousElement: number | undefined;
+    let gitCurrent = cwd;
 
-    for (const target of dirTargets(command)) {
+    for (const target of dirTargets(command, withPrograms)) {
+        const from = target.git && target.element === previousElement ? gitCurrent : current;
+        previousElement = target.element;
         const candidates = isAbsolute(target.path)
             ? [target.path]
-            : [resolve(current, target.path), resolve(cwd, target.path)];
+            : [resolve(from, target.path), resolve(cwd, target.path)];
 
         if (target.kind !== "cd") {
             if (!withPrograms) {
@@ -477,6 +491,9 @@ function walkDirs(command: string, cwd: string, withPrograms: boolean): { dirs: 
                     ? candidates.find(isDirectory)
                     : candidates.map(repositoryTop).find((top) => top !== null);
 
+            if (dir && target.git) {
+                gitCurrent = dir;
+            }
             if (dir && !programs.includes(dir)) {
                 programs.push(dir);
             }
@@ -940,6 +957,7 @@ function walkNamed({ command, bases, readings }: { command: string; bases: strin
     }
 
     const known = new Map<string, string>();
+    let current = bases[0];
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
@@ -947,8 +965,19 @@ function walkNamed({ command, bases, readings }: { command: string; bases: strin
 
             for (const element of elements) {
                 const tokens = tokenize(element);
-                const gitDir = gitDirectory({ command, tokens, bases, known });
-                const from = gitDir ? [gitDir] : bases;
+                const gitDir = gitDirectory({ command, tokens, bases: current ? [current] : bases, known });
+                const elementBases = current ? [current] : bases;
+                const program = tokens[commandTokenIndex(tokens, command)];
+                const targets: DirTarget[] = [];
+                if (program) {
+                    programTargets({ scanned, element, token: program, known, script: false, into: targets });
+                }
+                const folder = targets.findLast((target) => target.kind === "flag");
+                const programDir =
+                    folder && program && commandWord(program.text) !== "git"
+                        ? resolve(current ?? bases[0] ?? ".", folder.path)
+                        : undefined;
+                const from = gitDir ? [gitDir] : programDir ? [programDir] : elementBases;
 
                 for (const token of tokens) {
                     for (const word of [
@@ -971,8 +1000,16 @@ function walkNamed({ command, bases, readings }: { command: string; bases: strin
                     }
                 }
 
-                // A pipeline stage runs in a subshell: its assignments end with it.
                 if (elements.length === 1) {
+                    if (program && commandWord(program.text) === "cd") {
+                        const value = wordValue(
+                            shellWord(nextRawArgument(command, program.start + program.text.length)),
+                            known
+                        );
+                        if (value) {
+                            current = resolve(current ?? bases[0] ?? ".", value);
+                        }
+                    }
                     applyAssignments({ command, tokens, known });
                 }
             }

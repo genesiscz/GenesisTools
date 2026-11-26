@@ -758,6 +758,10 @@ describe("a command that edits a sibling repository", () => {
         const parent = dirname(other);
         const leaf = basename(other);
 
+        const spaced = join(parent, "other checkout");
+        mkdirSync(spaced);
+        expect(programDirs(`bun x.ts --cwd='${spaced}'`, repo)).toEqual([spaced]);
+        expect(programDirs(`git -C ${parent} -C '${leaf}' apply fix.patch`, repo)).toContain(other);
         expect(programDirs(`bun x.ts --cwd ${other}`, repo)).toEqual([other]);
         expect(programDirs(`bun x.ts --cwd='${other}'`, repo)).toEqual([other]);
         expect(programDirs(`git -C "${other}" apply fix.patch`, repo)).toEqual([other]);
@@ -1746,6 +1750,19 @@ describe("files the command NAMES rather than works in", () => {
         // Single quotes do not expand, and a variable the command never set is the environment's.
         expect(namedArguments(`V=${vault}; cat '$V/wrapup.md'`, [vault])).toEqual([]);
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
+    });
+
+    it("scopes program folder operands to the element that owns the folder", () => {
+        const main = join(vault, "element-main");
+        const other = join(vault, "element-other");
+        mkdirSync(join(main, "src"), { recursive: true });
+        mkdirSync(join(other, "src"), { recursive: true });
+        const sibling = join(other, "src", "only.ts");
+        writeFileSync(sibling, "x");
+        expect(namedArguments(`make -C ${other} noop && sed -i s/old/new/ src/only.ts`, [main, other])).not.toContain(
+            sibling
+        );
+        expect(namedArguments(`make -C ${other} src/only.ts`, [main, other])).toContain(sibling);
     });
 
     it("reads the relative paths of a git -C element against its folder, not the session cwd", () => {

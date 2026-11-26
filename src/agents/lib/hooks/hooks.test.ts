@@ -32,6 +32,7 @@ import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/u
 import { env } from "@genesiscz/utils/env";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { RmRequest } from "@genesiscz/utils/rm";
 import { AREA_RULES_DEFAULTS, mergeAreaRules } from "../../../../plugins/genesis-tools/hooks/area-rules";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
@@ -3197,15 +3198,15 @@ describe("scriptCallIdNotice", () => {
         vars: Record<string, string> = codeMode
     ) => scriptCallIdNotice({ harness: "claude", facts: claude, toolUseId, vars, now, stampPath });
 
-    it("stays quiet while a script's calls keep their prefix, and a first tool call only starts the clock", () => {
+    it("stays quiet while a script's calls keep their prefix, and a first tool call only starts the clock", async () => {
         const stamp = fresh();
 
-        expect(notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start)).toBeNull();
-        expect(notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start + hour)).toBeNull();
-        expect(notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 20 * hour)).toBeNull();
-        expect(notice(stamp, undefined, start + 90 * hour)).toBeNull();
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start)).toBeNull();
+        expect(await notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start + hour)).toBeNull();
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 20 * hour)).toBeNull();
+        expect(await notice(stamp, undefined, start + 90 * hour)).toBeNull();
         expect(
-            scriptCallIdNotice({
+            await scriptCallIdNotice({
                 harness: "codex",
                 facts: HARNESS_HOOK_FACTS.codex,
                 toolUseId: "call_x",
@@ -3216,26 +3217,44 @@ describe("scriptCallIdNotice", () => {
         ).toBeNull();
     });
 
-    it("speaks once a day when code mode is on and no script call ran for a day", () => {
+    it("concurrent hooks claim one warning interval", async () => {
         const stamp = fresh();
-
-        expect(notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start)).toBeNull();
-        // Code mode off: a tool call is no sign.
-        expect(notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour, {})).toBeNull();
-
-        const first = notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour);
-
-        expect(first).toContain("no shell call with the `repl_` prefix of a script's call ran for 30 hours");
-        expect(notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 31 * hour)).toBeNull();
-        expect(notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 55 * hour)).toContain("ran for 55 hours");
+        const script = [
+            `import { scriptCallIdNotice } from ${SafeJSON.stringify(join(import.meta.dir, "diff/script-calls.ts"))};`,
+            `import { HARNESS_HOOK_FACTS } from ${SafeJSON.stringify(join(import.meta.dir, "payload.ts"))};`,
+            `const message = await scriptCallIdNotice({harness:"claude",facts:HARNESS_HOOK_FACTS.claude,toolUseId:"changed_1234",vars:{},now:${start},stampPath:${SafeJSON.stringify(stamp)}});`,
+            'process.stdout.write(message ? "warn" : "quiet");',
+        ].join("\n");
+        const outputs = await Promise.all(
+            Array.from({ length: 3 }, async () => {
+                const child = await boundedCommand({ command: [process.execPath, "-e", script], timeoutMs: 5_000 });
+                expect(child.status).toBe(0);
+                return child.stdout;
+            })
+        );
+        expect(outputs.filter((output) => output === "warn")).toHaveLength(1);
     });
 
-    it("speaks at once about an id with neither prefix, then not again that day", () => {
+    it("speaks once a day when code mode is on and no script call ran for a day", async () => {
         const stamp = fresh();
-        const renamed = notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start);
+
+        expect(await notice(stamp, "repl_da72304f-7185-4763-a0b9-5381f7e062c0", start)).toBeNull();
+        // Code mode off: a tool call is no sign.
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour, {})).toBeNull();
+
+        const first = await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 30 * hour);
+
+        expect(first).toContain("no shell call with the `repl_` prefix of a script's call ran for 30 hours");
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 31 * hour)).toBeNull();
+        expect(await notice(stamp, "toolu_01JMBRPQRSipAuSW9VpEegK7", start + 55 * hour)).toContain("ran for 55 hours");
+    });
+
+    it("speaks at once about an id with neither prefix, then not again that day", async () => {
+        const stamp = fresh();
+        const renamed = await notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start);
 
         expect(renamed).toContain("(`script_8c1f0…`) has neither the `toolu_` prefix");
-        expect(notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start + hour)).toBeNull();
+        expect(await notice(stamp, "script_8c1f0e2a-77aa-4f3e-9d11-0b5e3f2a9c41", start + hour)).toBeNull();
         expect(readFileSync(stamp, "utf8")).toContain(String(start));
     });
 });

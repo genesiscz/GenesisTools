@@ -165,7 +165,7 @@ function ancestorHops(): ProcessHop[] {
 
         hops.push(entry);
 
-        if (CLAUDE_COMMAND.test(entry.command)) {
+        if (CLAUDE_COMMAND.test(entry.command) && !SHELL_COMMAND.test(entry.command)) {
             break;
         }
 
@@ -183,7 +183,7 @@ export function ancestorCommands(): string[] {
 
 /** The nearest `claude` above this hook, or null when the walk found none. */
 function claudeAncestor(): ProcessHop | null {
-    return ancestorHops().find((hop) => CLAUDE_COMMAND.test(hop.command)) ?? null;
+    return ancestorHops().find((hop) => CLAUDE_COMMAND.test(hop.command) && !SHELL_COMMAND.test(hop.command)) ?? null;
 }
 
 /** Hops from the session's claude up to the launcher: claude's parent is the launcher, `zsh -ic`, or `cmux claude-teams`. */
@@ -232,7 +232,7 @@ export function launchIdFor(
 /** The model the nearest `claude` ancestor was launched with. */
 function modelFromAncestors(): string | null {
     for (const command of ancestorCommands()) {
-        if (CLAUDE_COMMAND.test(command)) {
+        if (CLAUDE_COMMAND.test(command) && !SHELL_COMMAND.test(command)) {
             return modelFromCommand(command);
         }
     }

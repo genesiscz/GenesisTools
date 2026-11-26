@@ -224,7 +224,7 @@ const MOD_ALIASES: Record<string, string> = {
 
 /** The highest whole number each numeric mods field takes, and the lowest when it is not 1. */
 const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string }> = {
-    "diff.foldAfterLines": { min: 0, max: 10_000, why: "0 never folds, and a fold after 10,000 lines folds nothing" },
+    "diff.foldAfterLines": { min: 0, max: 10_000, why: "0 never folds; 10,000 is the maximum preview length" },
     "idleCompact.minutes": { max: 59, why: "at 60 the 1-hour prompt cache has expired" },
     "idleCompact.minTokens": { max: Number.MAX_SAFE_INTEGER, min: 0, why: "" },
     "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },

@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { scriptCallStampPath } from "../paths";
 
 const HOUR = 60 * 60 * 1000;
@@ -40,7 +42,10 @@ function readStamp(path: string): ScriptCallStamp {
             ...(typeof seenAt === "number" ? { seenAt } : {}),
             ...(typeof warnedAt === "number" ? { warnedAt } : {}),
         };
-    } catch {
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            logger.debug({ error, path, operation: "read" }, "script-call stamp unavailable");
+        }
         return {};
     }
 }
@@ -52,8 +57,8 @@ function writeStamp(path: string, stamp: ScriptCallStamp): void {
         const temporary = `${path}.${process.pid}.tmp`;
         writeFileSync(temporary, SafeJSON.stringify(stamp), { mode: 0o600 });
         renameSync(temporary, path);
-    } catch {
-        // The check is advisory: a read-only temporary folder only means it runs again next time.
+    } catch (error) {
+        logger.debug({ error, path, operation: "write" }, "script-call stamp unavailable");
     }
 }
 
@@ -65,7 +70,7 @@ function writeStamp(path: string, stamp: ScriptCallStamp): void {
  * through scripts). Null otherwise, and for a harness without code mode. The stamp lives in the per-user temporary
  * folder: a reboot starts the day again, and the first call after it only starts the clock.
  */
-export function scriptCallIdNotice({
+export async function scriptCallIdNotice({
     harness,
     facts,
     toolUseId,
@@ -79,13 +84,44 @@ export function scriptCallIdNotice({
     vars: Readonly<Record<string, string | undefined>>;
     now?: number;
     stampPath?: string;
-}): string | null {
+}): Promise<string | null> {
     const ids = facts.scriptCalls;
 
     if (ids === null || !toolUseId) {
         return null;
     }
 
+    try {
+        return await withFileLock(
+            `${stampPath}.lock`,
+            async () => lockedNotice({ harness, facts, toolUseId, vars, now, stampPath }),
+            1_000
+        );
+    } catch (error) {
+        logger.debug({ error, path: stampPath, operation: "claim" }, "script-call stamp unavailable");
+        return null;
+    }
+}
+
+function lockedNotice({
+    harness,
+    facts,
+    toolUseId,
+    vars,
+    now,
+    stampPath,
+}: {
+    harness: string;
+    facts: HookFacts;
+    toolUseId: string;
+    vars: Readonly<Record<string, string | undefined>>;
+    now: number;
+    stampPath: string;
+}): string | null {
+    const ids = facts.scriptCalls;
+    if (ids === null) {
+        return null;
+    }
     const stamp = readStamp(stampPath);
 
     if (toolUseId.startsWith(ids.prefix)) {
