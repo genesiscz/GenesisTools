@@ -284,7 +284,11 @@ share
     .option("--target <name>", 'send to this target instead (repeatable, or "all")', collectTargets, [])
     .option("--prune", "also remove snapshots a target holds for notes no longer shared there")
     .action(async (notes: string[], opts: { all?: boolean; target: string[]; prune?: boolean }) => {
-        await runShareSync(notes, { all: opts.all === true, targets: opts.target, prune: opts.prune === true });
+        await runShareSync(notes, {
+            all: opts.all === true,
+            targets: shareTargets(opts.target),
+            prune: opts.prune === true,
+        });
     });
 
 share
@@ -293,8 +297,16 @@ share
     .argument("<note>", "note (vault path) or slug")
     .option("--target <name>", "only this target (repeatable)", collectTargets, [])
     .action(async (input: string, opts: { target: string[] }) => {
-        await runUnshare(input, { targets: opts.target });
+        await runUnshare(input, { targets: shareTargets(opts.target) });
     });
+
+/** `share sync x --target y`: commander hands --target to `share` itself, so a subcommand reads both. */
+function shareTargets(own: string[]): string[] {
+    const parent: unknown = share.opts().target;
+    const inherited = Array.isArray(parent) ? parent.filter((value): value is string => typeof value === "string") : [];
+
+    return [...new Set([...own, ...inherited])];
+}
 
 const shareTarget = share.command("target").description("Manage share targets (where shared notes are served)");
 

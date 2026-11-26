@@ -105,7 +105,9 @@ export async function runTargetList(): Promise<void> {
 
     for (const target of share.targets) {
         const marker = target.name === share.defaults.target ? "*" : " ";
-        out.println(`${marker} ${target.name}\t${target.driver}\t${await driverFor(target).pageUrl(target, "<slug>")}`);
+        out.println(
+            `${marker} ${target.name}\t${target.driver}\t${(await driverFor(target).pageUrl(target, "SLUG")).replace("SLUG", "<slug>")}`
+        );
     }
 
     await out.flush();
