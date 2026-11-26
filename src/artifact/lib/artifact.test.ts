@@ -1286,7 +1286,7 @@ test("publishes the built artifact to a paired server and reuses its id on repub
     });
     try {
         const input = { target: entry, targetNames: [], title: "Weekly report" };
-        await expect(publishArtifact(input)).rejects.toThrow("share-server setup --mode client");
+        await expect(publishArtifact(input)).rejects.toThrow("share-server setup --role client");
         const { code } = server.context.devices.createPairingCode();
         const device = await server.context.devices.pair(code, "desk");
         if (!device) {

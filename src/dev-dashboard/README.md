@@ -106,10 +106,10 @@ computer once. The client saves a vault reference to its token and uses the targ
 
 ```bash
 # On the server
-tools dev-dashboard share-server setup --mode server --public-base https://share.example.com
+tools dev-dashboard share-server setup
 
 # On the computer that publishes, replace ABCD-EFGH with the code from the server
-tools dev-dashboard share-server setup --mode client --target relay --url https://share.example.com --code ABCD-EFGH
+tools dev-dashboard share-server setup --role client --target relay --url https://share.example.com --code ABCD-EFGH
 tools dev-dashboard share "Notes/Weekly.md" --target relay
 tools dev-dashboard share sync "Notes/Weekly.md" --target relay
 tools dev-dashboard share unshare "Notes/Weekly.md" --target relay
@@ -119,10 +119,12 @@ tools dev-dashboard share unshare "Notes/Weekly.md" --target relay
 paired server for commands without `--target`. `share sync --all` sends notes again to their previously used
 targets, and `share sync --prune` removes stale server copies. The Mac still serves live pages under `/share/<id>`.
 
-Use `share-server status --public-base https://share.example.com --json` to check the listener, available kinds,
-admin socket, snapshot counts, free disk, and targets. `share-server up` enables and restarts the installed
-systemd service, and `share-server down` stops and disables it. `share-server serve` runs in the foreground.
-Pass `--min-free-gb <n>` to set the upload disk reserve in GiB. The default is 2.
+Setup saves servers and publishing targets together in `~/.genesis-tools/share/config.json`. It can install a
+systemd service on Linux or a launchd agent on macOS. For a reverse proxy it prints the routing snippet and
+checks the origin. `share-server status --json` checks each configured listener, admin socket, snapshot count,
+free space, and target. `share-server up` enables and restarts the selected service, and `share-server down`
+stops it. `share-server serve` runs the default server in the foreground. Use `--server <name>` to select
+another. The serve flags override saved settings, including the 2 GiB default upload reserve.
 `share-server pair` prints a fresh code, and `share-server devices --revoke <id>` revokes an upload token.
 
 ### Remote access and the phone: `tunnel setup`, `pair`, `agent`

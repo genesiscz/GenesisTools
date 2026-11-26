@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { collectShareServerStatus, startShareServe } from "@app/dev-dashboard/commands/share-server";
+import { configureShareServer, parseLegacyShareUnit } from "@app/dev-dashboard/commands/share-server-setup";
 import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
 import { mdKind } from "@app/dev-dashboard/lib/share/kind";
 import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
@@ -24,6 +26,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { HealthSchema, PUBLISH_API } from "@genesiscz/utils/publish/api";
 import { startPublishServer } from "@genesiscz/utils/publish/server";
+import { createSystemdInstaller } from "@genesiscz/utils/publish/service/systemd";
 import { installSnapshot } from "@genesiscz/utils/publish/snapshot-store";
 import { transportFor } from "@genesiscz/utils/publish/transports";
 import {
@@ -322,6 +325,104 @@ describe("published note snapshots", () => {
         } finally {
             await legacy.server.stop();
         }
+    });
+
+    function scratchSystemd() {
+        const unitDir = join(dir, "units");
+        const calls: string[][] = [];
+        const installer = createSystemdInstaller({
+            unitDir,
+            root: true,
+            run: async (argv) => {
+                calls.push(argv);
+                const [from, to] = argv.slice(-2);
+                if (argv[0] === "install") {
+                    await mkdir(dirname(to), { recursive: true });
+                    await copyFile(from, to);
+                }
+            },
+        });
+        const deps = {
+            interactive: false,
+            platform: "linux" as const,
+            account: { name: "desk", uid: 1000, gid: 1000, home: dir },
+            installer: () => installer,
+        };
+        return { unitDir, calls, deps };
+    }
+
+    test("non-interactive setup saves named config and installs into a scratch unit directory", async () => {
+        const { unitDir, calls, deps } = scratchSystemd();
+        const dataDir = join(dir, "snapshots");
+        const stateDir = join(dir, "state");
+        const configured = await configureShareServer(
+            {
+                server: "desk",
+                yes: true,
+                publicOrigin: "https://share.example.com",
+                host: "127.0.0.1",
+                port: 3944,
+                dataDir,
+                stateDir,
+                exposure: "reverse-proxy",
+                proxy: "apache",
+                service: "systemd",
+                serviceUser: "desk",
+                root: join(dir, "project"),
+                bun: "/usr/bin/bun",
+            },
+            deps
+        );
+        expect(await loadShareConfig()).toEqual({
+            version: 2,
+            defaults: { server: "desk" },
+            servers: [configured.server],
+            targets: [],
+        });
+        expect(configured.server).toMatchObject({
+            dataDir,
+            stateDir,
+            listen: { host: "127.0.0.1", port: 3944 },
+            publicOrigin: "https://share.example.com",
+        });
+        const unit = readFileSync(join(unitDir, "genesis-share-desk.service"), "utf8");
+        expect(unit).toContain("share-server serve --server desk");
+        expect(unit).toContain("User=desk");
+        expect(calls.slice(-2)).toEqual([
+            ["systemctl", "enable", "genesis-share-desk.service"],
+            ["systemctl", "restart", "genesis-share-desk.service"],
+        ]);
+    });
+
+    test("adopts a flag-based unit and moves its snapshots and devices into the named share directories", async () => {
+        const { unitDir, calls, deps } = scratchSystemd();
+        const oldData = join(dir, "original data");
+        const oldState = join(dir, "original-state");
+        const original = join(dir, "genesis-share-server.service");
+        mkdirSync(oldData);
+        mkdirSync(oldState);
+        writeFileSync(join(oldData, "snapshot-marker"), "kept");
+        writeFileSync(join(oldState, "devices.json"), '{"version":1,"devices":[]}');
+        const text = `[Service]\nUser=desk\nExecStart=/usr/bin/bun /srv/project/src/dev-dashboard/index.ts share-server serve --data "${oldData}" --state ${oldState} --port 3944 --host 127.0.0.1 --public-base https://share.example.com/md\n`;
+        writeFileSync(original, text);
+        const parsed = parseLegacyShareUnit({ text, name: "desk", path: original });
+        expect(parsed).toMatchObject({
+            dataDir: oldData,
+            stateDir: oldState,
+            publicOrigin: "https://share.example.com",
+            listen: { host: "127.0.0.1", port: 3944 },
+        });
+        const { server } = await configureShareServer({ server: "desk", yes: true, adoptUnit: original }, deps);
+        expect(server.dataDir).toBe(shareServerDir("desk", "data"));
+        expect(server.stateDir).toBe(shareServerDir("desk", "state"));
+        expect(readFileSync(join(server.dataDir, "snapshot-marker"), "utf8")).toBe("kept");
+        expect(readFileSync(join(server.stateDir, "devices.json"), "utf8")).toBe('{"version":1,"devices":[]}');
+        expect(existsSync(oldData)).toBe(false);
+        expect(existsSync(oldState)).toBe(false);
+        expect(calls[0]).toEqual(["systemctl", "disable", "--now", "genesis-share-server.service"]);
+        expect(readFileSync(join(unitDir, "genesis-share-server.service"), "utf8")).toContain(
+            "share-server serve --server desk"
+        );
     });
 
     test("status probes the listener, kinds, admin socket and disk without writing client config", async () => {
