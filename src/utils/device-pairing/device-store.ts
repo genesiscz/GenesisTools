@@ -1,14 +1,14 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { type ShareDevice, ShareDeviceSchema } from "@app/dev-dashboard/lib/share/server/api";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import { type PairedDevice, PairedDeviceSchema } from "./types";
 
-const { log } = logger.scoped("share-devices");
+const { log } = logger.scoped("device-pairing");
 
-const DevicesFileSchema = z.object({ version: z.literal(1), devices: z.array(ShareDeviceSchema) });
+const DevicesFileSchema = z.object({ version: z.literal(1), devices: z.array(PairedDeviceSchema) });
 
 /** No 0/O, 1/I/L: a code is read off one screen and typed on another. */
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -31,18 +31,29 @@ function makeCode(): string {
     return Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join("");
 }
 
+export interface DeviceStoreOptions {
+    file: string;
+    tokenPrefix: string;
+    now?: () => number;
+}
+
 /**
- * The devices that may upload to this share server. Each holds a token the server stores only as a hash; a device
+ * The devices that may access this service. Each holds a token the server stores only as a hash; a device
  * gets its token by trading a one-time pairing code (`createPairingCode`), which lives in this process's memory only.
  */
-export class ShareDeviceStore {
+export class DeviceStore {
     private pending: Array<{ codeHash: string; expiresAt: number }> = [];
     private failures = 0;
 
-    constructor(
-        private readonly file: string,
-        private readonly now: () => number = Date.now
-    ) {}
+    private readonly file: string;
+    private readonly tokenPrefix: string;
+    private readonly now: () => number;
+
+    constructor(options: DeviceStoreOptions) {
+        this.file = options.file;
+        this.tokenPrefix = options.tokenPrefix;
+        this.now = options.now ?? Date.now;
+    }
 
     createPairingCode(ttlMs = PAIR_CODE_TTL_MS): { code: string; expiresAt: string } {
         const code = makeCode();
@@ -73,8 +84,8 @@ export class ShareDeviceStore {
         }
 
         this.pending = this.pending.filter((entry) => entry !== match);
-        const token = `gtshare_${randomBytes(32).toString("base64url")}`;
-        const device: ShareDevice = {
+        const token = `${this.tokenPrefix}${randomBytes(32).toString("base64url")}`;
+        const device: PairedDevice = {
             id: randomBytes(6).toString("hex"),
             name: deviceName,
             tokenHash: hashToken(token),
@@ -88,7 +99,7 @@ export class ShareDeviceStore {
     }
 
     /** The device a bearer token belongs to, or null. */
-    async authenticate(token: string): Promise<ShareDevice | null> {
+    async authenticate(token: string): Promise<PairedDevice | null> {
         const tokenHash = hashToken(token);
         const devices = await this.read();
         const device = devices.find((entry) => safeEqual(entry.tokenHash, tokenHash)) ?? null;
@@ -107,7 +118,7 @@ export class ShareDeviceStore {
         return device;
     }
 
-    async list(): Promise<ShareDevice[]> {
+    async list(): Promise<PairedDevice[]> {
         return this.read();
     }
 
@@ -125,7 +136,7 @@ export class ShareDeviceStore {
         return true;
     }
 
-    private async read(): Promise<ShareDevice[]> {
+    private async read(): Promise<PairedDevice[]> {
         const raw = await readFile(this.file, "utf8").catch((err: unknown) => {
             log.debug({ err, file: this.file }, "no share devices file yet");
             return null;
@@ -138,7 +149,7 @@ export class ShareDeviceStore {
         return DevicesFileSchema.parse(SafeJSON.parse(raw, { strict: true })).devices;
     }
 
-    private async write(devices: ShareDevice[]): Promise<void> {
+    private async write(devices: PairedDevice[]): Promise<void> {
         await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
         const temp = `${this.file}.${randomBytes(4).toString("hex")}.tmp`;
         await writeFile(temp, SafeJSON.stringify({ version: 1, devices }, null, 2), { mode: 0o600 });

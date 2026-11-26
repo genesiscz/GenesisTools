@@ -1,5 +1,14 @@
 import { SHARE_SLUG_RE } from "@app/dev-dashboard/lib/share/source";
+import { PairedDeviceSchema } from "@genesiscz/utils/device-pairing/types";
 import { z } from "zod";
+
+export {
+    PairCodeResponseSchema,
+    type PairedDevice as ShareDevice,
+    PairedDeviceSchema as ShareDeviceSchema,
+    PairRequestSchema,
+    PairResponseSchema,
+} from "@genesiscz/utils/device-pairing/types";
 
 /** The share server's upload API, below its share base (`https://host/share` + these paths). */
 export const SHARE_API = {
@@ -7,13 +16,6 @@ export const SHARE_API = {
     snapshots: "/_api/snapshots",
     snapshot: (slug: string) => `/_api/snapshots/${encodeURIComponent(slug)}`,
 } as const;
-
-export const PairRequestSchema = z.object({
-    code: z.string().min(4).max(32),
-    deviceName: z.string().trim().min(1).max(80),
-});
-
-export const PairResponseSchema = z.object({ deviceId: z.string().min(1), token: z.string().min(32) });
 
 export const SnapshotListSchema = z.object({ slugs: z.array(z.string().regex(SHARE_SLUG_RE)) });
 
@@ -24,16 +26,4 @@ export const ADMIN_API = {
     device: (id: string) => `/admin/devices/${encodeURIComponent(id)}`,
 } as const;
 
-export const PairCodeResponseSchema = z.object({ code: z.string(), expiresAt: z.string() });
-
-export const ShareDeviceSchema = z.object({
-    id: z.string(),
-    name: z.string(),
-    tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
-    createdAt: z.string(),
-    lastUsedAt: z.string().optional(),
-});
-
-export type ShareDevice = z.infer<typeof ShareDeviceSchema>;
-
-export const DeviceListSchema = z.object({ devices: z.array(ShareDeviceSchema.omit({ tokenHash: true })) });
+export const DeviceListSchema = z.object({ devices: z.array(PairedDeviceSchema.omit({ tokenHash: true })) });
