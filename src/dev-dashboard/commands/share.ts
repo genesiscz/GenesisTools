@@ -74,6 +74,11 @@ export async function runShareSync(
         if (opts.all || slugs.length > 0) {
             for (const { note, outcomes } of await syncShares({ slugs, all: opts.all, targetNames: opts.targets })) {
                 out.printlnErr(`${note.vaultPath} (${note.slug})`);
+
+                if (outcomes.length === 0) {
+                    out.printlnErr("  sent to no target before; name one with --target <name>");
+                }
+
                 ok = printOutcomes(outcomes) && ok;
             }
         }
