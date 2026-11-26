@@ -87,7 +87,6 @@
         "esbuild": "^0.28.2",
         "fb-watchman": "^2.0.2",
         "filesize": "^11.0.22",
-        "fsevents": "^2.3.3",
         "glob": "^13.0.6",
         "gpt-3-encoder": "^1.1.4",
         "grammy": "^1.46.0",
@@ -181,6 +180,9 @@
         "typescript": "npm:@typescript/typescript6@^6.0.2",
         "vite-tsconfig-paths": "^6.1.1",
         "web-vitals": "^6.2.1",
+      },
+      "optionalDependencies": {
+        "fsevents": "^2.3.3",
       },
       "peerDependencies": {
         "typescript": "npm:@typescript/typescript6@^6.0.2",

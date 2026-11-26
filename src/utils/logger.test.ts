@@ -184,6 +184,31 @@ describe("daily file sink", () => {
         expect(smallLine).toContain('"message":"small failure"');
         expect(smallLine).not.toContain("messageChars");
     });
+
+    it("writes the message of a Bun ResolveMessage instead of an unserializable placeholder", async () => {
+        const mod = await import("./logger");
+        const home = mkdtempSync(join(tmpdir(), "logger-resolve-error-"));
+        const missing = `./no-such-module-${process.pid}.ts`;
+        const resolveError: unknown = await import(missing).then(
+            () => null,
+            (error: unknown) => error
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const log = mod.createLogger({ logToFile: true, minimalLevels: true });
+            log.warn({ error: resolveError }, "RESOLVE_ERROR_RECORD");
+            log.warn({ err: resolveError }, "RESOLVE_ERR_RECORD");
+        });
+
+        const dir = join(home, ".genesis-tools", "logs");
+        const lines = readdirSync(dir).flatMap((file) => readFileSync(join(dir, file), "utf8").split("\n"));
+
+        for (const marker of ["RESOLVE_ERROR_RECORD", "RESOLVE_ERR_RECORD"]) {
+            const line = lines.find((candidate) => candidate.includes(marker)) ?? "";
+            expect(line).toContain(missing);
+            expect(line).not.toContain("unable to serialize");
+        }
+    });
 });
 
 describe("scoped out + log.out/log.tee double-mirror rule", () => {

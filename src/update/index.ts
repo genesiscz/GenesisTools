@@ -26,12 +26,16 @@ import { createUpdateProgram, postPullInvocation, switchChannel } from "./channe
 import { printUpdateCatalogue } from "./diff";
 import { genesisAppRefreshAction } from "./genesis-app-refresh";
 import {
+    blockingMarketplaceAliases,
+    type InstalledPlugin,
     MARKETPLACE_FALLBACK_SOURCE,
     MARKETPLACE_NAME,
     type MarketplaceEntry,
     type MarketplaceLookup,
+    marketplacePointsAtCheckout,
     PLUGIN_REF,
     planMarketplaceAction,
+    planPluginAction,
     pluginStepDecision,
 } from "./marketplace";
 import { offerMcpRegistration } from "./mcp-registration-offer";
@@ -42,18 +46,30 @@ let claudeBin = "claude";
 
 /** Bun.spawn throws SYNCHRONOUSLY when the executable is missing, so a bare await never sees it. */
 async function runClaude(args: string[]): Promise<number> {
+    const started = performance.now();
+    let exitCode = 127;
+
     try {
-        return await Bun.spawn([claudeBin, ...args], { stdio: ["inherit", "inherit", "inherit"] }).exited;
+        exitCode = await Bun.spawn([claudeBin, ...args], { stdio: ["inherit", "inherit", "inherit"] }).exited;
+        return exitCode;
     } catch (err) {
         logger.warn({ err, args }, "update: could not run the claude CLI");
-        return 127;
+        return exitCode;
+    } finally {
+        logClaudeStep(args, exitCode, started);
     }
+}
+
+/** Every claude step's wall time goes to the day log, so a slow update names the step that held it. */
+function logClaudeStep(args: string[], exitCode: number, started: number): void {
+    logger.info({ args, exitCode, ms: Math.round(performance.now() - started) }, "update: claude step finished");
 }
 
 /** Run a `claude … --json` query and parse it; null on spawn failure, non-zero exit or bad output. */
 async function claudeJson<T>(args: string[]): Promise<T | null> {
     let stdout: string;
-    let exitCode: number;
+    let exitCode = 127;
+    const started = performance.now();
 
     try {
         const proc = Bun.spawn([claudeBin, ...args], { stdio: ["ignore", "pipe", "ignore"] });
@@ -62,6 +78,8 @@ async function claudeJson<T>(args: string[]): Promise<T | null> {
     } catch (err) {
         logger.warn({ err, args }, "update: could not run the claude CLI");
         return null;
+    } finally {
+        logClaudeStep(args, exitCode, started);
     }
 
     if (exitCode !== 0) {
@@ -88,14 +106,79 @@ async function lookupMarketplace(name: string): Promise<MarketplaceLookup> {
 
     const entry = entries.find((candidate) => candidate.name === name);
 
-    return entry ? { status: "found", entry } : { status: "absent" };
+    return entry ? { status: "found", entry, entries } : { status: "absent", entries };
 }
 
 /** Requires an exact plugin id; other marketplaces' copies do not satisfy this installation. */
-async function pluginIsInstalled(id: string): Promise<boolean> {
-    const entries = await claudeJson<Array<{ id?: string }>>(["plugin", "list", "--json"]);
+async function installedPlugin(id: string): Promise<InstalledPlugin> {
+    const entries = await claudeJson<Array<{ id?: string; version?: string }>>(["plugin", "list", "--json"]);
 
-    return Array.isArray(entries) && entries.some((entry) => entry.id === id);
+    if (!Array.isArray(entries)) {
+        return { status: "unknown" };
+    }
+
+    const entry = entries.find((candidate) => candidate.id === id);
+    return entry ? { status: "installed", version: entry.version } : { status: "absent" };
+}
+
+/** The version this checkout's plugin manifest declares; undefined when it cannot be read. */
+function checkoutPluginVersion(checkout: string): string | undefined {
+    const manifest = join(checkout, "plugins", "genesis-tools", ".claude-plugin", "plugin.json");
+
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(manifest, "utf-8"), { strict: true });
+
+        if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "version" in parsed &&
+            typeof parsed.version === "string"
+        ) {
+            return parsed.version;
+        }
+    } catch (err) {
+        logger.debug({ err, manifest }, "update: could not read the checkout's plugin version");
+    }
+
+    return undefined;
+}
+
+/**
+ * Removes the other marketplaces registered for this checkout (see blockingMarketplaceAliases). It uninstalls
+ * their plugins, so a terminal is asked first; without one the commands are printed and the step stops.
+ */
+async function removeMarketplaceAliases(aliases: string[]): Promise<boolean> {
+    out.println(
+        pc.yellow(
+            `\n  Marketplace ${aliases.join(", ")} also points at this checkout, so Claude Code ignores \`marketplace add\` and ${MARKETPLACE_NAME} stays on its old source.`
+        )
+    );
+    const commands = aliases.map((alias) => `claude plugin marketplace remove ${alias}`);
+
+    if (!isInteractive()) {
+        out.println(pc.dim(`  Remove it, then run ${toolCommand("update")} again:\n    ${commands.join("\n    ")}`));
+        return false;
+    }
+
+    const remove = await p.confirm({
+        message: `Remove ${aliases.join(", ")} (its plugins are uninstalled; ${PLUGIN_REF} from this checkout replaces them)?`,
+        initialValue: true,
+        cancel: "back",
+    });
+
+    if (p.isCancel(remove) || !remove) {
+        out.println(pc.dim(`  Leaving the plugin untouched. Later:\n    ${commands.join("\n    ")}`));
+        return false;
+    }
+
+    for (const alias of aliases) {
+        if ((await runClaude(["plugin", "marketplace", "remove", alias])) !== 0) {
+            out.error(pc.red(`  Could not remove marketplace ${alias}; leaving the plugin untouched.`));
+            return false;
+        }
+    }
+
+    return true;
 }
 
 const program = createUpdateProgram(runUpdate);
@@ -257,56 +340,112 @@ async function updateAfterPull(genesisPath: string, opts: UpdateOptions): Promis
         // and then stepped over is how `tools update` used to uninstall a working plugin and
         // then fail to reinstall it, leaving the user with nothing.
         let marketplaceReady = true;
+        let repointed = plan.repointed;
 
         if (plan.action === "add-checkout") {
-            // `marketplace add` OVERWRITES an existing registration's source rather than
-            // refusing, so this one command covers both first registration and the flip.
-            out.println(
-                pc.dim(plan.repointed ? `\n  Re-pointing marketplace at ${checkout}...` : "\n  Adding marketplace...")
-            );
-            marketplaceReady = (await runClaude(["plugin", "marketplace", "add", checkout])) === 0;
+            const aliases =
+                lookup.status === "unknown"
+                    ? []
+                    : blockingMarketplaceAliases({
+                          entries: lookup.entries ?? [],
+                          name: MARKETPLACE_NAME,
+                          checkout,
+                          resolvePath: resolve,
+                      });
+
+            if (aliases.length > 0) {
+                marketplaceReady = await removeMarketplaceAliases(aliases);
+            }
+
+            if (marketplaceReady) {
+                // `marketplace add` OVERWRITES an existing registration's source rather than
+                // refusing, so this one command covers both first registration and the flip.
+                out.println(
+                    pc.dim(
+                        plan.repointed ? `\n  Re-pointing marketplace at ${checkout}...` : "\n  Adding marketplace..."
+                    )
+                );
+                marketplaceReady = (await runClaude(["plugin", "marketplace", "add", checkout])) === 0;
+            }
+
+            if (marketplaceReady) {
+                // An exit 0 is not proof: Claude Code 2.1.305 exits 0 and keeps the old source when another
+                // marketplace already holds this folder. Reinstalling then repeated on every update.
+                const after = await lookupMarketplace(MARKETPLACE_NAME);
+                marketplaceReady =
+                    after.status === "found" &&
+                    marketplacePointsAtCheckout({ entry: after.entry, checkout, resolvePath: resolve });
+                logger.info({ after }, "update: marketplace registration after add");
+
+                if (!marketplaceReady) {
+                    out.error(
+                        pc.red(
+                            `  ${MARKETPLACE_NAME} still does not point at ${checkout}; leaving the installed plugin untouched.`
+                        )
+                    );
+                }
+            }
         } else if (plan.action === "add-fallback") {
             out.println(pc.yellow(`\n  ${checkout} is not a GenesisTools checkout; using the GitHub marketplace.`));
             marketplaceReady = (await runClaude(["plugin", "marketplace", "add", MARKETPLACE_FALLBACK_SOURCE])) === 0;
-        } else {
-            out.println(pc.dim("\n  Refreshing marketplace..."));
+            repointed = false;
         }
 
         if (!marketplaceReady) {
             out.error(pc.red("  Marketplace registration failed — leaving the installed plugin untouched."));
         } else {
-            // Claude Code caches each marketplace's PARSED plugin catalog; even a directory
-            // source is not re-read on its own. Skipping this is what makes the next step fail
-            // with `Plugin "genesis-tools" not found in marketplace "genesis-tools"`.
-            if ((await runClaude(["plugin", "marketplace", "update", MARKETPLACE_NAME])) !== 0) {
-                out.error(pc.red("  Marketplace refresh failed — leaving the installed plugin untouched."));
-            } else if (!(await pluginIsInstalled(PLUGIN_REF))) {
-                out.println(pc.dim("\n  Installing plugin..."));
+            const checkoutVersion = isCheckout ? checkoutPluginVersion(checkout) : undefined;
+            const installed = await installedPlugin(PLUGIN_REF);
+            const action = planPluginAction({
+                installed,
+                checkoutVersion,
+                repointed,
+                force: opts.forcePlugins === true,
+            });
+            logger.info({ installed, checkoutVersion, repointed, action }, "update: Claude plugin action");
 
-                if ((await runClaude(["plugin", "install", PLUGIN_REF])) !== 0) {
-                    out.println(pc.yellow("  Plugin install had issues"));
-                }
-            } else if (plan.repointed) {
-                // The installed copy was taken from the OLD source, and the plugin cache is keyed
-                // by version — so `plugin update` is a no-op whenever the version is unchanged and
-                // the stale copy would survive the flip. Reinstall to re-copy from this checkout.
-                out.println(pc.dim("\n  Reinstalling plugin from this checkout..."));
-
-                if ((await runClaude(["plugin", "uninstall", PLUGIN_REF, "--keep-data", "-y"])) !== 0) {
-                    out.println(pc.yellow("  Plugin uninstall failed — keeping the currently installed copy."));
-                } else if ((await runClaude(["plugin", "install", PLUGIN_REF])) !== 0) {
-                    out.error(
-                        pc.red(
-                            `  Plugin reinstall failed after uninstall. Restore it with: ` +
-                                `claude plugin install ${PLUGIN_REF}`
-                        )
-                    );
-                }
+            if (action === "skip") {
+                out.println(
+                    pc.dim(
+                        `\n  Claude Code plugin is at ${checkoutVersion} from this checkout; nothing to refresh (force with --force-plugins).`
+                    )
+                );
             } else {
-                out.println(pc.dim("\n  Updating Claude Code plugin..."));
+                // Claude Code caches each marketplace's PARSED plugin catalog; even a directory
+                // source is not re-read on its own. Skipping this is what makes the next step fail
+                // with `Plugin "genesis-tools" not found in marketplace "genesis-tools"`.
+                out.println(pc.dim("\n  Refreshing marketplace..."));
 
-                if ((await runClaude(["plugin", "update", PLUGIN_REF])) !== 0) {
-                    out.println(pc.yellow("  Plugin update had issues"));
+                if ((await runClaude(["plugin", "marketplace", "update", MARKETPLACE_NAME])) !== 0) {
+                    out.error(pc.red("  Marketplace refresh failed — leaving the installed plugin untouched."));
+                } else if (action === "install") {
+                    out.println(pc.dim("\n  Installing plugin..."));
+
+                    if ((await runClaude(["plugin", "install", PLUGIN_REF])) !== 0) {
+                        out.println(pc.yellow("  Plugin install had issues"));
+                    }
+                } else if (action === "reinstall") {
+                    // The installed copy was taken from the OLD source, and the plugin cache is keyed
+                    // by version — so `plugin update` is a no-op whenever the version is unchanged and
+                    // the stale copy would survive the flip. Reinstall to re-copy from this checkout.
+                    out.println(pc.dim("\n  Reinstalling plugin from this checkout..."));
+
+                    if ((await runClaude(["plugin", "uninstall", PLUGIN_REF, "--keep-data", "-y"])) !== 0) {
+                        out.println(pc.yellow("  Plugin uninstall failed — keeping the currently installed copy."));
+                    } else if ((await runClaude(["plugin", "install", PLUGIN_REF])) !== 0) {
+                        out.error(
+                            pc.red(
+                                `  Plugin reinstall failed after uninstall. Restore it with: ` +
+                                    `claude plugin install ${PLUGIN_REF}`
+                            )
+                        );
+                    }
+                } else {
+                    out.println(pc.dim("\n  Updating Claude Code plugin..."));
+
+                    if ((await runClaude(["plugin", "update", PLUGIN_REF])) !== 0) {
+                        out.println(pc.yellow("  Plugin update had issues"));
+                    }
                 }
             }
         }

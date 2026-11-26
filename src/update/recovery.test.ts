@@ -224,6 +224,14 @@ describe("the steps after the pull run the pulled code", () => {
         expect(postPullInvocation({ plugins: false, source: "await runFullUpdate();" })).toBeNull();
         expect(postPullInvocation({ plugins: true, source: "await runFullUpdate();" })).toBeNull();
     });
+
+    it("passes --force-plugins only to pulled code that knows the flag", () => {
+        const source = "if (env.tools.isUpdatePostPull()) { await updateAfterPull(); }";
+        expect(postPullInvocation({ plugins: true, forcePlugins: true, source })?.args).toEqual(["update"]);
+        expect(
+            postPullInvocation({ plugins: true, forcePlugins: true, source: `${source} opts.forcePlugins` })?.args
+        ).toEqual(["update", "--force-plugins"]);
+    });
 });
 
 describe("update option routing", () => {
