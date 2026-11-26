@@ -217,11 +217,10 @@ function idList(ids: readonly string[]): string {
 
 /** One pass of the sync, or its preview: the counts, then each held or failed item with its reason, then the notes. */
 function syncLines(d: SyncReport): string[] {
-    if (d.skipped !== undefined) {
-        return [`skipped: ${d.skipped} (another runner holds the lease)`];
-    }
-
     const lines: string[] = [];
+    if (d.skipped !== undefined) {
+        lines.push(`lease lost or held by another runner: ${d.skipped}`);
+    }
 
     if (d.preview !== undefined) {
         const { create, update, hold } = d.preview;

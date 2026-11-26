@@ -1242,11 +1242,13 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
         case "delivered":
             return null;
         case "edit": {
+            const stored = view.resolve(command.ref)?.item;
+            const titleChanges = command.title !== undefined && command.title.trim() !== stored?.title;
             const onlyParent =
                 command.parent !== undefined &&
                 command.type === undefined &&
                 command.for === undefined &&
-                command.title === undefined &&
+                !titleChanges &&
                 command.severity === undefined &&
                 command.during === undefined &&
                 Object.keys(command.fields ?? {}).length === 0;

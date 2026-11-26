@@ -735,7 +735,9 @@ export const workHandlers: WorkHandlers = {
             }
 
             if (p.resolve === "all") {
-                const drifted = selectPairings(sync.deps.db, { state: "drift" }).map((pairing) => pairing.item);
+                const drifted = selectPairings(sync.deps.db).filter(
+                    (pairing) => pairing.state === "drift" || pairing.note?.includes("changed outside, owned here:")
+                );
 
                 if (session.call.dryRun === true) {
                     return preview(
@@ -745,20 +747,33 @@ export const workHandlers: WorkHandlers = {
 
                 const total: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
 
-                for (const item of [...new Set(drifted)]) {
+                for (const pairing of drifted) {
+                    const item = pairing.item;
                     try {
                         const one = await resolveDrift(sync.deps, {
                             item,
+                            connector: pairing.connector,
                             take: p.take,
                             ...(p.facts !== undefined ? { facts: p.facts } : {}),
                         });
                         total.pushed += one.pushed;
                         total.failed += one.failed;
                         total.drift += one.drift;
-                        total.problems = [...(total.problems ?? []), ...(one.problems ?? [])];
-                        total.notes = [...(total.notes ?? []), ...(one.notes ?? [])];
+                        total.problems ??= [];
+                        total.notes ??= [];
+                        total.problems.push(...(one.problems ?? []));
+                        total.notes.push(...(one.notes ?? []));
                     } catch (error) {
-                        total.notes = [...(total.notes ?? []), `${item}: ${String(error)}`];
+                        total.failed++;
+                        total.problems ??= [];
+                        total.notes ??= [];
+                        total.problems.push({
+                            item,
+                            connector: pairing.connector,
+                            state: "failed",
+                            note: String(error),
+                        });
+                        total.notes.push(`${item}: ${String(error)}`);
                     }
                 }
 

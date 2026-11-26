@@ -258,6 +258,30 @@ describe("the write rules", () => {
         expect((await write(ctx("finder"), { verb: "edit", ref: riskId, title: "renamed" })).ok).toBe(true);
     });
 
+    test("an unchanged title does not bypass a parent reference rule", async () => {
+        const first = await write(ctx("maker"), { verb: "spot", type: "bug", title: "unchanged", fields: {} });
+        const second = await write(ctx("maker"), { verb: "spot", type: "bug", title: "parent", fields: {} });
+        if (!first.ok || !second.ok) {
+            throw new Error("fixture items missing");
+        }
+        const rules = resolveWorkRules([
+            {
+                layer: "config.project",
+                rules: {
+                    types: { bug: { writes: { edit: "anyone", reference: ["owner"] } } },
+                },
+            },
+        ]);
+        const reply = await write(ctx("maker", { rules }), {
+            verb: "edit",
+            ref: first.data.items[0].id,
+            title: "unchanged",
+            parent: second.data.items[0].id,
+        });
+        expect(reply.ok).toBe(false);
+        expect(reply.diagnostics[0].code).toBe("ROLE_REFUSED");
+    });
+
     test("a released worker and a child with only its lead's session cannot edit", async () => {
         const made = await write(ctx("worker"), { verb: "add", type: "task", title: "work" });
         const id = made.ok ? made.data.items[0].id : "";

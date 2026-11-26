@@ -31,7 +31,7 @@ const LEAD_OWNER: RoleRule = ["lead", "owner"];
 const POSTER_LEAD_OWNER: RoleRule = ["poster", "lead", "owner"];
 
 /** The write rules per level (design C, P3): the built-in defaults. */
-function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
+export function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
     const level = levelOf(type);
 
     switch (verb) {

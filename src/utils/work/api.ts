@@ -325,7 +325,9 @@ export const workMethods = {
             facts: z
                 .array(z.enum(SYNCED_FACTS))
                 .optional()
-                .describe("the facts --resolve settles; default: the ones its drift note names"),
+                .describe(
+                    "the facts --resolve settles when supported by the connector; unsupported outside facts fail explicitly; default: the ones its drift note names"
+                ),
         }),
         result: z.unknown(),
         resultName: `${reply}, data: { pushed, held, failed, drift, skipped?, cursor, problems?, notes?, preview? }`,

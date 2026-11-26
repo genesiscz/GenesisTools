@@ -12,7 +12,9 @@ import { type WorkContext, write } from "../service";
 import { applyChange } from "../store/apply";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
+import { sqlView } from "../store/view";
 import { connectorConfigOf } from "./config";
+import { outOfScope } from "./scope";
 import {
     noteStandingDrift,
     previewSync,
@@ -150,6 +152,146 @@ async function spot(sessionId: string, type: "bug" | "epic" | "task", title = "x
     const reply = await write(ctx(sessionId), { verb: "spot", title, type, fields: {} });
     return reply.ok ? reply.data.items[0].id : asItemId("none");
 }
+
+describe("review regressions", () => {
+    test("a scope includes a root more than 64 ancestors away", async () => {
+        const root = await spot("s1", "bug", "root");
+        let parent = root;
+        for (let depth = 0; depth < 66; depth++) {
+            const child = await spot("s1", "bug", `child ${depth}`);
+            expect((await write(ctx("s1"), { verb: "edit", ref: child, parent })).ok).toBe(true);
+            parent = child;
+        }
+        expect(
+            outOfScope(sqlView(db), selectItem(db, parent)!, { handoffTasks: true, under: [root], tags: [] })
+        ).toBeNull();
+    });
+
+    test("quiet --all updates existing pairings only on their own connector", async () => {
+        const id = await spot("s1", "bug", "one connector");
+        await runSyncOnce(deps());
+        const other = new FakeConnector();
+        await setWorkConfigValue({
+            configPath,
+            path: "global.rules.connectors.other",
+            value: { enabled: true, createTypes: ["bug"] },
+        });
+        const both = { ...deps(), connectors: { fake, other } };
+        const preview = await previewSync(both, { all: true });
+        expect(preview.preview?.create).toEqual([]);
+        expect(preview.preview?.update).toEqual([id]);
+        await runSyncOnce(both, { all: true });
+        expect(other.pushed).toEqual([]);
+        expect(selectPairings(db, { item: id }).map((pairing) => pairing.connector)).toEqual(["fake"]);
+    });
+
+    test("a failed parent holds its child for retry", async () => {
+        fake.can.parents = true;
+        const parent = await spot("s1", "bug", "parent");
+        const child = await spot("s1", "bug", "child");
+        await write(ctx("s1"), { verb: "edit", ref: child, parent });
+        const original = fake.push.bind(fake);
+        fake.push = async (intents, context) =>
+            intents.some((intent) => intent.item.id === parent)
+                ? intents.map(() => ({ ok: false as const, error: "parent unavailable" }))
+                : original(intents, context);
+        await runSyncOnce(deps());
+        expect(fake.pushed).toEqual([]);
+        expect(selectPairings(db, { item: child })[0]).toMatchObject({ state: "failed", remoteKey: "" });
+        fake.push = original;
+        const future = { ...deps(), now: () => new Date(Date.now() + 31_000).toISOString() };
+        await runSyncOnce(future);
+        expect(fake.pushed.find((intent) => intent.item.id === child)?.parentKey).toBe(`R-${parent}`);
+    });
+
+    test("a parent and related-link cycle keeps parent creation before child creation", async () => {
+        Object.assign(fake.can, { parents: true, links: true });
+        const parent = await spot("s1", "bug", "parent");
+        const child = await spot("s1", "bug", "child");
+        await write(ctx("s1"), { verb: "edit", ref: child, parent });
+        await write(ctx("s1"), { verb: "link", ref: parent, kind: "related", to: child });
+        await runSyncOnce(deps());
+        expect(fake.pushed.map((intent) => intent.item.id)).toEqual([parent, child]);
+        expect(fake.pushed[1].parentKey).toBe(`R-${parent}`);
+        expect(selectPairings(db, { item: parent })[0].state).toBe("failed");
+        await runSyncOnce({ ...deps(), now: () => new Date(Date.now() + 31_000).toISOString() });
+        expect(fake.pushed.at(-1)?.links).toEqual([{ kind: "related", remoteKey: `R-${child}` }]);
+    });
+
+    test("outside drift survives a failed push and taking theirs clears local drift", async () => {
+        const id = await spot("s1", "bug", "ours");
+        await runSyncOnce(deps());
+        const key = selectPairings(db, { item: id })[0].remoteKey;
+        fake.editedOutside.set(key, "theirs");
+        fake.remote.set(key, { remoteKey: key, title: "theirs" });
+        await runSyncOnce(deps(), { all: true });
+        fake.unavailable = true;
+        await runSyncOnce(deps(), { all: true });
+        expect(noteStandingDrift(db, { pushed: 0, failed: 0, held: 0, drift: 0, cursor: 0 }).notes?.join()).toContain(
+            id
+        );
+        fake.unavailable = false;
+        await resolveDrift(deps(), { item: id, take: "theirs" });
+        expect(selectItem(db, id)?.title).toBe("theirs");
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
+
+        fake.remote.set("R-remote", { remoteKey: "R-remote", title: "outside" });
+        const made = await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-remote"] });
+        const remoteId = made.made[0];
+        await write(ctx("s1"), { verb: "edit", ref: remoteId, title: "local edit" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: remoteId })[0].state).toBe("drift");
+        await resolveDrift(deps(), { item: remoteId, take: "theirs" });
+        expect(selectItem(db, remoteId)?.title).toBe("outside");
+        expect(selectPairings(db, { item: remoteId })[0].state).toBe("in-sync");
+    });
+
+    test("resolution refuses a newer local edit made while the pull is pending", async () => {
+        const id = await spot("s1", "bug", "ours");
+        await runSyncOnce(deps());
+        const original = fake.pull.bind(fake);
+        fake.pull = async (ask, context) => {
+            await write(ctx("s1"), { verb: "edit", ref: id, title: "newer local edit" });
+            return original(ask, context);
+        };
+        await expect(resolveDrift(deps(), { item: id, take: "theirs", facts: ["title"] })).rejects.toThrow(
+            "changed during"
+        );
+        expect(selectItem(db, id)?.title).toBe("newer local edit");
+    });
+
+    test("a re-pair while pulling refuses facts from the earlier task", async () => {
+        const id = await spot("s1", "bug", "ours");
+        await runSyncOnce(deps());
+        const pairing = selectPairings(db, { item: id })[0];
+        const original = fake.pull.bind(fake);
+        fake.pull = async (ask, context) => {
+            applyChange(db, {
+                v: 1,
+                ts: new Date().toISOString(),
+                item: id,
+                actor: actor("s1"),
+                kind: "paired",
+                payload: { pairing: { ...pairing, remoteKey: "replacement" } },
+                origin: { via: "connector", id: "fake" },
+            });
+            return original(ask, context);
+        };
+        await expect(resolveDrift(deps(), { item: id, take: "theirs", facts: ["title"] })).rejects.toThrow(
+            "changed during"
+        );
+        expect(selectItem(db, id)?.title).toBe("ours");
+        expect(selectPairings(db, { item: id })[0].remoteKey).toBe("replacement");
+    });
+
+    test("unsupported outside parent resolution is an explicit failure", async () => {
+        const id = await spot("s1", "bug", "ours");
+        await runSyncOnce(deps());
+        const result = await resolveDrift(deps(), { item: id, take: "theirs", facts: ["parent"] });
+        expect(result.failed).toBe(1);
+        expect(result.problems?.[0].note).toContain("parent");
+    });
+});
 
 describe("the sync consumer", () => {
     test("a later pass retries only failed pairings after their cooldown", async () => {
@@ -504,6 +646,36 @@ describe("the connector methods", () => {
         };
     }
 
+    test("bulk resolution attempts every pairing and reports every thrown connector error", async () => {
+        const id = await spot("s1", "bug", "ours");
+        await runSyncOnce(deps());
+        const pairing = selectPairings(db, { item: id })[0];
+        for (const connector of ["fake", "missing"]) {
+            applyChange(db, {
+                v: 1,
+                ts: new Date().toISOString(),
+                item: id,
+                actor: actor("s1"),
+                kind: "paired",
+                payload: {
+                    pairing: { ...pairing, connector, state: "drift", note: "changed outside, owned here: title" },
+                },
+                origin: { via: "connector", id: connector },
+            });
+        }
+        fake.pull = async () => {
+            throw new Error("read failed");
+        };
+        const reply = await callWork("sync", { resolve: "all", take: "theirs" }, session(true));
+        expect(reply.ok && reply.data).toMatchObject({ failed: 2 });
+        expect(reply.ok && reply.data).toMatchObject({
+            problems: expect.arrayContaining([
+                expect.objectContaining({ connector: "fake", state: "failed" }),
+                expect.objectContaining({ connector: "missing", state: "failed" }),
+            ]),
+        });
+    });
+
     test("pair records the pairing and pushes the label at once; unpair removes it; sync runs one pass", async () => {
         const id = await spot("s1", "task");
         const paired = await callWork("pair", { ref: id, connector: "fake", key: "R-77" }, session(true));
@@ -576,7 +748,7 @@ describe("what a push makes outside", () => {
         const report = await runSyncOnce(deps());
         expect(report).toMatchObject({ pushed: 3, failed: 0 });
         const intents = new Map(fake.pushed.map((intent) => [intent.item.id, intent]));
-        expect(intents.get(epic)?.parentKey).toBeUndefined();
+        expect(intents.get(epic)?.parentKey).toBeNull();
         expect(intents.get(child)?.parentKey).toBe(`R-${epic}`);
         expect(intents.get(other)?.links).toEqual([{ kind: "related", remoteKey: `R-${epic}` }]);
         expect(fake.batches.map((batch) => batch.titles)).toEqual([["the epic"], ["a child", "a related bug"]]);

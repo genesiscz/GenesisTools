@@ -65,7 +65,7 @@ export interface PushIntent {
     /** The labels the outside item carries: the local id and each container that holds it. */
     labels: string[];
     /** The outside key of the item's parent on this connector; absent when it has none or the parent is not made yet. */
-    parentKey?: string;
+    parentKey?: string | null;
     /** The item's own links to items this connector already made outside. */
     links?: { kind: LinkKind; remoteKey: string }[];
     /** Facts to write even when they changed outside (`sync --resolve <id> --take ours`). */
@@ -81,7 +81,7 @@ export type PushResult =
           /** Facts left as they are because they changed outside since the last push. */
           changedOutside?: FactChangedOutside[];
       }
-    | { ok: false; error: string; remoteKey?: string };
+    | { ok: false; error: string; remoteKey?: string; sent?: SentFacts; changedOutside?: FactChangedOutside[] };
 
 /** One outside item as a connector reads it. */
 export interface RemoteItem {

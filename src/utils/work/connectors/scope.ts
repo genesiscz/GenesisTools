@@ -6,7 +6,7 @@
 import type { Database } from "bun:sqlite";
 import type { Item, ItemId } from "../model/item";
 import { LINK_KINDS, type LinkKind } from "../model/vocab";
-import { selectPairings, selectRefsFrom } from "../store/rows";
+import { selectRefsFrom } from "../store/rows";
 import type { StoreView } from "../store/view";
 import type { PushIntent } from "./types";
 
@@ -17,9 +17,6 @@ export interface ConnectorScope {
 }
 
 export type OutOfScope = "handoff-task" | "not-under";
-
-/** Parent chains are short; the bound only stops a cycle written by hand. */
-const MAX_DEPTH = 64;
 
 /** Null when the scope takes the item; else why it does not. */
 export function outOfScope(view: StoreView, item: Item, scope: ConnectorScope): OutOfScope | null {
@@ -37,7 +34,9 @@ export function outOfScope(view: StoreView, item: Item, scope: ConnectorScope): 
 
     let at: ItemId | null = item.id;
 
-    for (let depth = 0; at !== null && depth < MAX_DEPTH; depth++) {
+    const seen = new Set<ItemId>();
+    while (at !== null && !seen.has(at)) {
+        seen.add(at);
         if (scope.under.includes(at)) {
             return null;
         }
@@ -61,18 +60,29 @@ export function referencedItems(db: Database, item: ItemId): ItemId[] {
         .map((ref) => ref.to);
 }
 
-function keyOf(db: Database, item: ItemId, connector: string): string | undefined {
-    const key = selectPairings(db, { item, connector })[0]?.remoteKey;
-    return key !== undefined && key !== "" ? key : undefined;
-}
-
 /** The parent's and the link targets' outside keys on one connector, read when the push is about to run. */
-export function outsideRefs(db: Database, item: ItemId, connector: string): Pick<PushIntent, "parentKey" | "links"> {
+export function outsideRefs(
+    db: Database,
+    item: ItemId,
+    connector: string,
+    references = selectRefsFrom(db, item)
+): Pick<PushIntent, "parentKey" | "links"> {
+    const targets = references.filter((ref) => ref.kind === "parent" || isLinkKind(ref.kind)).map((ref) => ref.to);
+    const keys = new Map(
+        targets.length
+            ? db
+                  .query<{ item: ItemId; remote_key: string }, string[]>(
+                      `SELECT item, remote_key FROM pairings WHERE connector = ? AND item IN (${targets.map(() => "?").join(",")}) AND remote_key <> ''`
+                  )
+                  .all(connector, ...targets)
+                  .map((row) => [row.item, row.remote_key])
+            : []
+    );
     let parentKey: string | undefined;
     const links: { kind: LinkKind; remoteKey: string }[] = [];
 
-    for (const ref of selectRefsFrom(db, item)) {
-        const key = keyOf(db, ref.to, connector);
+    for (const ref of references) {
+        const key = keys.get(ref.to);
 
         if (key === undefined) {
             continue;

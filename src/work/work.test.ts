@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { executeHandoffActions, getHandoff, type HandoffDeps, postHandoff } from "@app/handoff/executor";
 import { byFor, freshEnv, type TestEnv } from "@app/handoff/test-utils";
 import { makeTempDir } from "@genesiscz/utils/paths";
+import { originFor } from "@genesiscz/utils/work/connectors/types";
 import { parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import { type Actor, asItemId, type Item } from "@genesiscz/utils/work/model/item";
 import type { SessionDelivery } from "@genesiscz/utils/work/ports";
@@ -28,6 +29,7 @@ import {
     pacedCall,
     patchOf,
     rateLimitPause,
+    trackerFacts,
     typeLabels,
 } from "./connectors/tracker";
 
@@ -385,12 +387,72 @@ describe("the tracker connector", () => {
         });
     });
 
+    test("established generated bodies and detached parents are cleared explicitly", () => {
+        const pairing = {
+            item: item.id,
+            connector: "tracker",
+            remoteKey: "1",
+            born: "local" as const,
+            origin: originFor("local"),
+            state: "in-sync" as const,
+            sent: { body: "previous body" },
+            updatedTs: "2026-01-01T00:00:00.000Z",
+        };
+        const patch = patchOf(
+            {
+                item: { ...item, body: undefined, title: "short", fields: {} },
+                pairing,
+                labels: [],
+                parentKey: null,
+            },
+            true,
+            settings
+        );
+        expect(patch).toMatchObject({ body: "", parentId: null });
+        expect(factsOfPatch(patch)).toMatchObject({ body: "", parent: "" });
+        expect(
+            patchOf(
+                {
+                    item: { ...item, body: undefined, title: "short", fields: {} },
+                    pairing: null,
+                    labels: [],
+                },
+                true,
+                settings
+            ).parentId
+        ).toBeUndefined();
+    });
+
     test("a rate limit is waited out: Retry-After when named, else a doubling pause up to the cap", () => {
         const limits = { baseMs: 1000, maxMs: 30_000 };
         expect(rateLimitPause('{"code":"rate_limited"} Retry-After: 7', 0, limits)).toBe(7000);
         expect(rateLimitPause("Wait for the Retry-After interval before retrying.", 0, limits)).toBe(1000);
         expect(rateLimitPause("rate_limited", 4000, limits)).toBe(8000);
         expect(rateLimitPause("rate_limited", 20_000, limits)).toBe(30_000);
+        expect(rateLimitPause("rate_limited Retry-After: 60", 0, limits)).toBe(60_000);
+    });
+
+    test("type round-trip labels participate in the three-way type comparison", () => {
+        const mapped = { ...settings, types: { feature: "task", cleanup: "task" } };
+        const ours = trackerFacts({ type: "task", labels: ["type:feature"] }, { base: {}, ours: {}, settings: mapped });
+        const edited = trackerFacts(
+            { type: "task", labels: ["type:cleanup"] },
+            { base: {}, ours: {}, settings: mapped }
+        );
+        expect(ours.type).not.toBe(edited.type);
+    });
+
+    test("a paced call defers a server delay beyond its operation deadline", async () => {
+        let calls = 0;
+        const call = pacedCall(
+            async () => {
+                calls++;
+                throw new Error("rate_limited Retry-After: 60");
+            },
+            { deadlineMs: 10 }
+        );
+        await expect(call("tracker", "update", {})).rejects.toThrow("rate_limited Retry-After: 60");
+        expect(calls).toBe(1);
     });
 
     test("a paced call retries a rate-limited door, answers its result, and stops when the lease is lost", async () => {

@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
 import { retry } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { judgeFacts } from "@genesiscz/utils/work/connectors/three-way";
 import type {
     Connector,
@@ -178,7 +179,7 @@ function answer(raw: unknown, what: string): Record<string, unknown> {
 
 function idOf(reply: Record<string, unknown>): string | null {
     const task = reply.task;
-    const id = reply.id ?? (task !== null && typeof task === "object" ? (task as { id?: unknown }).id : undefined);
+    const id = reply.id ?? (task !== null && typeof task === "object" && "id" in task ? task.id : undefined);
     return typeof id === "number" || (typeof id === "string" && id.trim() !== "") ? String(id) : null;
 }
 
@@ -206,7 +207,7 @@ export function rateLimitPause(message: string, previousMs: number, limits: { ba
     const named = RETRY_AFTER.exec(message);
 
     if (named !== null) {
-        return Math.min(Math.ceil(Number(named[1]) * 1000), limits.maxMs);
+        return Math.ceil(Number(named[1]) * 1000);
     }
 
     return Math.min(Math.max(previousMs * 2, limits.baseMs), limits.maxMs);
@@ -218,6 +219,7 @@ export interface PacingOptions {
     baseMs?: number;
     maxMs?: number;
     maxAttempts?: number;
+    deadlineMs?: number;
 }
 
 /**
@@ -228,11 +230,15 @@ export interface PacingOptions {
  */
 export function pacedCall(
     call: Kit["call"],
-    { keepAlive, baseMs = 1000, maxMs = 30_000, maxAttempts = 8 }: PacingOptions = {}
+    { keepAlive, baseMs = 1000, maxMs = 30_000, maxAttempts = 8, deadlineMs = 55_000 }: PacingOptions = {}
 ): Kit["call"] {
     let pause = 0;
     return async (server, tool, args) => {
+        const deadline = Date.now() + deadlineMs;
         if (pause > 0) {
+            if (Date.now() + pause >= deadline) {
+                throw new Error("rate_limited: Retry-After exceeds this operation deadline; retry later");
+            }
             await Bun.sleep(pause);
         }
 
@@ -248,11 +254,14 @@ export function pacedCall(
             },
             {
                 maxAttempts,
-                shouldRetry: (error) => RATE_LIMITED.test(messageOf(error)) && keepAlive?.() !== false,
-                getDelay: (_attempt, error) => {
+                shouldRetry: (error) => {
+                    if (!RATE_LIMITED.test(messageOf(error)) || keepAlive?.() === false) {
+                        return false;
+                    }
                     pause = rateLimitPause(messageOf(error), pause, { baseMs, maxMs });
-                    return pause;
+                    return Date.now() + pause < deadline;
                 },
+                getDelay: () => pause,
             }
         );
         pause = pause >= 2 * baseMs ? Math.floor(pause / 2) : 0;
@@ -276,8 +285,8 @@ export function factsOfPatch(patch: Record<string, unknown>): SentFacts {
     for (const [fact, key] of Object.entries(PATCH_KEY_OF) as [SyncedFact, string][]) {
         const value = patch[key];
 
-        if (typeof value === "string" || typeof value === "number") {
-            facts[fact] = String(value);
+        if (typeof value === "string" || typeof value === "number" || value === null) {
+            facts[fact] = value === null ? "" : String(value);
         }
     }
 
@@ -303,6 +312,36 @@ export function outsideFacts(
         parent: text(task.parentId) ?? "",
     };
     return Object.fromEntries(Object.entries(facts).filter(([, value]) => value !== undefined));
+}
+
+function typeFact(native: string, label: string): string {
+    return SafeJSON.stringify([native, label]);
+}
+
+export function trackerFacts(
+    task: Record<string, unknown>,
+    input: { base: SentFacts; ours: SentFacts; settings: TrackerSettings }
+): SentFacts {
+    const result = outsideFacts(task, input);
+    if (result.type !== undefined) {
+        const labels = Array.isArray(task.labels)
+            ? task.labels.flatMap((label: unknown) => {
+                  if (typeof label === "string") {
+                      return [label];
+                  }
+                  return label !== null &&
+                      typeof label === "object" &&
+                      "name" in label &&
+                      typeof label.name === "string"
+                      ? [label.name]
+                      : [];
+              })
+            : [];
+        const type = localTypeOf(task.type, labels, input.settings);
+        const label = type === undefined ? "" : (typeLabels(type, input.settings).add[0] ?? "");
+        result.type = typeFact(result.type, label);
+    }
+    return result;
 }
 
 /** The patch with only the facts to write (its other keys, such as labels, stay). */
@@ -347,10 +386,13 @@ export function patchOf(intent: PushIntent, bornHere: boolean, settings: Tracker
 
     if (bornHere) {
         Object.assign(patch, titleAndBody(item, settings.titleLimit ?? DEFAULT_TITLE_LIMIT));
+        if (patch.body === undefined && intent.pairing?.sent?.body !== undefined) {
+            patch.body = "";
+        }
         patch.type = outsideType(item.type, settings);
 
         if (intent.parentKey !== undefined) {
-            patch.parentId = taskId(intent.parentKey);
+            patch.parentId = intent.parentKey === null ? null : taskId(intent.parentKey);
         }
     }
 
@@ -383,7 +425,7 @@ export function linksOf(reply: Record<string, unknown>): OutsideLink[] {
         }
 
         const row = link as Record<string, unknown>;
-        const to = row.task !== null && typeof row.task === "object" ? (row.task as { id?: unknown }).id : row.toTaskId;
+        const to = row.task !== null && typeof row.task === "object" && "id" in row.task ? row.task.id : row.toTaskId;
 
         if (typeof row.rel !== "string" || (typeof to !== "number" && typeof to !== "string")) {
             return [];
@@ -443,6 +485,9 @@ export const trackerConnector: Connector<unknown> = {
 
                 for (const intent of intents) {
                     let key = intent.pairing?.remoteKey ?? "";
+                    let sent: SentFacts = {};
+                    let typeAccepted = false;
+                    let changedOutside: FactChangedOutside[] = [];
 
                     // A long wave renews the sync's lease as it goes; without it the pass would drop every answer.
                     if (ctx.keepAlive?.() === false) {
@@ -467,12 +512,8 @@ export const trackerConnector: Connector<unknown> = {
                             return outside;
                         };
 
-                        let sent: SentFacts = {};
-                        let changedOutside: FactChangedOutside[] = [];
-
                         if (key === "") {
                             const patch = patchOf(intent, true, settings);
-                            sent = factsOfPatch(patch);
                             const made = answer(
                                 await call(
                                     settings.server,
@@ -488,20 +529,30 @@ export const trackerConnector: Connector<unknown> = {
                             }
 
                             key = id;
+                            sent = factsOfPatch(patch);
+                            typeAccepted = true;
                         } else {
                             // Read the task first: a fact edited outside since the last push is never overwritten.
                             const patch = patchOf(intent, bornHere, settings);
-                            const base = intent.pairing?.sent ?? {};
+                            const base = { ...intent.pairing?.sent };
                             const ours = factsOfPatch(patch);
+                            const desiredType = ours.type;
+                            const desiredLabel = types.add[0] ?? "";
+                            if (desiredType !== undefined) {
+                                ours.type = typeFact(desiredType, desiredLabel);
+                                if (base.type !== undefined && !base.type.startsWith("[")) {
+                                    base.type = typeFact(base.type, desiredLabel);
+                                }
+                            }
                             const judged = judgeFacts({
                                 ours,
-                                theirs: outsideFacts(taskOf(await outsideTask()), { base, ours }),
+                                theirs: trackerFacts(taskOf(await outsideTask()), { base, ours, settings }),
                                 base,
                                 ...(intent.force !== undefined ? { force: intent.force } : {}),
                             });
                             const update = withOnly(patch, judged.send);
-                            sent = judged.sent;
                             changedOutside = judged.changedOutside;
+                            typeAccepted = !changedOutside.some((entry) => entry.fact === "type");
 
                             if (Object.keys(update).length > 0) {
                                 answer(
@@ -513,21 +564,32 @@ export const trackerConnector: Connector<unknown> = {
                                     "update"
                                 );
                             }
+                            sent = judged.sent;
+                            if (judged.send.includes("type") && desiredType !== undefined) {
+                                const prior = trackerFacts(taskOf(await outsideTask()), { base, ours, settings }).type;
+                                const decoded: unknown = prior ? SafeJSON.parse(prior) : undefined;
+                                const priorLabel = Array.isArray(decoded) ? decoded[1] : "";
+                                sent.type = typeFact(desiredType, typeof priorLabel === "string" ? priorLabel : "");
+                            }
                         }
 
-                        if (labels.length > 0 || types.remove.length > 0) {
+                        const acceptedLabels = typeAccepted ? labels : intent.labels;
+                        if (acceptedLabels.length > 0 || (typeAccepted && types.remove.length > 0)) {
                             answer(
                                 await call(
                                     settings.server,
                                     "label_task",
                                     scoped(settings, {
                                         id: key,
-                                        add: labels,
-                                        ...(types.remove.length > 0 ? { remove: types.remove } : {}),
+                                        add: acceptedLabels,
+                                        ...(typeAccepted && types.remove.length > 0 ? { remove: types.remove } : {}),
                                     })
                                 ),
                                 "label_task"
                             );
+                            if (typeAccepted && sent.type !== undefined) {
+                                sent.type = typeFact(outsideType(intent.item.type, settings), types.add[0] ?? "");
+                            }
                         }
 
                         if (bornHere && intent.links !== undefined && intent.links.length > 0) {
@@ -569,6 +631,8 @@ export const trackerConnector: Connector<unknown> = {
                             ok: false,
                             error: error instanceof Error ? error.message : String(error),
                             ...(key !== "" ? { remoteKey: key } : {}),
+                            sent,
+                            changedOutside,
                         });
                     }
                 }

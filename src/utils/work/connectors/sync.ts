@@ -9,15 +9,15 @@ import { randomUUID } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Change } from "../model/change";
-import type { Actor, Item, ItemId } from "../model/item";
+import type { Actor, Item, ItemId, Reference } from "../model/item";
 import { asItemId } from "../model/item";
 import type { EditedPayload, ItemPatch } from "../model/payloads";
-import { type ItemType, levelOf, type Role } from "../model/vocab";
+import type { ItemType, Role } from "../model/vocab";
 import { type LoadProjectRules, loadRulesForItems } from "../rules/load";
-import { allows, type RuleLayerInput } from "../rules/resolve";
+import { allows, defaultWrite, type RuleLayerInput } from "../rules/resolve";
 import { rolesOf } from "../rules/roles";
 import { applyChange } from "../store/apply";
-import { selectChangesAfter, selectItem, selectPairings } from "../store/rows";
+import { journalHead, selectChangesAfter, selectItem, selectPairings, selectRefsFrom } from "../store/rows";
 import { sqlView } from "../store/view";
 import { connectorConfigOf } from "./config";
 import { type ConnectorScope, outOfScope, outsideRefs, referencedItems } from "./scope";
@@ -67,11 +67,7 @@ const RETRY_AFTER_MS = 30_000;
 
 /** Who may push by default: the edit row of the write rules, so the session that made an epic or a note pushes it. */
 function defaultPush(type: ItemType): readonly Role[] | "anyone" {
-    if (type === "epic" || type === "handoff" || levelOf(type) === "note") {
-        return ["poster", "lead", "owner"];
-    }
-
-    return "anyone";
+    return defaultWrite(type, "edit");
 }
 
 const CONNECTOR_ACTOR = (id: string): Actor => ({
@@ -192,6 +188,7 @@ type PushMode =
           cursor: number;
           lease: string;
           touched: ReadonlySet<ItemId>;
+          all?: boolean;
           retryBefore: string;
           /** Plan only: no lease, no write, no connector call. */
           preview: boolean;
@@ -199,7 +196,13 @@ type PushMode =
     | { kind: "release" }
     | { kind: "pair"; connector: string }
     /** `sync --resolve`: push one paired item to its connector, writing `force` whatever the outside holds. */
-    | { kind: "resolve"; connector: string; force: readonly SyncedFact[] };
+    | {
+          kind: "resolve";
+          connector: string;
+          force: readonly SyncedFact[];
+          generation: number | null;
+          remoteKey: string;
+      };
 
 const HELD_NOTE = "a change needs a lead or the owner to release it";
 
@@ -232,11 +235,13 @@ function newPairing(item: ItemId, connector: string, now: string): Pairing {
 }
 
 function addProblem(report: SyncReport, problem: SyncProblem): void {
-    report.problems = [...(report.problems ?? []), problem];
+    report.problems ??= [];
+    report.problems.push(problem);
 }
 
 function addNote(report: SyncReport, note: string): void {
-    report.notes = [...(report.notes ?? []), note];
+    report.notes ??= [];
+    report.notes.push(note);
 }
 
 async function pushItems(input: { deps: SyncDeps; items: Item[]; mode: PushMode; report: SyncReport }): Promise<void> {
@@ -263,6 +268,7 @@ interface Planned {
     intent: PushIntent;
     generation: number | null;
     waitsFor: ItemId[];
+    references: Reference[];
 }
 
 /** New items the plan did not make outside, by reason; they become the report's notes. */
@@ -298,11 +304,20 @@ function planPushes(input: {
 
         const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
         const canCreate = connector.can.create && config.createTypes.includes(item.type);
+        if (mode.kind === "sync" && mode.all && !mode.touched.has(item.id) && pairing === null) {
+            continue;
+        }
 
         if (mode.kind === "release" && pairing?.state !== "held") {
             continue;
         }
 
+        if (
+            mode.kind === "resolve" &&
+            (pairingGeneration(db, item.id, id) !== mode.generation || pairing?.remoteKey !== mode.remoteKey)
+        ) {
+            throw new Error(`${item.id}: pairing changed before resolution push; retry resolution.`);
+        }
         if ((mode.kind === "pair" || mode.kind === "resolve") && pairing === null) {
             continue;
         }
@@ -333,6 +348,7 @@ function planPushes(input: {
             // A held item comes back in every pass, so a later sync still says why it was not made or updated.
             if (
                 !mode.touched.has(item.id) &&
+                !(mode.all && pairing) &&
                 pairing?.state !== "held" &&
                 (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
             ) {
@@ -387,6 +403,7 @@ function planPushes(input: {
             intent: { item, pairing, labels, ...(mode.kind === "resolve" ? { force: mode.force } : {}) },
             generation: pairingGeneration(db, item.id, id),
             waitsFor: referencedItems(db, item.id),
+            references: selectRefsFrom(db, item.id),
         });
     }
 
@@ -412,12 +429,57 @@ function noteLeftOut(report: SyncReport, where: string, left: LeftOut): void {
 
 /**
  * Waves: an item goes after the items it names (its parent, its link targets) when those have no outside key yet,
- * so a child's first push already carries its parent's key. A cycle falls back to one wave.
+ * so a child's first push carries its parent's key. Cyclic links retry after the parent-first creation waves.
  */
-function nextWave(rest: readonly Planned[]): Planned[] {
-    const unmade = new Set(rest.filter((p) => !p.intent.pairing?.remoteKey).map((p) => p.intent.item.id));
-    const ready = rest.filter((p) => p.waitsFor.every((dep) => dep === p.intent.item.id || !unmade.has(dep)));
-    return ready.length > 0 ? ready : [...rest];
+function* pushWaves(planned: readonly Planned[]): Generator<Planned[]> {
+    const pending = new Map(planned.map((entry) => [entry.intent.item.id, entry]));
+    const unmade = new Set(
+        planned.filter((entry) => !entry.intent.pairing?.remoteKey).map((entry) => entry.intent.item.id)
+    );
+    const counts = new Map<ItemId, number>();
+    const dependents = new Map<ItemId, Planned[]>();
+    let ready: Planned[] = [];
+    for (const entry of planned) {
+        const dependencies = [...new Set(entry.waitsFor.filter((id) => id !== entry.intent.item.id && unmade.has(id)))];
+        counts.set(entry.intent.item.id, dependencies.length);
+        if (!dependencies.length) {
+            ready.push(entry);
+        }
+        for (const id of dependencies) {
+            const waiting = dependents.get(id) ?? [];
+            waiting.push(entry);
+            dependents.set(id, waiting);
+        }
+    }
+    while (pending.size) {
+        if (!ready.length) {
+            // Parent edges are acyclic. A link cycle can wait until both endpoints exist.
+            ready = [...pending.values()].filter((entry) =>
+                entry.references.filter((ref) => ref.kind === "parent").every((ref) => !pending.has(ref.to))
+            );
+        }
+        if (!ready.length) {
+            throw new Error("Cannot order publication parents: cyclic parent references");
+        }
+        const wave = ready;
+        ready = [];
+        for (const entry of wave) {
+            pending.delete(entry.intent.item.id);
+        }
+        yield wave;
+        for (const entry of wave) {
+            for (const dependent of dependents.get(entry.intent.item.id) ?? []) {
+                if (!pending.has(dependent.intent.item.id)) {
+                    continue;
+                }
+                const count = (counts.get(dependent.intent.item.id) ?? 0) - 1;
+                counts.set(dependent.intent.item.id, count);
+                if (count === 0) {
+                    ready.push(dependent);
+                }
+            }
+        }
+    }
 }
 
 async function pushProject({
@@ -481,31 +543,61 @@ async function pushProject({
             continue;
         }
 
-        let rest = plan.planned;
-
-        while (rest.length > 0) {
-            const wave = nextWave(rest);
-            rest = rest.filter((p) => !wave.includes(p));
+        for (const scheduled of pushWaves(plan.planned)) {
+            const wave: Planned[] = [];
 
             if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
                 return;
             }
 
-            if (connector.can.parents || connector.can.links) {
-                for (const { intent } of wave) {
-                    const refs = outsideRefs(db, intent.item.id, id);
-
-                    if (connector.can.parents && refs.parentKey !== undefined) {
-                        intent.parentKey = refs.parentKey;
-                    }
-
-                    if (connector.can.links) {
-                        intent.links = refs.links;
+            const incompleteLinks: Planned[] = [];
+            for (const entry of scheduled) {
+                const { intent, references } = entry;
+                const refs = outsideRefs(db, intent.item.id, id, references);
+                const parent = references.find((ref) => ref.kind === "parent");
+                if (connector.can.parents && parent && refs.parentKey === undefined && !intent.pairing?.remoteKey) {
+                    const note = "parent has no outside key; retry after its creation";
+                    writePairing(db, deps, {
+                        ...(intent.pairing ?? newPairing(intent.item.id, id, deps.now())),
+                        state: "failed",
+                        note,
+                    });
+                    report.failed++;
+                    addProblem(report, { item: intent.item.id, connector: id, state: "failed", note });
+                    continue;
+                }
+                if (connector.can.parents) {
+                    intent.parentKey = parent ? refs.parentKey : null;
+                }
+                if (connector.can.links) {
+                    intent.links = refs.links;
+                    const links = references.filter((ref) => ref.kind !== "parent" && entry.waitsFor.includes(ref.to));
+                    if ((refs.links?.length ?? 0) < links.length) {
+                        incompleteLinks.push(entry);
                     }
                 }
+                wave.push(entry);
             }
-
-            await pushWave({ deps, connectorId: id, connector, config, project, mode, wave, report });
+            if (wave.length) {
+                await pushWave({ deps, connectorId: id, connector, config, project, mode, wave, report });
+            }
+            for (const { intent } of incompleteLinks) {
+                const current = selectPairings(db, { item: intent.item.id, connector: id })[0];
+                if (current && current.state !== "failed") {
+                    const note = "linked target has no outside key; retry after its creation";
+                    writePairing(db, deps, {
+                        ...current,
+                        state: "failed",
+                        note: noteOf({
+                            reason: note,
+                            remote: factsChangedOutside(current),
+                            local: localDriftFacts(current),
+                        }),
+                    });
+                    report.failed++;
+                    addProblem(report, { item: intent.item.id, connector: id, state: "failed", note });
+                }
+            }
         }
     }
 }
@@ -584,8 +676,18 @@ async function pushWave({
                 writePairing(db, deps, {
                     ...base,
                     remoteKey: result.remoteKey ?? base.remoteKey,
+                    ...(result.sent !== undefined ? { sent: { ...base.sent, ...result.sent } } : {}),
                     state: "failed",
-                    note: noteOf({ reason: result.error, local }),
+                    note: noteOf({
+                        reason: result.error,
+                        remote: [
+                            ...new Set([
+                                ...factsChangedOutside(base),
+                                ...(result.changedOutside ?? []).map(({ fact }) => fact),
+                            ]),
+                        ],
+                        local,
+                    }),
                 });
                 report.failed++;
                 addProblem(report, { item: intent.item.id, connector: id, state: "failed", note: result.error });
@@ -643,7 +745,9 @@ function factsChangedOutside(pairing: Pick<Pairing, "note">): SyncedFact[] {
 /** Adds a note for the pairings still in drift, so every pass says which items differ outside and here. */
 export function noteStandingDrift(db: Database, report: SyncReport): SyncReport {
     const drifted = db
-        .query<{ item: ItemId }, []>("SELECT item FROM pairings WHERE state = 'drift' ORDER BY updated_ts")
+        .query<{ item: ItemId }, []>(
+            "SELECT item FROM pairings WHERE state = 'drift' OR (state = 'failed' AND instr(origin, 'changed outside, owned here:') > 0) ORDER BY updated_ts"
+        )
         .all()
         .map(({ item }) => item);
 
@@ -700,6 +804,7 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
                         state: hasReasonLine(pairing) ? pairing.state : "drift",
                         note: noteOf({
                             reason: reasonOf(pairing),
+                            remote: factsChangedOutside(pairing),
                             local: SYNCED_FACTS.filter((fact) => local.includes(fact) || owned.includes(fact)),
                         }),
                     })
@@ -755,34 +860,34 @@ export async function previewSync(deps: SyncDeps, options: SyncOptions = {}): Pr
     const start =
         db.query<{ seq: number }, [string]>("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR)?.seq ?? 0;
     const retryBefore = new Date(Date.parse(deps.now()) - RETRY_AFTER_MS).toISOString();
-    const touched = new Set<ItemId>(options.all === true ? pairedItems(db) : []);
-    let cursor = start;
-
+    const highWater = journalHead(db);
+    report.cursor = highWater;
+    let after = "";
+    const changed =
+        "EXISTS (SELECT 1 FROM changes c WHERE c.item = i.id AND c.seq > ? AND c.seq <= ? AND json_extract(c.origin, '$.via') <> 'connector')";
     for (;;) {
-        const changes = selectChangesAfter(db, cursor, BATCH);
-
-        if (changes.length === 0) {
+        const candidates = db
+            .query<{ item: ItemId; touched: number }, [number, number, string, number, number, number, string, number]>(
+                `SELECT i.id AS item, ${changed} AS touched FROM items i
+            WHERE i.id > ? AND (${changed} OR EXISTS (
+                SELECT 1 FROM pairings p WHERE p.item = i.id AND
+                (? = 1 OR p.state = 'held' OR (p.state = 'failed' AND p.updated_ts <= ?))))
+            ORDER BY i.id LIMIT ?`
+            )
+            .all(start, highWater, after, start, highWater, options.all ? 1 : 0, retryBefore, BATCH);
+        if (!candidates.length) {
             break;
         }
-
-        for (const change of changes) {
-            if (change.origin.via !== "connector") {
-                touched.add(change.item);
-            }
-        }
-
-        cursor = changes.at(-1)?.seq ?? cursor;
+        const touched = new Set(candidates.filter((entry) => entry.touched).map((entry) => entry.item));
+        const items = candidates.map(({ item }) => selectItem(db, item)).filter((item) => item !== null);
+        await pushItems({
+            deps,
+            items,
+            mode: { kind: "sync", cursor: start, lease: "", touched, retryBefore, preview: true, all: options.all },
+            report,
+        });
+        after = candidates.at(-1)?.item ?? after;
     }
-
-    report.cursor = cursor;
-    const ids = new Set([...touched, ...failedBefore(db, retryBefore), ...heldItems(db)]);
-    const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
-    await pushItems({
-        deps,
-        items,
-        mode: { kind: "sync", cursor: start, lease: "", touched, retryBefore, preview: true },
-        report,
-    });
     return report;
 }
 
@@ -804,7 +909,8 @@ export async function runSyncOnce(deps: SyncDeps, options: SyncOptions = {}): Pr
         let retryFailed = true;
         for (;;) {
             const changes = selectChangesAfter(db, cursor, BATCH);
-            const touched = new Set<ItemId>(retryFailed && options.all === true ? pairedItems(db) : []);
+            const forced = retryFailed && options.all === true ? pairedItems(db) : [];
+            const touched = new Set<ItemId>();
 
             for (const change of changes) {
                 // A change a connector made (a pull, a pairing) is not pushed back.
@@ -815,12 +921,12 @@ export async function runSyncOnce(deps: SyncDeps, options: SyncOptions = {}): Pr
 
             const retries = retryFailed ? [...failedBefore(db, retryBefore), ...heldItems(db)] : [];
             retryFailed = false;
-            const ids = new Set([...touched, ...retries]);
+            const ids = new Set([...forced, ...touched, ...retries]);
             const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
             await pushItems({
                 deps,
                 items,
-                mode: { kind: "sync", cursor, lease, touched, retryBefore, preview: false },
+                mode: { kind: "sync", cursor, lease, touched, retryBefore, preview: false, all: options.all },
                 report,
             });
 
@@ -876,10 +982,15 @@ export type ResolveSide = "ours" | "theirs";
  */
 export async function resolveDrift(
     deps: SyncDeps,
-    { item, take, facts }: { item: ItemId; take: ResolveSide; facts?: readonly SyncedFact[] }
+    {
+        item,
+        take,
+        facts,
+        connector: connectorId,
+    }: { item: ItemId; take: ResolveSide; facts?: readonly SyncedFact[]; connector?: string }
 ): Promise<SyncReport> {
     const { db } = deps;
-    const pairings = selectPairings(db, { item }).filter((pairing) => pairing.remoteKey !== "");
+    const pairings = selectPairings(db, { item, connector: connectorId }).filter((pairing) => pairing.remoteKey !== "");
     const pairing = pairings.find((one) => one.state === "drift") ?? pairings[0];
     const row = selectItem(db, item);
 
@@ -895,7 +1006,8 @@ export async function resolveDrift(
         throw new Error(`The connector ${pairing.connector} of ${item} is not available.`);
     }
 
-    const noted = factsChangedOutside(pairing);
+    const generation = pairingGeneration(db, item, pairing.connector);
+    const noted = [...new Set([...factsChangedOutside(pairing), ...localDriftFacts(pairing)])];
     const named = facts ?? (noted.length > 0 || take === "theirs" ? noted : SYNCED_FACTS);
     const report: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
 
@@ -921,6 +1033,10 @@ export async function resolveDrift(
                 set.body = remote.body;
             } else if (fact === "type" && remote.type !== undefined) {
                 set.type = remote.type;
+            } else if (fact === "tags" && remote.tags !== undefined) {
+                set.tags = remote.tags;
+            } else if (fact === "severity" && remote.severity !== undefined) {
+                set.severity = remote.severity;
             } else if (fact !== "state" || remote.state === undefined) {
                 left.push(fact);
             }
@@ -929,6 +1045,12 @@ export async function resolveDrift(
         const actor = CONNECTOR_ACTOR(pairing.connector);
         const origin = { via: "connector" as const, id: pairing.connector };
         inTransaction(db, () => {
+            if (
+                selectItem(db, item)?.rev !== row.rev ||
+                pairingGeneration(db, item, pairing.connector) !== generation
+            ) {
+                throw new Error(`${item}: item or pairing changed during the outside read; retry resolution.`);
+            }
             if (Object.keys(set).length > 0) {
                 applyChange(db, { v: 1, ts: deps.now(), item, actor, origin, kind: "edited", payload: { set } });
             }
@@ -944,9 +1066,24 @@ export async function resolveDrift(
                     payload: { from: row.state, to: remote.state, why: "taken from outside by sync --resolve" },
                 });
             }
+            const resolved = named.filter((fact) => !left.includes(fact));
+            const remainingRemote = factsChangedOutside(pairing).filter((fact) => !resolved.includes(fact));
+            const remainingLocal = localDriftFacts(pairing).filter((fact) => !resolved.includes(fact));
+            writePairing(db, deps, {
+                ...pairing,
+                state: remainingRemote.length || remainingLocal.length ? "drift" : "pending",
+                note: noteOf({ remote: remainingRemote, local: remainingLocal }),
+            });
         });
 
         if (left.length > 0) {
+            report.failed++;
+            addProblem(report, {
+                item,
+                connector: pairing.connector,
+                state: "failed",
+                note: `Cannot take unsupported or missing outside facts: ${left.join(", ")}`,
+            });
             addNote(
                 report,
                 `${item}: the outside answer gives no ${left.join(", ")} to take; keep ours or edit it here`
@@ -958,8 +1095,15 @@ export async function resolveDrift(
         kind: "resolve",
         connector: pairing.connector,
         force: take === "ours" ? named : [],
+        generation: take === "ours" ? generation : pairingGeneration(db, item, pairing.connector),
+        remoteKey: pairing.remoteKey,
     });
-    return { ...pushed, notes: [...(report.notes ?? []), ...(pushed.notes ?? [])] };
+    return {
+        ...pushed,
+        failed: pushed.failed + report.failed,
+        problems: [...(report.problems ?? []), ...(pushed.problems ?? [])],
+        notes: [...(report.notes ?? []), ...(pushed.notes ?? [])],
+    };
 }
 
 async function pushExplicit(deps: SyncDeps, item: ItemId, mode: PushMode): Promise<SyncReport> {
