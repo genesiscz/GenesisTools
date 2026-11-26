@@ -5,6 +5,7 @@ import { bearerToken } from "@genesiscz/utils/device-pairing/client";
 import { DeviceStore } from "@genesiscz/utils/device-pairing/device-store";
 import { PairRequestSchema } from "@genesiscz/utils/device-pairing/types";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
+import type { ShareServerConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import {
     RequestBodyTooLargeError,
     readBoundedRequestText,
@@ -62,6 +63,31 @@ export function parsePublicOrigin(publicBase: string, kindIds: readonly string[]
     }
 
     return url.origin;
+}
+
+export function serverOptionsFrom(
+    server: ShareServerConfig,
+    kinds: readonly KindServer[]
+): PublishServerOptions & { port: number; host: string } {
+    const byId = new Map(kinds.map((entry) => [entry.kind.id, entry]));
+    const selected = server.kinds.map((id) => {
+        const kind = byId.get(id);
+        if (!kind) {
+            throw new Error(`This publish server cannot serve kind "${id}"`);
+        }
+
+        return kind;
+    });
+
+    return {
+        kinds: selected,
+        dataDir: server.dataDir,
+        stateDir: server.stateDir,
+        publicBase: server.publicOrigin,
+        legacyFlatKind: server.kinds.includes("md") ? "md" : undefined,
+        minFreeBytes: Math.ceil(server.minFreeGb * 1024 ** 3),
+        ...server.listen,
+    };
 }
 
 export function createPublishServerContext(options: PublishServerOptions): PublishServerContext {

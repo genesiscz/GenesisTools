@@ -357,9 +357,10 @@ const serverPaths = (command: Command): Command =>
         .option("--state <dir>", "state folder: paired devices, the admin socket, tunnel configs");
 
 serverPaths(shareServer.command("serve"))
-    .description("Run the share server in the foreground (what the service runs)")
-    .option("--port <port>", "port", portOption, SHARE_SERVER_PORT)
-    .option("--host <host>", "bind address", "127.0.0.1")
+    .description("Run a configured share server in the foreground")
+    .option("--server <name>", "configured server (defaults to the configured default)")
+    .option("--port <port>", "override the listen port", portOption)
+    .option("--host <host>", "override the bind address")
     .option("--public-base <url>", "public origin, e.g. https://share.example.com")
     .option("--min-free-gb <n>", "minimum free disk space in GiB after upload (default: 2)", minFreeOption)
     .option("--pair", "print a one-time pairing code once it is up")
