@@ -5,7 +5,7 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions } from "@app/question/lib/decisions/store";
 import { cleanVisibleContext } from "@app/question/lib/inbox/unread";
 import { getForm } from "@app/question/lib/pending/store";
-import { getStoredEntryById } from "@app/question/lib/read-model";
+import { getEntryByIdSnapshot, getStoredEntryById } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { type TranscriptAround, transcriptAround } from "@genesiscz/utils/ai/transcripts/around";
 import { resolveTranscript, rootsOfHome, type TranscriptRoots } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -41,13 +41,28 @@ function readStoredReceipt<T>(read: (db: Database) => T | null): T | null {
 }
 
 /**
+ * The indexed row first; a receipt sent seconds ago sits only in today's log file, so a miss reads it through the
+ * catch-up on a read copy, as the inbox snapshot does. The durable store is never written.
+ */
+function readEntrySnapshot(id: string) {
+    const stored = readStoredReceipt((db) => getStoredEntryById(db, id));
+    if (stored) {
+        return stored;
+    }
+
+    const dbPath = toolDataDir("question", "qa.db");
+    logger.debug({ dbPath, id }, "Receipt not indexed yet; reading it through a read snapshot");
+    return getEntryByIdSnapshot({ dbPath, id });
+}
+
+/**
  * Opening an overview entry reads one indexed receipt, including when its sender has no session: the whole question
  * and body, and the images the receipt carries or its text names, lifted out of the text as a session card lifts them.
  */
 export async function readWidgetMessageBody(
     id: string
 ): Promise<{ body: string; question: string; attachments: ImageAttachment[] }> {
-    const entry = readStoredReceipt((db) => getStoredEntryById(db, id));
+    const entry = readEntrySnapshot(id);
 
     if (!entry) {
         throw new Error("This message is no longer in the inbox store.");
@@ -128,7 +143,7 @@ export async function readWidgetReceiptContext({
     if (id.startsWith("answer:")) {
         const row = sources
             ? sources.answers(target.sessionId).find((entry) => entry.id === sourceId)
-            : readStoredReceipt((db) => getStoredEntryById(db, sourceId));
+            : readEntrySnapshot(sourceId);
         if (row && row.sessionId === target.sessionId && widgetProvider(row.agent) === target.provider) {
             found = true;
             sourceContext = { ...row, agent: row.agent };
