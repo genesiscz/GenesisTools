@@ -127,7 +127,7 @@ export async function runShare(path: string, opts: ShareCommandOptions): Promise
 /** `share sync [notes...] [--all] [--target <name>] [--prune]`: send published notes again. */
 export async function runShareSync(
     notes: string[],
-    opts: { all: boolean; targets: string[]; prune: boolean }
+    opts: { all: boolean; targets: string[]; prune: boolean; changed?: boolean }
 ): Promise<void> {
     await guarded(async () => {
         if (!opts.all && notes.length === 0 && !opts.prune) {
@@ -143,6 +143,7 @@ export async function runShareSync(
                 slugs,
                 all: opts.all,
                 targetNames: opts.targets,
+                changedOnly: opts.changed,
                 pickFallback: async (candidates) => {
                     const subcommand = [
                         "share",
@@ -158,6 +159,10 @@ export async function runShareSync(
             });
             if (needsTarget) {
                 return false;
+            }
+
+            if (opts.changed && results.length === 0) {
+                out.printlnErr("nothing changed since the last sync");
             }
 
             for (const { note, outcomes } of results) {

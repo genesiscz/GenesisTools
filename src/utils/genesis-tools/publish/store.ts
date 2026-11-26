@@ -14,6 +14,13 @@ export interface ShareConfig {
     defaults: { target?: string; server?: string };
     targets: PublishTarget[];
     servers: ShareServerConfig[];
+    /** Per published kind (the axis is the kind: md syncs from a vault, an artifact does not). */
+    kinds?: Partial<Record<string, ShareKindSettings>>;
+}
+
+export interface ShareKindSettings {
+    /** A daemon task sends the publications edited since their last sync, this often. */
+    autoSync?: { everyMinutes: number };
 }
 
 export interface ShareServerConfig {
@@ -103,6 +110,12 @@ export const ShareConfigSchema: z.ZodType<ShareConfig> = z.object({
     defaults: z.object({ target: NameSchema.optional(), server: NameSchema.optional() }),
     targets: z.array(PublishTargetSchema).refine(uniqueNames, "each target needs a unique name"),
     servers: z.array(ShareServerConfigSchema).refine(uniqueNames, "each server needs a unique name"),
+    kinds: z
+        .record(
+            z.string().regex(KIND_ID_RE),
+            z.object({ autoSync: z.object({ everyMinutes: z.number().int().min(1).max(1440) }).optional() })
+        )
+        .optional(),
 });
 
 export const PublicationSchema: z.ZodType<Publication> = z.object({

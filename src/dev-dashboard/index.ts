@@ -3,6 +3,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { resolveShareTargetFlags, runShare, runShareSync, runUnshare } from "@app/dev-dashboard/commands/share";
+import { runShareAutoSync } from "@app/dev-dashboard/commands/share-auto-sync";
 import {
     runShareServerAudit,
     runShareServerDevices,
@@ -33,6 +34,8 @@ import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
 import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { isInteractive, runTool } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { stopUiServerOnPort } from "@genesiscz/utils/DashboardApp";
 import { openBrowserWhenDashboardEnv } from "@genesiscz/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@genesiscz/utils/DashboardApp/readiness";
@@ -273,6 +276,12 @@ const minFreeOption = (value: string): number => {
     return gb;
 };
 
+const AUTO_SYNC_STATES = ["status", "on", "off"] as const;
+
+function isAutoSyncState(value: string): value is (typeof AUTO_SYNC_STATES)[number] {
+    return (AUTO_SYNC_STATES as readonly string[]).includes(value);
+}
+
 const share = program
     .command("share")
     .description("Publish an Obsidian note to /share/<slug> on your share targets and copy the link")
@@ -293,16 +302,48 @@ share
     .option("--all", "every published note")
     .addOption(targetOption('send to this target instead (repeatable, or "all")'))
     .option("--prune", "also remove snapshots a target holds for notes no longer shared there")
-    .action(async (notes: string[], opts: { all?: boolean; target: Array<string | true>; prune?: boolean }) => {
-        const targets = await resolveShareTargetFlags(shareTargets(opts.target), [
-            "share",
-            "sync",
-            ...notes,
-            ...(opts.all ? ["--all"] : []),
-            ...(opts.prune ? ["--prune"] : []),
-        ]);
-        if (targets) {
-            await runShareSync(notes, { all: opts.all === true, targets, prune: opts.prune === true });
+    .option("--changed", "only notes edited since their last sync (what auto-sync runs)")
+    .action(
+        async (
+            notes: string[],
+            opts: { all?: boolean; target: Array<string | true>; prune?: boolean; changed?: boolean }
+        ) => {
+            const targets = await resolveShareTargetFlags(shareTargets(opts.target), [
+                "share",
+                "sync",
+                ...notes,
+                ...(opts.all ? ["--all"] : []),
+                ...(opts.prune ? ["--prune"] : []),
+                ...(opts.changed ? ["--changed"] : []),
+            ]);
+            if (targets) {
+                await runShareSync(notes, {
+                    all: opts.all === true,
+                    targets,
+                    prune: opts.prune === true,
+                    changed: opts.changed === true,
+                });
+            }
+        }
+    );
+
+share
+    .command("auto-sync")
+    .description("Send published notes edited since their last sync every N minutes, through a tools daemon task")
+    .argument("[state]", "on, off or status (default: status)")
+    .option("--every <minutes>", "how often, in minutes (default 10)", (value) => Number.parseInt(value, 10))
+    .action(async (state: string | undefined, opts: { every?: number }) => {
+        const picked = await pickEnumFlag({
+            tool: toolCommand("dev-dashboard", "share auto-sync"),
+            subcommand: ["share", "auto-sync"],
+            flag: "state",
+            given: state,
+            values: AUTO_SYNC_STATES,
+            fallback: "status",
+            accepts: isAutoSyncState,
+        });
+        if (picked) {
+            await runShareAutoSync({ state: picked, everyMinutes: opts.every });
         }
     });
 
