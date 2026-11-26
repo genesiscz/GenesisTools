@@ -373,6 +373,7 @@ public struct RecordingBarView: View {
 
     private var target: some View {
         let title = setup.target?.title ?? (follows ? RecordingTarget.followDisplay.title : "Choose target")
+        let why = reason("target", live: caps.liveTargetSwitch)
         return Button { pick(nil) } label: {
             HStack(spacing: 6) {
                 Image(systemName: setup.target?.symbol ?? "display").font(.system(size: 13, weight: .medium))
@@ -380,12 +381,13 @@ public struct RecordingBarView: View {
                 Text(title).lineLimit(1).truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+                    .opacity(why == nil ? 1 : 0).accessibilityHidden(true)
             }
             .padding(.horizontal, 9)
         }
         .buttonStyle(RecordingBarCellStyle(kind: .soft, width: RecordingBarMetrics.targetWidth))
         .barControl("target", label: "Choose what to record", value: title,
-                    reason: reason("target", live: caps.liveTargetSwitch), scope: live ? "This take" : nil)
+                    reason: why, scope: live ? "This take" : nil)
     }
 
     private func pick(_ kind: RecordingTargetKind?) {
@@ -501,6 +503,7 @@ public struct RecordingBarView: View {
         let label = HStack(spacing: 4) {
             Text("\(setup.frameRate) fps").monospacedDigit()
             Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+                .opacity(why == nil ? 1 : 0).accessibilityHidden(true)
         }
         if optionsInBar {
             Button { openDrawer() } label: { label }
@@ -1025,6 +1028,12 @@ public struct RecordingBarView: View {
             pair("While still") { stillChoice }
         }
         row {
+            pair("Change needed") {
+                segmented("Change needed", "threshold", values: Self.thresholds, current: draftThreshold,
+                          title: { "\(Self.number($0))%" }, reason: thresholdReason) { selectThreshold($0) }
+            }
+        }
+        row {
             pair("Microphone", wide: true) { microphoneRow }
         }
         row {
@@ -1164,37 +1173,17 @@ struct RecordingBarCellStyle: ButtonStyle {
 private struct RecordingBarCellBody: View {
     let configuration: ButtonStyleConfiguration
     let style: RecordingBarCellStyle
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.kitLook) private var look
-    @Environment(\.kitForcedInteraction) private var forced
-    @GenReduceMotion private var reduceMotion
-
-    private var state: KitInteraction {
-        guard isEnabled else { return .rest }
-        if configuration.isPressed || forced == .pressed { return .pressed }
-        return hovering || forced == .hover ? .hover : .rest
-    }
 
     var body: some View {
-        let state = state
-        let surface = look.surface(style.kind.role, state, hue: style.hue)
-        configuration.label
-            .foregroundStyle(.white)
-            .frame(width: style.width, height: RecordingBarMetrics.cell)
-            .background(KitSurfaceBackground(surface, radius: RecordingBarMetrics.radius))
-            .scaleEffect(reduceMotion ? 1 : (state == .pressed ? 0.96 : 1))
-            .opacity(isEnabled ? 1 : 0.38)
-            .contentShape(RoundedRectangle(cornerRadius: RecordingBarMetrics.radius, style: .continuous))
-            .pointerCursor(isEnabled)
-            .onHover { inside in
-                let next = isEnabled && inside
-                guard next != hovering else { return }
-                withAnimation(reduceMotion ? nil : KitTheme.quick) { hovering = next }
-            }
-            .onChange(of: isEnabled) { _, enabled in if !enabled { hovering = false } }
-            .onDisappear { hovering = false }
-            .animation(reduceMotion ? nil : KitTheme.quick, value: configuration.isPressed)
+        KitButtonInteraction(isPressed: configuration.isPressed, pressedScale: 0.96, disabledOpacity: 0.38) { state in
+            let surface = look.surface(style.kind.role, state, hue: style.hue)
+            configuration.label
+                .foregroundStyle(.white)
+                .frame(width: style.width, height: RecordingBarMetrics.cell)
+                .background(KitSurfaceBackground(surface, radius: RecordingBarMetrics.radius))
+                .contentShape(RoundedRectangle(cornerRadius: RecordingBarMetrics.radius, style: .continuous))
+        }
     }
 }
 

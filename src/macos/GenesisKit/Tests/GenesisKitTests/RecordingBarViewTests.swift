@@ -118,9 +118,10 @@ final class RecordingBarViewTests: XCTestCase {
                                  "finishing", "use", "finder", "newRecording", "failed"]
     private let expandedControls = ["quality", "stillFrameRate", "threshold", "placement"]
     /// While a take runs the drawer holds what applies to it; the setup-only choices wait for the next recording.
-    private let liveExpandedControls = ["stillFrameRate", "placement"]
+    private let liveExpandedControls = ["stillFrameRate", "threshold", "placement"]
 
-    private func fixture(countdown: Int? = nil, expanded: Bool = false, look: String? = nil) throws -> Fixture {
+    private func fixture(countdown: Int? = nil, expanded: Bool = false, look: String? = nil,
+                         changeThreshold: Bool = false) throws -> Fixture {
         _ = NSApplication.shared
         let engine = Engine()
         let setup = RecordingSetup(target: .display(index: 0, name: "Studio"), countdownSeconds: countdown)
@@ -130,8 +131,12 @@ final class RecordingBarViewTests: XCTestCase {
         let model = RecordingBarModel(engine: engine, setup: setup, defaults: defaults,
                                       countdownTick: { try? await Task.sleep(for: .seconds(1)) })
         model.expanded = expanded
-        let panel = RecordingBarPanel(model: model, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }),
-                                      defaults: defaults)
+        var actions = RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in })
+        if changeThreshold {
+            model.setup.stillFrameRate = 1
+            actions.changeThreshold = .constant(0.5)
+        }
+        let panel = RecordingBarPanel(model: model, actions: actions, defaults: defaults)
         addTeardownBlock { @MainActor in
             panel.window.orderOut(nil)
             panel.window.close()
@@ -301,6 +306,18 @@ final class RecordingBarViewTests: XCTestCase {
         XCTAssertEqual(threshold.label, "Change needed")
         XCTAssertTrue(threshold.hint.contains("active and still frame rates are the same"), threshold.hint)
         try await snapshot(f, "setup-expanded")
+    }
+
+    func testTheLiveAndPausedDrawerOffersTheChangeThreshold() async throws {
+        let f = try fixture(changeThreshold: true)
+        await firstFrame(f)
+        try await f.host.press("expand")
+        try await f.host.wait(for: ["threshold"], enabled: true)
+        XCTAssertEqual(f.host.controls["recording.bar.threshold"]?.label, "Change needed")
+        f.model.pause()
+        await f.model.pendingCommand?.value
+        try await f.host.wait(for: ["threshold"], enabled: true)
+        XCTAssertEqual(f.model.phase, .paused(take: f.engine.nextTakeID, byUser: true))
     }
 
     func testOptionsOpenTheDrawerWhileRecordingAndGrowTheSameWindow() async throws {
