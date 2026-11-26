@@ -10,7 +10,7 @@ export const ALL_TARGETS = "all";
 
 export type TransportConfig =
     | { kind: "mac-live"; mounts: Record<string, string> }
-    | { kind: "paired"; url: string; deviceId: string; token: SecureRef }
+    | { kind: "paired"; url: string; deviceId: string; token: SecureRef; pairedAt?: string }
     | { kind: "ssh-rsync"; host: string; dataDir: string };
 
 export interface PublishTarget {
@@ -69,6 +69,7 @@ export const PublishTargetSchema: z.ZodType<PublishTarget> = z.object({
                 "HTTP requires a private host"
             ),
             deviceId: z.string().min(1),
+            pairedAt: z.iso.datetime().optional(),
             token: z.custom<SecureRef>(isSecureRef, { message: "token must be a vault reference" }),
         }),
         z.object({

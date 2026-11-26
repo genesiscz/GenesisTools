@@ -11,7 +11,7 @@ import {
     findPublication,
     forgetPublication,
     listPublications,
-    loadPublishConfig,
+    loadShareConfig,
     type Publication,
     savePublication,
     withPublicationLock,
@@ -58,8 +58,12 @@ export function publisher(kind: PublishedKind): Publisher {
 }
 
 async function publish(kind: PublishedKind, input: PublishInput): Promise<PublishResult> {
-    const { client } = await loadPublishConfig();
-    const targets = resolveTargets({ ...client, defaultTarget: client.defaults.target, names: input.targetNames });
+    const config = await loadShareConfig();
+    const targets = resolveTargets({
+        targets: config.targets,
+        defaultTarget: config.defaults.target,
+        names: input.targetNames,
+    });
     const previous = await findPublication(
         input.id === undefined ? { kind: kind.id, source: input.source } : { kind: kind.id, id: input.id }
     );
@@ -127,11 +131,11 @@ async function unpublish(
 ): Promise<TargetOutcome[]> {
     const { id, targetNames } = input;
     const entry = await findPublication({ kind, id });
-    const { client } = await loadPublishConfig();
+    const config = await loadShareConfig();
     const everything = targetNames.length === 0;
     const targets = everything
-        ? client.targets.filter((target) => entry?.syncs && Object.hasOwn(entry.syncs, target.name))
-        : resolveTargets({ targets: client.targets, names: targetNames });
+        ? config.targets.filter((target) => entry?.syncs && Object.hasOwn(entry.syncs, target.name))
+        : resolveTargets({ targets: config.targets, names: targetNames });
     const outcomes: TargetOutcome[] = [];
     const removed = new Set<string>();
     for (const target of targets) {
@@ -146,7 +150,7 @@ async function unpublish(
     }
 
     if (entry) {
-        const configured = new Set(client.targets.map((target) => target.name));
+        const configured = new Set(config.targets.map((target) => target.name));
         const remaining = Object.entries(entry.syncs).filter(
             ([name]) => !removed.has(name) && (!everything || configured.has(name))
         );
@@ -161,9 +165,9 @@ async function unpublish(
 }
 
 async function prune(kind: string, names: readonly string[]): Promise<Array<{ target: string; removed: string[] }>> {
-    const { client } = await loadPublishConfig();
+    const config = await loadShareConfig();
     const entries = await listPublications(kind);
-    const targets = resolveTargets({ targets: client.targets, names: names.length ? names : [ALL_TARGETS] });
+    const targets = resolveTargets({ targets: config.targets, names: names.length ? names : [ALL_TARGETS] });
     const result: Array<{ target: string; removed: string[] }> = [];
     for (const target of targets) {
         const transport = transportFor(target);

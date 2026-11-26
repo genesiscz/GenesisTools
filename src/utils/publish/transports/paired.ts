@@ -206,7 +206,13 @@ export function createPairedTransport(
             return PublishTargetSchema.parse({
                 name: input.name,
                 publicBase,
-                transport: { kind: "paired", url, deviceId: paired.deviceId, token },
+                transport: {
+                    kind: "paired",
+                    url,
+                    deviceId: paired.deviceId,
+                    token,
+                    pairedAt: new Date().toISOString(),
+                },
             });
         },
         forget: async (target) => {

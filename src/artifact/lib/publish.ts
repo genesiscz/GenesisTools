@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { type PublishResult, publisher, type TargetOutcome } from "@genesiscz/utils/genesis-tools/publish/publisher";
-import { loadPublishConfig, type Publication } from "@genesiscz/utils/genesis-tools/publish/store";
+import { loadShareConfig, type Publication } from "@genesiscz/utils/genesis-tools/publish/store";
 import { shareServerSetupCommand } from "@genesiscz/utils/genesis-tools/tools/publish";
 import { logger } from "@genesiscz/utils/logger";
 import { isEditedAfterSync } from "@genesiscz/utils/publish/freshness";
@@ -19,10 +19,10 @@ export async function publishArtifact(input: {
     title?: string;
     targetNames: string[];
 }): Promise<PublishResult> {
-    const { client } = await loadPublishConfig();
+    const config = await loadShareConfig();
     const targets = resolveTargets({
-        targets: client.targets,
-        defaultTarget: client.defaults.target,
+        targets: config.targets,
+        defaultTarget: config.defaults.target,
         names: input.targetNames,
     });
 

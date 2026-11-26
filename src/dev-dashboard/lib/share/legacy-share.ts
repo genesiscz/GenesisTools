@@ -9,11 +9,11 @@ import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import { shareTitle } from "@app/dev-dashboard/lib/share/source";
 import {
     findPublication,
-    loadPublishConfig,
+    loadShareConfig,
     type Publication,
-    type PublishConfig,
+    type ShareConfig,
     savePublication,
-    updatePublishConfig,
+    updateShareConfig,
     withPublicationLock,
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { originOf } from "@genesiscz/utils/publish/ids";
@@ -84,8 +84,8 @@ export function legacyShareImport(input: { rawConfig: unknown; livePublicBase: s
     return { targets, defaultTarget: share?.defaults.target, publications: notes.map(legacyPublication) };
 }
 
-function mergeConfig(config: PublishConfig, legacy: LegacyShareImport | null, base: string): PublishConfig {
-    const byName = new Map(config.client.targets.map((target) => [target.name, target]));
+function mergeConfig(config: ShareConfig, legacy: LegacyShareImport | null, base: string): ShareConfig {
+    const byName = new Map(config.targets.map((target) => [target.name, target]));
     const targets = legacy?.targets ?? [];
     for (const target of targets) {
         if (!byName.has(target.name)) {
@@ -93,18 +93,18 @@ function mergeConfig(config: PublishConfig, legacy: LegacyShareImport | null, ba
         }
     }
 
-    let defaultTarget = config.client.defaults.target ?? legacy?.defaultTarget;
+    let defaultTarget = config.defaults.target ?? legacy?.defaultTarget;
     if (byName.size === 0 && legacy?.defaultTarget === undefined) {
         byName.set("mac", liveTarget("mac", base));
         defaultTarget = "mac";
     }
 
-    return { version: 1, client: { defaults: { target: defaultTarget }, targets: [...byName.values()] } };
+    return { ...config, defaults: { ...config.defaults, target: defaultTarget }, targets: [...byName.values()] };
 }
 
 /** The dashboard keeps showing its existing targets before the first write imports them. */
-export async function loadSharePublishConfig(): Promise<PublishConfig> {
-    const [rawConfig, config, livePublicBase] = await Promise.all([getConfig(), loadPublishConfig(), publicBaseUrl()]);
+export async function loadSharePublishConfig(): Promise<ShareConfig> {
+    const [rawConfig, config, livePublicBase] = await Promise.all([getConfig(), loadShareConfig(), publicBaseUrl()]);
     return mergeConfig(config, legacyShareImport({ rawConfig, livePublicBase }), livePublicBase);
 }
 
@@ -113,18 +113,18 @@ export async function importLegacyShare(): Promise<{ imported: string[] }> {
         const rawConfig = await getConfig();
         const livePublicBase = await publicBaseUrl();
         const legacy = legacyShareImport({ rawConfig, livePublicBase });
-        const config = await loadPublishConfig();
+        const config = await loadShareConfig();
 
-        if (!legacy && config.client.targets.length > 0) {
+        if (!legacy && config.targets.length > 0) {
             return { imported: [] };
         }
 
         const imported: string[] = [];
-        await updatePublishConfig((current) => {
+        await updateShareConfig((current) => {
             const merged = mergeConfig(current, legacy, livePublicBase);
-            const existing = new Set(current.client.targets.map((target) => target.name));
+            const existing = new Set(current.targets.map((target) => target.name));
             imported.push(
-                ...merged.client.targets.filter((target) => !existing.has(target.name)).map((target) => target.name)
+                ...merged.targets.filter((target) => !existing.has(target.name)).map((target) => target.name)
             );
             return merged;
         });

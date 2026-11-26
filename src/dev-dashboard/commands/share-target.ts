@@ -1,7 +1,7 @@
 import { importLegacyShare, loadSharePublishConfig } from "@app/dev-dashboard/lib/share/legacy-share";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { loadPublishConfig, updatePublishConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import { loadShareConfig, updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { ALL_TARGETS, TARGET_NAME_RE } from "@genesiscz/utils/publish/targets";
@@ -49,7 +49,7 @@ function validateTargetName(name: string): void {
 }
 
 function withTargetLock<T>(name: string, change: () => Promise<T>): Promise<T> {
-    return withFileLock(toolDataDir("publish", `.target-${name}.lock`), change, 30_000);
+    return withFileLock(toolDataDir("share", `.target-${name}.lock`), change, 30_000);
 }
 
 export async function runTargetAdd(name: string, opts: TargetAddOptions): Promise<void> {
@@ -93,8 +93,8 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
             ask: isInteractive() ? askInTerminal : askNever,
         };
         const replaced = await withTargetLock(name, async () => {
-            const config = await loadPublishConfig();
-            const previous = config.client.targets.find((target) => target.name === name);
+            const config = await loadShareConfig();
+            const previous = config.targets.find((target) => target.name === name);
             if (previous && !opts.replace) {
                 throw new Error(`a share target named "${name}" exists; ${TOOL} remove ${name} first`);
             }
@@ -111,14 +111,12 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
 
             const target = await transport.setup(input);
             try {
-                await updatePublishConfig((current) => ({
+                await updateShareConfig((current) => ({
                     ...current,
-                    client: {
-                        defaults: opts.default ? { target: name } : current.client.defaults,
-                        targets: previous
-                            ? current.client.targets.map((entry) => (entry.name === name ? target : entry))
-                            : [...current.client.targets, target],
-                    },
+                    defaults: opts.default ? { ...current.defaults, target: name } : current.defaults,
+                    targets: previous
+                        ? current.targets.map((entry) => (entry.name === name ? target : entry))
+                        : [...current.targets, target],
                 }));
             } catch (err) {
                 if (pair && oldToken !== undefined) {
@@ -170,9 +168,9 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
 }
 
 export async function runTargetList(): Promise<void> {
-    const { client } = await loadSharePublishConfig();
-    for (const target of client.targets) {
-        const marker = target.name === client.defaults.target ? "*" : " ";
+    const config = await loadSharePublishConfig();
+    for (const target of config.targets) {
+        const marker = target.name === config.defaults.target ? "*" : " ";
         const link = transportFor(target).pageUrl({ target, kind: "md", id: "SLUG" }) ?? "no note mount";
         out.println(`${marker} ${target.name}\t${target.transport.kind}\t${link.replace("SLUG", "<slug>")}`);
     }
@@ -184,20 +182,20 @@ export async function runTargetRemove(name: string): Promise<void> {
     validateTargetName(name);
     await importLegacyShare();
     await withTargetLock(name, async () => {
-        const { client } = await loadPublishConfig();
-        const target = client.targets.find((entry) => entry.name === name);
+        const config = await loadShareConfig();
+        const target = config.targets.find((entry) => entry.name === name);
         if (!target) {
             throw new Error(`no share target "${name}"`);
         }
 
-        await updatePublishConfig((current) => {
-            if (current.client.defaults.target === name) {
+        await updateShareConfig((current) => {
+            if (current.defaults.target === name) {
                 throw new Error(`"${name}" is the default target; pick another with ${TOOL} default <name> first`);
             }
 
             return {
                 ...current,
-                client: { ...current.client, targets: current.client.targets.filter((entry) => entry.name !== name) },
+                targets: current.targets.filter((entry) => entry.name !== name),
             };
         });
         await transportFor(target).forget(target);
@@ -209,12 +207,12 @@ export async function runTargetRemove(name: string): Promise<void> {
 export async function runTargetDefault(name: string): Promise<void> {
     validateTargetName(name);
     await importLegacyShare();
-    await updatePublishConfig((config) => {
-        if (!config.client.targets.some((entry) => entry.name === name)) {
+    await updateShareConfig((config) => {
+        if (!config.targets.some((entry) => entry.name === name)) {
             throw new Error(`no share target "${name}"`);
         }
 
-        return { ...config, client: { ...config.client, defaults: { target: name } } };
+        return { ...config, defaults: { ...config.defaults, target: name } };
     });
     out.println(`default share target: ${name}`);
     await out.flush();
