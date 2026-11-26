@@ -16,6 +16,21 @@ call, needs no code, and refuses to write anything unless every op matched exact
 The Edit tool is fine for ONE edit in ONE file you have just read. From two edits up, the CLI
 is fewer calls and the only option that verifies.
 
+## Claude Code with the REPL tool, Codex with code mode: use the code-mode doors first
+
+When your harness gives you a script tool (Claude Code's `REPL`, Codex code mode), do every
+fable-replace call from a script, in this order, and never write a heredoc spec:
+
+1. `genesis_replace` / `genesis_replace_find` on the genesis-tools MCP server, when
+   `searchTools("genesis_replace")` finds them (the server needs capability `replace`).
+2. Else the CLI with `--json` and the edits on stdin (`--edits -`).
+
+Both are in "Code mode: JSON in, JSON out" below. The edits stay a variable, the report comes back
+as one JSON object, and a MISS is a field you branch on in the same script, not a line you read in
+the next turn. The heredoc form further down is for a harness that has only a shell. When a
+session lists neither tool although its harness has a script tool, post a `handoff_post`
+(project GenesisTools) that names the harness and its MCP capability list.
+
 ## Code mode: JSON in, JSON out
 
 In a REPL or a tool call, send the edits as data and read one JSON report. Do not build a
