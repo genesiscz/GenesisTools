@@ -23952,12 +23952,17 @@ public struct RequestsWithdrawResult: Codable, Sendable {
     }
 }
 
+public enum WorktreeSnapshotParamsDriver: String, Codable, Sendable {
+    case value0 = "watchman"
+    case value1 = "parcel"
+}
+
 public struct WorktreeSnapshotParams: Codable, Sendable {
     public var `root`: String
-    public var `driver`: String
+    public var `driver`: WorktreeSnapshotParamsDriver
     public var `since`: String?
     public var `fenceMs`: Int?
-    public init(`root`: String, `driver`: String, `since`: String? = nil, `fenceMs`: Int? = nil) {
+    public init(`root`: String, `driver`: WorktreeSnapshotParamsDriver, `since`: String? = nil, `fenceMs`: Int? = nil) {
         self.`root` = `root`
         self.`driver` = `driver`
         self.`since` = `since`
@@ -23967,7 +23972,7 @@ public struct WorktreeSnapshotParams: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`root` = try box.decode(String.self, forKey: .`root`)
-        self.`driver` = try box.decode(String.self, forKey: .`driver`)
+        self.`driver` = try box.decode(WorktreeSnapshotParamsDriver.self, forKey: .`driver`)
         self.`since` = try box.decodeIfPresent(String.self, forKey: .`since`)
         self.`fenceMs` = try box.decodeIfPresent(Int.self, forKey: .`fenceMs`)
     }
@@ -23980,10 +23985,341 @@ public struct WorktreeSnapshotParams: Codable, Sendable {
     }
 }
 
+public enum WorktreeSnapshotResultOption0State: String, Codable, Sendable {
+    case value0 = "ok"
+}
+
+public enum WorktreeSnapshotResultOption0EntriesItemKind: String, Codable, Sendable {
+    case value0 = "changed"
+    case value1 = "renamed"
+    case value2 = "unmerged"
+    case value3 = "untracked"
+    case value4 = "ignored"
+}
+
+public struct WorktreeSnapshotResultOption0EntriesItem: Codable, Sendable {
+    public var `kind`: WorktreeSnapshotResultOption0EntriesItemKind
+    public var `path`: String
+    public var `origPath`: String?
+    public var `index`: String
+    public var `worktree`: String
+    public var `score`: Double?
+    public var `submodule`: String?
+    public init(`kind`: WorktreeSnapshotResultOption0EntriesItemKind, `path`: String, `origPath`: String? = nil, `index`: String, `worktree`: String, `score`: Double? = nil, `submodule`: String? = nil) {
+        self.`kind` = `kind`
+        self.`path` = `path`
+        self.`origPath` = `origPath`
+        self.`index` = `index`
+        self.`worktree` = `worktree`
+        self.`score` = `score`
+        self.`submodule` = `submodule`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `path`; case `origPath`; case `index`; case `worktree`; case `score`; case `submodule` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(WorktreeSnapshotResultOption0EntriesItemKind.self, forKey: .`kind`)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+        self.`origPath` = try box.decodeIfPresent(String.self, forKey: .`origPath`)
+        self.`index` = try box.decode(String.self, forKey: .`index`)
+        self.`worktree` = try box.decode(String.self, forKey: .`worktree`)
+        self.`score` = try box.decodeIfPresent(Double.self, forKey: .`score`)
+        self.`submodule` = try box.decodeIfPresent(String.self, forKey: .`submodule`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`path`, forKey: .`path`)
+        try box.encodeIfPresent(`origPath`, forKey: .`origPath`)
+        try box.encode(`index`, forKey: .`index`)
+        try box.encode(`worktree`, forKey: .`worktree`)
+        try box.encodeIfPresent(`score`, forKey: .`score`)
+        try box.encodeIfPresent(`submodule`, forKey: .`submodule`)
+    }
+}
+
+public enum WorktreeSnapshotResultOption0Source: String, Codable, Sendable {
+    case value0 = "inventory"
+    case value1 = "seed"
+    case value2 = "reseed"
+}
+
+public enum WorktreeSnapshotResultOption0Reseed: String, Codable, Sendable {
+    case value0 = "git-state"
+    case value1 = "ignore-rules"
+    case value2 = "too-many-paths"
+    case value3 = "fresh-instance"
+    case value4 = "recrawl"
+    case value5 = "overflow"
+    case value6 = "drift"
+}
+
+public struct WorktreeSnapshotResultOption0ChangedItem: Codable, Sendable {
+    public var `path`: String
+    public var `exists`: Bool
+    public init(`path`: String, `exists`: Bool) {
+        self.`path` = `path`
+        self.`exists` = `exists`
+    }
+    private enum CodingKeys: String, CodingKey { case `path`; case `exists` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+        self.`exists` = try box.decode(Bool.self, forKey: .`exists`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`path`, forKey: .`path`)
+        try box.encode(`exists`, forKey: .`exists`)
+    }
+}
+
+public struct WorktreeSnapshotResultOption0Cost: Codable, Sendable {
+    public var `cpuMs`: Double
+    public var `gitRuns`: Double
+    public var `fullStatus`: Bool
+    public var `fenceMs`: Double
+    public init(`cpuMs`: Double, `gitRuns`: Double, `fullStatus`: Bool, `fenceMs`: Double) {
+        self.`cpuMs` = `cpuMs`
+        self.`gitRuns` = `gitRuns`
+        self.`fullStatus` = `fullStatus`
+        self.`fenceMs` = `fenceMs`
+    }
+    private enum CodingKeys: String, CodingKey { case `cpuMs`; case `gitRuns`; case `fullStatus`; case `fenceMs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`cpuMs` = try box.decode(Double.self, forKey: .`cpuMs`)
+        self.`gitRuns` = try box.decode(Double.self, forKey: .`gitRuns`)
+        self.`fullStatus` = try box.decode(Bool.self, forKey: .`fullStatus`)
+        self.`fenceMs` = try box.decode(Double.self, forKey: .`fenceMs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`cpuMs`, forKey: .`cpuMs`)
+        try box.encode(`gitRuns`, forKey: .`gitRuns`)
+        try box.encode(`fullStatus`, forKey: .`fullStatus`)
+        try box.encode(`fenceMs`, forKey: .`fenceMs`)
+    }
+}
+
+public struct WorktreeSnapshotResultOption0: Codable, Sendable {
+    public var `state`: WorktreeSnapshotResultOption0State
+    public var `mark`: String
+    public var `head`: String?
+    public var `entries`: [WorktreeSnapshotResultOption0EntriesItem]
+    public var `source`: WorktreeSnapshotResultOption0Source
+    public var `reseed`: WorktreeSnapshotResultOption0Reseed?
+    public var `changed`: [WorktreeSnapshotResultOption0ChangedItem]?
+    public var `verifiedMsAgo`: Double
+    public var `cost`: WorktreeSnapshotResultOption0Cost
+    public init(`state`: WorktreeSnapshotResultOption0State, `mark`: String, `head`: String? = nil, `entries`: [WorktreeSnapshotResultOption0EntriesItem], `source`: WorktreeSnapshotResultOption0Source, `reseed`: WorktreeSnapshotResultOption0Reseed? = nil, `changed`: [WorktreeSnapshotResultOption0ChangedItem]? = nil, `verifiedMsAgo`: Double, `cost`: WorktreeSnapshotResultOption0Cost) {
+        self.`state` = `state`
+        self.`mark` = `mark`
+        self.`head` = `head`
+        self.`entries` = `entries`
+        self.`source` = `source`
+        self.`reseed` = `reseed`
+        self.`changed` = `changed`
+        self.`verifiedMsAgo` = `verifiedMsAgo`
+        self.`cost` = `cost`
+    }
+    private enum CodingKeys: String, CodingKey { case `state`; case `mark`; case `head`; case `entries`; case `source`; case `reseed`; case `changed`; case `verifiedMsAgo`; case `cost` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`state` = try box.decode(WorktreeSnapshotResultOption0State.self, forKey: .`state`)
+        self.`mark` = try box.decode(String.self, forKey: .`mark`)
+        self.`head` = try box.decode(String?.self, forKey: .`head`)
+        self.`entries` = try box.decode([WorktreeSnapshotResultOption0EntriesItem].self, forKey: .`entries`)
+        self.`source` = try box.decode(WorktreeSnapshotResultOption0Source.self, forKey: .`source`)
+        self.`reseed` = try box.decodeIfPresent(WorktreeSnapshotResultOption0Reseed.self, forKey: .`reseed`)
+        self.`changed` = try box.decode([WorktreeSnapshotResultOption0ChangedItem]?.self, forKey: .`changed`)
+        self.`verifiedMsAgo` = try box.decode(Double.self, forKey: .`verifiedMsAgo`)
+        self.`cost` = try box.decode(WorktreeSnapshotResultOption0Cost.self, forKey: .`cost`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`mark`, forKey: .`mark`)
+        try box.encode(`head`, forKey: .`head`)
+        try box.encode(`entries`, forKey: .`entries`)
+        try box.encode(`source`, forKey: .`source`)
+        try box.encodeIfPresent(`reseed`, forKey: .`reseed`)
+        try box.encode(`changed`, forKey: .`changed`)
+        try box.encode(`verifiedMsAgo`, forKey: .`verifiedMsAgo`)
+        try box.encode(`cost`, forKey: .`cost`)
+    }
+}
+
+public enum WorktreeSnapshotResultOption1State: String, Codable, Sendable {
+    case value0 = "unavailable"
+}
+
+public enum WorktreeSnapshotResultOption1Reason: String, Codable, Sendable {
+    case value0 = "no-driver"
+    case value1 = "unsupported-root"
+    case value2 = "opening"
+    case value3 = "fence-timeout"
+    case value4 = "not-a-worktree"
+    case value5 = "over-capacity"
+    case value6 = "git-failed"
+}
+
+public struct WorktreeSnapshotResultOption1: Codable, Sendable {
+    public var `state`: WorktreeSnapshotResultOption1State
+    public var `reason`: WorktreeSnapshotResultOption1Reason
+    public init(`state`: WorktreeSnapshotResultOption1State, `reason`: WorktreeSnapshotResultOption1Reason) {
+        self.`state` = `state`
+        self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `state`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`state` = try box.decode(WorktreeSnapshotResultOption1State.self, forKey: .`state`)
+        self.`reason` = try box.decode(WorktreeSnapshotResultOption1Reason.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
+}
+
+public enum WorktreeSnapshotResult: Codable, Sendable {
+    case option0(WorktreeSnapshotResultOption0)
+    case option1(WorktreeSnapshotResultOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? WorktreeSnapshotResultOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? WorktreeSnapshotResultOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No WorktreeSnapshotResult variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
 public struct WorktreeWatchersParams: Codable, Sendable {
 
     public init() {
 
+    }
+}
+
+public enum WorktreeWatchersResultItemDriver: String, Codable, Sendable {
+    case value0 = "watchman"
+    case value1 = "parcel"
+}
+
+public struct WorktreeWatchersResultItemCountersReseeds: Codable, Sendable {
+    public var `git-state`: Double
+    public var `ignore-rules`: Double
+    public var `too-many-paths`: Double
+    public var `fresh-instance`: Double
+    public var `recrawl`: Double
+    public var `overflow`: Double
+    public var `drift`: Double
+    public init(`git-state`: Double, `ignore-rules`: Double, `too-many-paths`: Double, `fresh-instance`: Double, `recrawl`: Double, `overflow`: Double, `drift`: Double) {
+        self.`git-state` = `git-state`
+        self.`ignore-rules` = `ignore-rules`
+        self.`too-many-paths` = `too-many-paths`
+        self.`fresh-instance` = `fresh-instance`
+        self.`recrawl` = `recrawl`
+        self.`overflow` = `overflow`
+        self.`drift` = `drift`
+    }
+    private enum CodingKeys: String, CodingKey { case `git-state`; case `ignore-rules`; case `too-many-paths`; case `fresh-instance`; case `recrawl`; case `overflow`; case `drift` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`git-state` = try box.decode(Double.self, forKey: .`git-state`)
+        self.`ignore-rules` = try box.decode(Double.self, forKey: .`ignore-rules`)
+        self.`too-many-paths` = try box.decode(Double.self, forKey: .`too-many-paths`)
+        self.`fresh-instance` = try box.decode(Double.self, forKey: .`fresh-instance`)
+        self.`recrawl` = try box.decode(Double.self, forKey: .`recrawl`)
+        self.`overflow` = try box.decode(Double.self, forKey: .`overflow`)
+        self.`drift` = try box.decode(Double.self, forKey: .`drift`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`git-state`, forKey: .`git-state`)
+        try box.encode(`ignore-rules`, forKey: .`ignore-rules`)
+        try box.encode(`too-many-paths`, forKey: .`too-many-paths`)
+        try box.encode(`fresh-instance`, forKey: .`fresh-instance`)
+        try box.encode(`recrawl`, forKey: .`recrawl`)
+        try box.encode(`overflow`, forKey: .`overflow`)
+        try box.encode(`drift`, forKey: .`drift`)
+    }
+}
+
+public struct WorktreeWatchersResultItemCounters: Codable, Sendable {
+    public var `answers`: Double
+    public var `seeds`: Double
+    public var `reseeds`: WorktreeWatchersResultItemCountersReseeds
+    public var `reconciles`: Double
+    public var `drifts`: Double
+    public var `fenceTimeouts`: Double
+    public init(`answers`: Double, `seeds`: Double, `reseeds`: WorktreeWatchersResultItemCountersReseeds, `reconciles`: Double, `drifts`: Double, `fenceTimeouts`: Double) {
+        self.`answers` = `answers`
+        self.`seeds` = `seeds`
+        self.`reseeds` = `reseeds`
+        self.`reconciles` = `reconciles`
+        self.`drifts` = `drifts`
+        self.`fenceTimeouts` = `fenceTimeouts`
+    }
+    private enum CodingKeys: String, CodingKey { case `answers`; case `seeds`; case `reseeds`; case `reconciles`; case `drifts`; case `fenceTimeouts` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`answers` = try box.decode(Double.self, forKey: .`answers`)
+        self.`seeds` = try box.decode(Double.self, forKey: .`seeds`)
+        self.`reseeds` = try box.decode(WorktreeWatchersResultItemCountersReseeds.self, forKey: .`reseeds`)
+        self.`reconciles` = try box.decode(Double.self, forKey: .`reconciles`)
+        self.`drifts` = try box.decode(Double.self, forKey: .`drifts`)
+        self.`fenceTimeouts` = try box.decode(Double.self, forKey: .`fenceTimeouts`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`answers`, forKey: .`answers`)
+        try box.encode(`seeds`, forKey: .`seeds`)
+        try box.encode(`reseeds`, forKey: .`reseeds`)
+        try box.encode(`reconciles`, forKey: .`reconciles`)
+        try box.encode(`drifts`, forKey: .`drifts`)
+        try box.encode(`fenceTimeouts`, forKey: .`fenceTimeouts`)
+    }
+}
+
+public struct WorktreeWatchersResultItem: Codable, Sendable {
+    public var `root`: String
+    public var `driver`: WorktreeWatchersResultItemDriver
+    public var `openedAt`: String
+    public var `lastAnswerAt`: String?
+    public var `instance`: String
+    public var `counters`: WorktreeWatchersResultItemCounters
+    public init(`root`: String, `driver`: WorktreeWatchersResultItemDriver, `openedAt`: String, `lastAnswerAt`: String? = nil, `instance`: String, `counters`: WorktreeWatchersResultItemCounters) {
+        self.`root` = `root`
+        self.`driver` = `driver`
+        self.`openedAt` = `openedAt`
+        self.`lastAnswerAt` = `lastAnswerAt`
+        self.`instance` = `instance`
+        self.`counters` = `counters`
+    }
+    private enum CodingKeys: String, CodingKey { case `root`; case `driver`; case `openedAt`; case `lastAnswerAt`; case `instance`; case `counters` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`root` = try box.decode(String.self, forKey: .`root`)
+        self.`driver` = try box.decode(WorktreeWatchersResultItemDriver.self, forKey: .`driver`)
+        self.`openedAt` = try box.decode(String.self, forKey: .`openedAt`)
+        self.`lastAnswerAt` = try box.decode(String?.self, forKey: .`lastAnswerAt`)
+        self.`instance` = try box.decode(String.self, forKey: .`instance`)
+        self.`counters` = try box.decode(WorktreeWatchersResultItemCounters.self, forKey: .`counters`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`root`, forKey: .`root`)
+        try box.encode(`driver`, forKey: .`driver`)
+        try box.encode(`openedAt`, forKey: .`openedAt`)
+        try box.encode(`lastAnswerAt`, forKey: .`lastAnswerAt`)
+        try box.encode(`instance`, forKey: .`instance`)
+        try box.encode(`counters`, forKey: .`counters`)
     }
 }
 
@@ -26084,8 +26420,8 @@ public final class GenesisToolsRPC {
     public func requestsList(_ params: RequestsListParams) async throws -> [RequestsListResultItem] { try await call("requests.list", params) }
     public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params, timeout: GenesisToolsRPC.actionClientTimeout("person.showWindow")) }
     public func requestsWithdraw(_ params: RequestsWithdrawParams) async throws -> RequestsWithdrawResult { try await call("requests.withdraw", params) }
-    public func worktreeSnapshot(_ params: WorktreeSnapshotParams) async throws -> GenesisToolsJSON { try await call("worktree.snapshot", params) }
-    public func worktreeWatchers(_ params: WorktreeWatchersParams) async throws -> GenesisToolsJSON { try await call("worktree.watchers", params) }
+    public func worktreeSnapshot(_ params: WorktreeSnapshotParams) async throws -> WorktreeSnapshotResult { try await call("worktree.snapshot", params) }
+    public func worktreeWatchers(_ params: WorktreeWatchersParams) async throws -> [WorktreeWatchersResultItem] { try await call("worktree.watchers", params) }
     public lazy var events = Events(owner: self)
     @MainActor public final class Events {
         unowned let owner: GenesisToolsRPC
@@ -26224,8 +26560,8 @@ public final class GenesisToolsRPC {
         case "requests.list": _ = try decoder.decode(RequestsListParams.self, from: params); _ = try decoder.decode([RequestsListResultItem].self, from: result)
         case "requests.present": _ = try decoder.decode(RequestsPresentParams.self, from: params); _ = try decoder.decode(RequestsPresentResult.self, from: result)
         case "requests.withdraw": _ = try decoder.decode(RequestsWithdrawParams.self, from: params); _ = try decoder.decode(RequestsWithdrawResult.self, from: result)
-        case "worktree.snapshot": _ = try decoder.decode(WorktreeSnapshotParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
-        case "worktree.watchers": _ = try decoder.decode(WorktreeWatchersParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
+        case "worktree.snapshot": _ = try decoder.decode(WorktreeSnapshotParams.self, from: params); _ = try decoder.decode(WorktreeSnapshotResult.self, from: result)
+        case "worktree.watchers": _ = try decoder.decode(WorktreeWatchersParams.self, from: params); _ = try decoder.decode([WorktreeWatchersResultItem].self, from: result)
         case "request.present": _ = try decoder.decode(RequestPresentParams.self, from: params); _ = try decoder.decode(RequestPresentResult.self, from: result)
         default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown method " + method))
         }

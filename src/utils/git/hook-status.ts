@@ -102,7 +102,15 @@ export async function readHookStatusAsync(
 ): Promise<GitRead<StatusSummary>> {
     const started = performance.now();
     const timeoutMs = options.timeoutMs ?? HOOK_GIT_TIMEOUT_MS;
-    const args = ["git", "-C", root, "--no-optional-locks", ...hookStatusArgs({ pathspecs: options.pathspecs })];
+    const args = [
+        "git",
+        "-C",
+        root,
+        "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
+        ...hookStatusArgs({ pathspecs: options.pathspecs }),
+    ];
     let proc: ReturnType<typeof Bun.spawn>;
 
     try {

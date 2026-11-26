@@ -406,6 +406,7 @@ async function benchmark(): Promise<void> {
             git: gitSpawns.length,
             status: gitSpawns.filter((spawn) => spawn.cmd.includes("status")).length,
             files: counted.result.files.length,
+            paths: [...counted.result.files].sort(),
             // The repository path is the same for every arm; dropping it keeps the list readable.
             commands: gitSpawns.map((spawn) => spawn.cmd.slice(1).join(" ").replaceAll(ROOT, "<repo>")),
         };
@@ -426,8 +427,6 @@ async function benchmark(): Promise<void> {
             stderr: Bun.file(join(SCRATCH, "service.stderr.log")),
         });
         const { callWorktreeSnapshot } = await import("@genesiscz/utils/genesis-tools/worktree/thin-client");
-        const deadline = Date.now() + WARM_DEADLINE_MS;
-
         for (const arm of ARM_IDS) {
             const driver = ARMS[arm]?.driver;
 
@@ -435,6 +434,7 @@ async function benchmark(): Promise<void> {
                 continue;
             }
 
+            const deadline = Date.now() + WARM_DEADLINE_MS;
             let last = "not asked";
 
             while (Date.now() < deadline) {
@@ -479,6 +479,7 @@ async function benchmark(): Promise<void> {
     const daemons = MODES ? await startDaemons() : null;
     const counts: BaselineMetrics = {};
     const commands: Record<string, string[]> = {};
+    const renderedPaths: Record<string, string[]> = {};
     const runs: BaselineMetrics[] = [];
     let uptimeBefore = "";
     let uptimeAfter = "";
@@ -492,6 +493,7 @@ async function benchmark(): Promise<void> {
                 counts[`${arm}.${shape}.statusSpawns`] = counted.status;
                 counts[`${arm}.${shape}.renderedFiles`] = counted.files;
                 commands[`${arm}.${shape}`] = counted.commands;
+                renderedPaths[`${arm}.${shape}`] = counted.paths;
             }
         }
 
@@ -506,8 +508,10 @@ async function benchmark(): Promise<void> {
         uptimeBefore = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
 
         for (let run = 0; run < args.runs; run += 1) {
-            // The order rotates per run, so no arm always runs right after the same one.
-            const order = ARM_IDS.map((_, index) => ARM_IDS[(index + run) % ARM_IDS.length] ?? "");
+            // Alternate direction and rotate to vary both position and predecessor.
+            const direction = run % 2 === 0 ? [...ARM_IDS] : [...ARM_IDS].reverse();
+            const offset = Math.floor(run / 2) % direction.length;
+            const order = [...direction.slice(offset), ...direction.slice(0, offset)];
             const metrics: BaselineMetrics = { ...counts };
 
             for (const arm of order) {
@@ -555,12 +559,13 @@ async function benchmark(): Promise<void> {
             arms: Object.fromEntries(ARM_IDS.map((arm) => [arm, ARMS[arm]?.dir])),
             trackedFiles: tracked.length,
             commands,
+            renderedPaths,
         },
     });
 
     if (MODES) {
         const unequal = SHAPES.filter(
-            (shape) => new Set(ARM_IDS.map((arm) => counts[`${arm}.${shape}.renderedFiles`])).size > 1
+            (shape) => new Set(ARM_IDS.map((arm) => SafeJSON.stringify(renderedPaths[`${arm}.${shape}`]))).size > 1
         );
         out.println(
             unequal.length === 0

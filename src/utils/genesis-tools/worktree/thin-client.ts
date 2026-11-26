@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, statSync, utimesSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { isProcessAlive } from "../../process-alive";
 import { toolDataDir } from "../../storage/root";
@@ -71,6 +71,8 @@ export async function callWorktreeSnapshot(
 
     return new Promise((resolve) => {
         let buffer = "";
+        let bufferBytes = 0;
+        const maxFrameBytes = 8 * 1024 * 1024;
         let settled = false;
         let socket: { end(): void; write(data: string): number } | null = null;
         const finish = (answer: ThinCall<WorktreeSnapshot>) => {
@@ -98,11 +100,20 @@ export async function callWorktreeSnapshot(
                     );
                 },
                 data(_socket, chunk) {
+                    if (settled) {
+                        return;
+                    }
+                    bufferBytes += chunk.byteLength;
+                    if (bufferBytes > maxFrameBytes) {
+                        finish({ ok: false, reason: "rpc-error", wallMs: wallMs() });
+                        return;
+                    }
                     buffer += chunk.toString();
                     let newline = buffer.indexOf("\n");
 
                     while (newline >= 0) {
                         const line = buffer.slice(0, newline);
+                        bufferBytes -= Buffer.byteLength(line) + 1;
                         buffer = buffer.slice(newline + 1);
                         newline = buffer.indexOf("\n");
 
@@ -142,33 +153,39 @@ export async function callWorktreeSnapshot(
     });
 }
 
-/** A detached `genesis-tools serve --detach`, at most once in `cooldownMs` (60,000) per user, by a stamp file. */
-export function requestServiceStart(options: { dir?: string; cooldownMs?: number } = {}): void {
-    if (isTestProcess() && !options.dir) {
-        return;
+/** Requests a detached service at most once per cooldown. The injected launcher keeps tests isolated. */
+export function requestServiceStart(
+    options: { dir?: string; cooldownMs?: number; launch?: () => Promise<void> } = {}
+): Promise<void> {
+    if (isTestProcess() && !options.launch) {
+        return Promise.resolve();
     }
 
-    const stamp = join(serviceDir(options.dir), "start-request.stamp");
-    const cooldownMs = options.cooldownMs ?? 60_000;
-    const last = statSync(stamp, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+    return (async () => {
+        const { withFileLock } = await import("../../storage/file-lock");
+        const dir = serviceDir(options.dir);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const stamp = join(dir, "start-request.stamp");
+        await withFileLock(`${stamp}.lock`, async () => {
+            const last = statSync(stamp, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+            if (Date.now() - last < (options.cooldownMs ?? 60_000)) {
+                return;
+            }
 
-    if (Date.now() - last < cooldownMs) {
-        return;
-    }
+            closeSync(openSync(stamp, "a", 0o600));
+            utimesSync(stamp, new Date(), new Date());
+            if (options.launch) {
+                await options.launch();
+                return;
+            }
 
-    try {
-        closeSync(openSync(stamp, "a"));
-        utimesSync(stamp, new Date(), new Date());
-    } catch {
-        // No service folder yet: the start below makes it, and the next request writes the stamp.
-    }
-
-    void import("../tools/services").then(({ genesisToolsServeDetachCommand }) => {
-        const child = Bun.spawn(["/bin/sh", "-c", genesisToolsServeDetachCommand()], {
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
+            const { genesisToolsServeDetachCommand } = await import("../tools/services");
+            const child = Bun.spawn(["/bin/sh", "-c", genesisToolsServeDetachCommand()], {
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+            });
+            child.unref();
         });
-        child.unref();
-    });
+    })().catch(() => undefined);
 }
