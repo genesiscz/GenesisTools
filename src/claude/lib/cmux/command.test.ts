@@ -26,6 +26,12 @@ function session(overrides: Partial<PlannedSession["candidate"]> = {}, extra: Pa
 }
 
 describe("buildLaunchCommand", () => {
+    test("sets Code Mode after changing directory", () => {
+        expect(buildLaunchCommand(session(), { codeMode: true })).toContain(
+            "&& CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 tools claude start"
+        );
+        expect(buildLaunchCommand(session())).not.toContain("CLAUDE_CODE_EXPERIMENTAL_CODE_MODE");
+    });
     test("resumes through claude's own flag, after the passthrough separator", () => {
         const command = buildLaunchCommand(session());
 

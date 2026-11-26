@@ -139,7 +139,15 @@ export function claudeRenameRows(sessionId: string, title: string): string[] {
 }
 
 /** Renames a session the way Claude Code's `/rename` does; the newest rows win. */
-export function appendClaudeTitle(path: string, sessionId: string, title: string): void {
+export function appendClaudeTitle({
+    path,
+    sessionId,
+    title,
+}: {
+    path: string;
+    sessionId: string;
+    title: string;
+}): void {
     appendClaudeRows(path, claudeRenameRows(sessionId, title));
 }
 

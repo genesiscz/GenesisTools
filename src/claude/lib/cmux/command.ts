@@ -4,6 +4,7 @@ import { shellQuote } from "@genesiscz/utils/shell/quote";
 export interface LaunchCommandOptions {
     /** Add `-a` so a pane with no recorded account picks the best one instead of asking. */
     autopick?: boolean;
+    codeMode?: boolean;
 }
 
 /**
@@ -85,7 +86,8 @@ export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandO
 
     parts.push("--resume", shellQuote(session.candidate.sessionId));
 
-    return `cd -- ${shellQuote(session.candidate.cwd)} && ${parts.join(" ")}`;
+    const mode = opts.codeMode ? "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 " : "";
+    return `cd -- ${shellQuote(session.candidate.cwd)} && ${mode}${parts.join(" ")}`;
 }
 
 /** Tab title for a restored pane: short and identifying, since panes get narrow. */

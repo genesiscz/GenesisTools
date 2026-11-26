@@ -26,7 +26,7 @@ import {
     writeSessionCopy,
 } from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
-import { claudeSessionHolders } from "./claude-peer";
+import { claudeSessionHolders, isClaudeLaunchProcess } from "./claude-peer";
 import { claudeResumeModel } from "./claude-tail-usage";
 import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
 import { SESSION_MODEL_FIRST_TAIL_BYTES, SESSION_MODEL_TAIL_BYTES } from "./session-model";
@@ -1063,7 +1063,7 @@ test("moving a session into Code Mode: the session keeps its id and gets the pin
         "",
     ]);
 
-    appendClaudeTitle(sourcePath, FORK_SOURCE, "Invoice totals");
+    appendClaudeTitle({ path: sourcePath, sessionId: FORK_SOURCE, title: "Invoice totals" });
     expect(readFileSync(sourcePath, "utf8").split("\n").slice(-3, -1)).toEqual([
         `{"type":"custom-title","customTitle":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
         `{"type":"agent-name","agentName":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
@@ -1120,11 +1120,49 @@ test("the pair check passes a clean move and fails a changed row and REPL in the
         "API errors after the move": "ok",
     });
 
+    appendFileSync(
+        sessionPath,
+        `${line({ type: "assistant", message: { content: [{ type: "text", text: "the caller isn't using it" }] } })}\n`
+    );
+    expect((await run())["session runs in Code Mode"]).toBe("ok");
+    const wholeCopy = readFileSync(copyPath, "utf8");
+    writeFileSync(
+        copyPath,
+        wholeCopy
+            .split("\n")
+            .filter((row) => !row.includes('"name":"Read"'))
+            .join("\n")
+    );
+    expect((await run())["conversation copied whole"]).toBe("fail");
+    writeFileSync(copyPath, wholeCopy);
     appendFileSync(copyPath, `${line({ ...tool("REPL"), sessionId: FORK_ID })}\n`);
     expect((await run())["copy runs without Code Mode"]).toBe("fail");
 
     writeFileSync(copyPath, readFileSync(copyPath, "utf8").replace("fix the invoice", "fix the receipt"));
     expect((await run())["conversation copied whole"]).toBe("fail");
+});
+
+test("a transcript copy refuses a preexisting temporary path and removes a failed publication", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-copy-failure-"));
+    const sourcePath = join(directory, "source.jsonl");
+    const copyPath = join(directory, "copy.jsonl");
+    writeFileSync(sourcePath, '{"type":"user","message":{"content":"private fixture"}}\n');
+    const temporary = `${copyPath}.${process.pid}.tmp`;
+    writeFileSync(temporary, "keep this file");
+    const input = { sourceId: FORK_SOURCE, copyId: FORK_ID, sourcePath, copyPath, title: "Fixture" };
+    await expect(writeSessionCopy(input)).rejects.toThrow();
+    expect(readFileSync(temporary, "utf8")).toBe("keep this file");
+    fs.unlinkSync(temporary);
+    mkdirSync(copyPath);
+    await expect(writeSessionCopy(input)).rejects.toThrow();
+    expect(fs.existsSync(temporary)).toBe(false);
+});
+
+test("the Claude launch-chain predicate admits native launchers and rejects supervisors", () => {
+    expect(isClaudeLaunchProcess({ name: "claude", command: "/opt/versions/2.1.0" })).toBe(true);
+    expect(isClaudeLaunchProcess({ name: "bun", command: "bun /work/src/claude/index.ts start" })).toBe(true);
+    expect(isClaudeLaunchProcess({ name: "Python", command: "python /work/jobs.py" })).toBe(false);
+    expect(isClaudeLaunchProcess({ name: "Python", command: "python runner.py zsh -ic exec claude" })).toBe(false);
 });
 
 test("a session's holders are only the running processes its registry files were written for", () => {

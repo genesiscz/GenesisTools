@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { loadPins, recordPin } from "@genesiscz/utils/agent-sessions/pins";
 import {
     appendClaudeCodeModePin,
     checkCodeModePair,
@@ -13,17 +15,24 @@ import {
     AmbiguousSessionIdError,
     canonicalClaudeTranscript,
 } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
-import { claudeSessionHolders } from "@genesiscz/utils/agent-sessions/readers/claude-peer";
+import {
+    claudeSessionHolderProcesses,
+    claudeSessionHolders,
+    isClaudeLaunchProcess,
+} from "@genesiscz/utils/agent-sessions/readers/claude-peer";
 import {
     appendClaudeTitle,
     lastClaudeAiTitleIn,
     lastClaudeTitleIn,
 } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { ancestry } from "@genesiscz/utils/process/processes";
+import { ancestry, readProcess } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 
 const { log } = logger.scoped("claude-fork");
 
@@ -43,7 +52,7 @@ export interface CodeModeForkPlan {
 export type CodeModeForkOutcome =
     | { kind: "refused"; reason: string }
     /** A Claude Code process has the session open; nothing was written. */
-    | { kind: "busy"; sessionId: string; holders: number[]; reason: string }
+    | { kind: "busy"; sessionId: string; holders: number[]; holderStarts: Record<number, number>; reason: string }
     | { kind: "planned"; plan: CodeModeForkPlan }
     | { kind: "forked"; plan: CodeModeForkPlan; backup: SessionCopyScan };
 
@@ -107,20 +116,39 @@ export async function forkSessionIntoCodeMode(options: CodeModeForkOptions): Pro
         return found;
     }
 
-    const sessionPath = found;
+    return options.dryRun
+        ? forkClosedSession(options, found)
+        : withFileLock(`${found}.codemode.lock`, () => forkClosedSession(options, found));
+}
+
+async function forkClosedSession(options: CodeModeForkOptions, sessionPath: string): Promise<CodeModeForkOutcome> {
+    const statePath = `${sessionPath}.codemode-fork.json`;
+    const recovery: unknown = existsSync(statePath)
+        ? SafeJSON.parse(readFileSync(statePath, "utf8"), { strict: true })
+        : null;
+    const saved =
+        isJsonObject(recovery) &&
+        isJsonObject(recovery.plan) &&
+        recovery.plan.sessionPath === sessionPath &&
+        typeof recovery.plan.backupId === "string" &&
+        /^[a-f0-9-]{36}$/.test(recovery.plan.backupId)
+            ? recovery
+            : null;
     const sessionId = basename(sessionPath, ".jsonl");
-    const holders = claudeSessionHolders(sessionId);
+    const processes = claudeSessionHolderProcesses(sessionId);
+    const holders = processes.map((entry) => entry.pid);
 
     if (holders.length > 0) {
         return {
             kind: "busy",
             sessionId,
             holders,
+            holderStarts: Object.fromEntries(processes.map((entry) => [entry.pid, entry.startSec * 1000])),
             reason: `Session ${sessionId} is open in Claude Code (pid ${holders.join(", ")}). Exit it first.`,
         };
     }
 
-    if (claudeCodeModePin(sessionPath) === true) {
+    if (claudeCodeModePin(sessionPath) === true && (!saved || saved.complete === true)) {
         return {
             kind: "refused",
             reason: `Session ${sessionId} already runs in Code Mode. Resume it with CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1.`,
@@ -128,9 +156,12 @@ export async function forkSessionIntoCodeMode(options: CodeModeForkOptions): Pro
     }
 
     const suffix = options.backupSuffix ?? DEFAULT_BACKUP_SUFFIX;
+    if (!suffix) {
+        return { kind: "refused", reason: "The backup suffix must not be empty." };
+    }
     const customTitle = lastClaudeTitleIn(sessionPath);
 
-    if (customTitle?.endsWith(suffix)) {
+    if (await copySourceOf(sessionPath, sessionId)) {
         return {
             kind: "refused",
             reason: `Session ${sessionId} is titled "${customTitle}": it is the copy without Code Mode.`,
@@ -138,40 +169,59 @@ export async function forkSessionIntoCodeMode(options: CodeModeForkOptions): Pro
     }
 
     const ownTitle = customTitle ?? lastClaudeAiTitleIn(sessionPath);
-    const title = options.title ?? ownTitle;
+    const recoveredTitle =
+        saved && isJsonObject(saved.plan) && typeof saved.plan.title === "string" ? saved.plan.title : undefined;
+    const title = options.title ?? recoveredTitle ?? ownTitle;
 
     if (!title) {
         return { kind: "refused", reason: `Session ${sessionId} has no title. Pass --title <title>.` };
     }
 
-    const backupId = randomUUID();
+    const backupId =
+        saved && isJsonObject(saved.plan) && typeof saved.plan.backupId === "string"
+            ? saved.plan.backupId
+            : randomUUID();
     const plan: CodeModeForkPlan = {
         sessionId,
         sessionPath,
         title,
         backupId,
         backupPath: join(dirname(sessionPath), `${backupId}.jsonl`),
-        backupTitle: `${ownTitle ?? title}${suffix}`,
+        backupTitle:
+            saved && isJsonObject(saved.plan) && typeof saved.plan.backupTitle === "string"
+                ? saved.plan.backupTitle
+                : `${ownTitle ?? title}${suffix}`,
     };
 
     if (options.dryRun) {
         return { kind: "planned", plan };
     }
 
+    atomicWriteFileSync(statePath, SafeJSON.stringify({ plan, complete: false }), { mode: 0o600 });
     // The copy comes first: when a later step fails, the conversation without Code Mode already exists.
-    const backup = await writeSessionCopy({
-        sourcePath: sessionPath,
-        sourceId: sessionId,
-        copyId: backupId,
-        copyPath: plan.backupPath,
-        title: plan.backupTitle,
-    });
-    appendClaudeCodeModePin(sessionPath, sessionId);
-
-    if (options.title && options.title !== ownTitle) {
-        appendClaudeTitle(sessionPath, sessionId, options.title);
+    const backup =
+        existsSync(plan.backupPath) && (await copySourceOf(plan.backupPath, backupId)) === sessionId
+            ? { rows: 0, droppedPins: 0, droppedTitles: 0, unreadableRows: 0, cwd: null }
+            : await writeSessionCopy({
+                  sourcePath: sessionPath,
+                  sourceId: sessionId,
+                  copyId: backupId,
+                  copyPath: plan.backupPath,
+                  title: plan.backupTitle,
+              });
+    const pin = (await loadPins({ provider: "claude", readOnly: true })).get(sessionId);
+    if (pin) {
+        await recordPin({ ...pin, sessionId: backupId, launchId: undefined, at: Date.now(), source: "manual" });
+    }
+    if (claudeCodeModePin(sessionPath) !== true) {
+        appendClaudeCodeModePin(sessionPath, sessionId);
     }
 
+    if (options.title && options.title !== ownTitle) {
+        appendClaudeTitle({ path: sessionPath, sessionId, title: options.title });
+    }
+
+    atomicWriteFileSync(statePath, SafeJSON.stringify({ plan, complete: true }), { mode: 0o600 });
     return { kind: "forked", plan, backup };
 }
 
@@ -201,14 +251,16 @@ function launchChain(pid: number): number[] {
     const chain: number[] = [];
 
     for (const entry of ancestry(pid)) {
-        if (entry.pid <= 1 || KEEP_FROM.test((entry.command ?? entry.name).trim())) {
+        const command = (entry.command ?? entry.name).trim();
+        const launcher = isClaudeLaunchProcess(entry);
+        if (entry.pid <= 1 || KEEP_FROM.test(command) || !launcher) {
             break;
         }
 
         chain.push(entry.pid);
     }
 
-    return chain.length > 0 ? chain : [pid];
+    return chain;
 }
 
 /**
@@ -217,16 +269,31 @@ function launchChain(pid: number): number[] {
  */
 export async function stopClaudeProcesses(
     pids: readonly number[],
-    { termMs = 10_000, killMs = 5_000 }: { termMs?: number; killMs?: number } = {}
+    {
+        termMs = 10_000,
+        killMs = 5_000,
+        expectedStarts,
+    }: { termMs?: number; killMs?: number; expectedStarts?: Record<number, number> } = {}
 ): Promise<number[]> {
-    const members = [...new Set(pids.flatMap(launchChain))];
+    const admitted = expectedStarts
+        ? pids.filter((pid) => expectedStarts[pid] !== undefined && readProcess(pid)?.startMs === expectedStarts[pid])
+        : pids;
+    const members = [...new Set(admitted.flatMap(launchChain))];
+    const starts = new Map(members.map((pid) => [pid, readProcess(pid)?.startMs]));
     // The command each member runs as this stop begins. The SIGKILL comes up to termMs later, and a pid that ended and
     // went to another process meanwhile must not get it.
     const commands = new Map(members.map((pid) => [pid, readProcessCommand(pid)]));
     const signal = (target: number, name: NodeJS.Signals) => {
         const command = commands.get(target);
 
-        if (!command || classifyPid(target, command).status !== "live") {
+        const started = starts.get(target);
+        if (
+            !command ||
+            started === null ||
+            started === undefined ||
+            readProcess(target)?.startMs !== started ||
+            classifyPid(target, command).status !== "live"
+        ) {
             log.debug({ target, signal: name }, "a Claude Code process ended or changed before the signal");
             return;
         }
@@ -312,11 +379,14 @@ export async function checkSessionIntoCodeMode(options: {
     }
 
     const suffix = options.backupSuffix ?? DEFAULT_BACKUP_SUFFIX;
+    if (!suffix) {
+        return { kind: "refused", reason: "The backup suffix must not be empty." };
+    }
     const id = basename(found, ".jsonl");
     const customTitle = lastClaudeTitleIn(found);
+    const sourceId = await copySourceOf(found, id);
 
-    if (customTitle?.endsWith(suffix)) {
-        const sourceId = await copySourceOf(found, id);
+    if (sourceId) {
         const sessionPath = sourceId ? await canonicalClaudeTranscript(sourceId) : undefined;
 
         if (!sourceId || !sessionPath) {
@@ -333,7 +403,19 @@ export async function checkSessionIntoCodeMode(options: {
     }
 
     const title = customTitle ?? lastClaudeAiTitleIn(found);
-    const copy = title ? await findCopy(id, title, suffix) : null;
+    let copy: { id: string; path: string } | null = null;
+    for (const name of readdirSync(dirname(found))) {
+        if (!name.endsWith(".jsonl")) {
+            continue;
+        }
+        const candidateId = name.slice(0, -6);
+        const path = join(dirname(found), name);
+        if ((await copySourceOf(path, candidateId)) === id) {
+            copy = { id: candidateId, path };
+            break;
+        }
+    }
+    copy ??= title ? await findCopy(id, title, suffix) : null;
 
     if (!copy) {
         return {

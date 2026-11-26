@@ -1,4 +1,4 @@
-import { buildLaunchCommand, paneTitle } from "@app/claude/lib/cmux/command";
+import { buildLaunchCommand, type LaunchCommandOptions, paneTitle } from "@app/claude/lib/cmux/command";
 import { findCandidate } from "@app/claude/lib/cmux/sessions";
 import type { PlannedSession, RestoreCandidate } from "@app/claude/lib/cmux/types";
 import { type OpenSessionTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
@@ -17,7 +17,8 @@ export interface OpenSessionResult {
  * uses. Throws when no local session matches.
  */
 export async function sessionLaunch(
-    sessionId: string
+    sessionId: string,
+    opts: LaunchCommandOptions = {}
 ): Promise<{ candidate: RestoreCandidate; planned: PlannedSession; command: string }> {
     const candidate = await findCandidate(sessionId);
 
@@ -26,7 +27,7 @@ export async function sessionLaunch(
     }
 
     const planned: PlannedSession = { candidate, account: candidate.account, model: candidate.model };
-    return { candidate, planned, command: buildLaunchCommand(planned) };
+    return { candidate, planned, command: buildLaunchCommand(planned, opts) };
 }
 
 /**
@@ -37,10 +38,10 @@ export async function sessionLaunch(
 export async function openSessionAt(
     sessionId: string,
     target: OpenSessionTarget,
-    opts: { enter?: boolean } = {}
+    opts: { enter?: boolean; codeMode?: boolean } = {}
 ): Promise<OpenSessionResult> {
     const prof = profiler.scope("claude-cmux-open");
-    const launch = await prof.measureAsync("candidate", () => sessionLaunch(sessionId));
+    const launch = await prof.measureAsync("candidate", () => sessionLaunch(sessionId, { codeMode: opts.codeMode }));
     const { candidate, planned, command } = launch;
     const placed = await openCommandAt({
         command,

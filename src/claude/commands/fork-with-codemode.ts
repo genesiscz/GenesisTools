@@ -37,8 +37,8 @@ type BusyChoice = "restart" | "focus" | "kill" | "cancel";
 const CLOSE_WAIT_MS = 15 * 60_000;
 
 /** Resumes a session here, under the account and model it ran on, and exits with Claude Code's exit code. */
-async function resumeHere(sessionId: string): Promise<never> {
-    const { command } = await sessionLaunch(sessionId);
+async function resumeHere(sessionId: string, codeMode: boolean): Promise<never> {
+    const { command } = await sessionLaunch(sessionId, { codeMode });
     out.log.info(pc.dim(command));
     const proc = Bun.spawn({
         cmd: [env.paths.getShell("/bin/sh"), "-ic", command],
@@ -49,7 +49,7 @@ async function resumeHere(sessionId: string): Promise<never> {
 
 /** In a terminal, offers to resume one of the two sessions; elsewhere, prints the command for the Code Mode one. */
 async function offerResume(plan: CodeModeForkPlan): Promise<void> {
-    const { command } = await sessionLaunch(plan.sessionId);
+    const { command } = await sessionLaunch(plan.sessionId, { codeMode: true });
 
     if (!isInteractive()) {
         out.println("");
@@ -76,7 +76,7 @@ async function offerResume(plan: CodeModeForkPlan): Promise<void> {
         return;
     }
 
-    await resumeHere(choice === "codemode" ? plan.sessionId : plan.backupId);
+    await resumeHere(choice === "codemode" ? plan.sessionId : plan.backupId, choice === "codemode");
 }
 
 /** Where the session's cmux tab was: its surface first, then its pane, then its workspace. */
@@ -120,7 +120,7 @@ async function reopenAt(sessionId: string, places: readonly OpenSessionTarget[])
         }
 
         try {
-            const opened = await openSessionAt(sessionId, place, { enter: true });
+            const opened = await openSessionAt(sessionId, place, { enter: true, codeMode: true });
             out.log.success(`Resumed ${sessionId.slice(0, 8)} in Code Mode in its ${place.kind} (${opened.surfaceId})`);
             return true;
         } catch (error) {
@@ -179,18 +179,18 @@ async function resolveBusy(
             return null;
         }
 
-        return { outcome: await forkSessionIntoCodeMode(options), reopened: false };
+        return { outcome: await forkSessionIntoCodeMode({ ...options, session: busy.sessionId }), reopened: false };
     }
 
     const places = choice === "restart" && running ? await placesOf(running) : [];
-    const left = await stopClaudeProcesses(busy.holders);
+    const left = await stopClaudeProcesses(busy.holders, { expectedStarts: busy.holderStarts });
 
     if (left.length > 0) {
         out.log.error(`Claude Code still runs after SIGKILL (pid ${left.join(", ")}). Nothing was written.`);
         return null;
     }
 
-    const outcome = await forkSessionIntoCodeMode(options);
+    const outcome = await forkSessionIntoCodeMode({ ...options, session: busy.sessionId });
 
     if (outcome.kind !== "forked" || choice !== "restart") {
         return { outcome, reopened: false };
@@ -200,7 +200,7 @@ async function resolveBusy(
 }
 
 const CHECK_MARK: Record<PairCheck["status"], string> = {
-    ok: pc.green("✔"),
+    ok: pc.green("√"),
     fail: pc.red("✘"),
     warn: pc.yellow("▲"),
     info: pc.dim("·"),

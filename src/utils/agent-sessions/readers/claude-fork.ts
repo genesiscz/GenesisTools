@@ -11,7 +11,7 @@
  * stay with it.
  */
 import { once } from "node:events";
-import { createWriteStream, renameSync } from "node:fs";
+import { createWriteStream, renameSync, unlinkSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { scanFileMatches } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { readLines } from "@genesiscz/utils/fs/read-lines";
@@ -144,7 +144,10 @@ export interface SessionCopyWrite extends SessionCopyIds {
 export async function writeSessionCopy(input: SessionCopyWrite): Promise<SessionCopyScan> {
     const scan = emptyCopyScan();
     const temporary = `${input.copyPath}.${process.pid}.tmp`;
-    const output = createWriteStream(temporary, { mode: 0o600 });
+    const output = createWriteStream(temporary, { flags: "wx", mode: 0o600 });
+    const opened = once(output, "open");
+    await opened;
+    output.on("error", (error) => log.debug({ error, temporary }, "session copy stream failed"));
     const lines = readLines(input.sourcePath);
 
     const write = async (text: string) => {
@@ -153,21 +156,31 @@ export async function writeSessionCopy(input: SessionCopyWrite): Promise<Session
         }
     };
 
-    for await (const line of lines) {
-        const copied = sessionCopyLine(line, input, scan);
+    try {
+        for await (const line of lines) {
+            const copied = sessionCopyLine(line, input, scan);
 
-        if (copied !== null) {
-            await write(copied);
+            if (copied !== null) {
+                await write(copied);
+            }
         }
-    }
 
-    for (const row of sessionCopyTail(input, input.title)) {
-        await write(row);
-    }
+        for (const row of sessionCopyTail(input, input.title)) {
+            await write(row);
+        }
 
-    output.end();
-    await once(output, "finish");
-    renameSync(temporary, input.copyPath);
+        output.end();
+        await once(output, "finish");
+        renameSync(temporary, input.copyPath);
+    } catch (error) {
+        output.destroy();
+        try {
+            unlinkSync(temporary);
+        } catch (cleanupError) {
+            log.debug({ error: cleanupError, temporary }, "session copy cleanup failed");
+        }
+        throw error;
+    }
     log.info({ sourceId: input.sourceId, copyId: input.copyId, ...scan }, "wrote a copy of a Claude session");
     return scan;
 }
@@ -217,7 +230,10 @@ function countAfterFork(row: Record<string, unknown>, into: AfterFork): void {
     const blocks = Array.isArray(message?.content) ? message.content : [];
     const texts = [row.content, ...blocks.map((block) => (isJsonObject(block) ? block.text : undefined))];
 
-    if (texts.some((text) => typeof text === "string" && NOT_CODE_MODE.test(text))) {
+    if (
+        ((row.type === "system" && row.subtype === "local_command") || (row.type === "user" && row.isMeta === true)) &&
+        texts.some((text) => typeof text === "string" && NOT_CODE_MODE.test(text))
+    ) {
         into.notCodeMode++;
     }
 
@@ -409,8 +425,12 @@ export async function checkCodeModePair(input: {
         compared++;
     }
 
-    while ((await nextSessionRow()) !== null) {
-        // Drains the session: nextSessionRow counts its rows after the move.
+    let remaining = await nextSessionRow();
+    while (remaining !== null) {
+        if (sessionAfter === null && mismatch === null) {
+            mismatch = `copy omits session line ${remaining.line} before the Code Mode boundary`;
+        }
+        remaining = await nextSessionRow();
     }
 
     const after: AfterFork = sessionAfter ?? emptyAfter();
