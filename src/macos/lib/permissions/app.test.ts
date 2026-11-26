@@ -1781,11 +1781,19 @@ describe("a GENESIS_TOOLS_HOME sandbox and the installed app", () => {
         const appHome = mkdtempSync(join(tmpdir(), "gt-app-lock-home-"));
         const lock = genesisToolsDirIn(appHome, "app", "build.lock");
 
-        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: appHome }, async () => {
-            // Before, the slot took <sandbox>/.genesis-tools/app/build.lock, which no build on the real home waits on.
-            expect(await withAppBuildSlot(async () => existsSync(lock))).toBe(true);
-        });
-        expect(existsSync(lock)).toBe(false);
-        expect(existsSync(genesisToolsDirIn(sandbox, "app"))).toBe(false);
+        try {
+            await env.testing.withOverrides(
+                { GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: appHome },
+                async () => {
+                    // Before, the slot took <sandbox>/.genesis-tools/app/build.lock, which no build on the real home waits on.
+                    expect(await withAppBuildSlot(async () => existsSync(lock))).toBe(true);
+                }
+            );
+            expect(existsSync(lock)).toBe(false);
+            expect(existsSync(genesisToolsDirIn(sandbox, "app"))).toBe(false);
+        } finally {
+            rmSync(sandbox, { recursive: true, force: true });
+            rmSync(appHome, { recursive: true, force: true });
+        }
     });
 });
