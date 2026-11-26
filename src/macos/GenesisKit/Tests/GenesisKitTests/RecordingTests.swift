@@ -841,6 +841,7 @@ final class RecordingTargetOutlineTests: XCTestCase {
 private final class PickerContentHeight: ObservableObject {
     @Published var value: CGFloat = 100
     var top: CGFloat = .nan
+    var measured: [CGFloat] = []
 }
 
 private struct PickerContentOfHeight: View {
@@ -851,6 +852,10 @@ private struct PickerContentOfHeight: View {
             Color.red.frame(width: 300, height: 20)
                 .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { height.top = $0 }
             Color.blue.frame(width: 300, height: height.value - 20)
+        }
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) {
+            height.measured.append($0.height)
+            height.top = $0.minY
         }
     }
 }
@@ -867,21 +872,54 @@ final class RecordingPickerPanelTests: XCTestCase {
         panel.present(PickerContentOfHeight(height: height), near: CGPoint(x: screen.midX, y: screen.maxY - 40), focus: false) {}
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(panel.window.frame.height, 100)
+        var pending: [@MainActor () -> Void] = []
+        panel.scheduleResize = { pending.append($0) }
         var heights: [CGFloat] = []
         let resizes = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: panel.window)
             .sink { _ in heights.append(panel.window.frame.height) }
         defer { resizes.cancel() }
         // Two layout passes before the window can follow, as when a list lays out its rows: a first height, then the
         // full one. The window was 100 pt tall throughout.
-        height.value = 250
-        panel.window.contentView?.layoutSubtreeIfNeeded()
-        height.value = 400
-        panel.window.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertEqual(height.top, 0, accuracy: 0.5, "the header stays at the window's top while the window is still short")
-        try await Task.sleep(for: .milliseconds(300))
+        for value: CGFloat in [250, 400] {
+            height.top = .nan
+            height.value = value
+            let deadline = ContinuousClock.now + .seconds(2)
+            while !height.measured.contains(value) || height.top.isNaN {
+                guard ContinuousClock.now < deadline else { return XCTFail("No layout measurement for height \(value)") }
+                panel.window.contentView?.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            XCTAssertEqual(panel.window.frame.height, 100, "the resize is held until both layouts report")
+            XCTAssertEqual(height.measured.last, value)
+            XCTAssertEqual(height.top, 0, accuracy: 0.5, "the measured header stays at the short window's top")
+        }
+        XCTAssertEqual(Array(height.measured.suffix(2)), [250, 400])
+        XCTAssertGreaterThanOrEqual(pending.count, 2)
+        for resize in pending { resize() }
+        try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(panel.window.frame.height, 400)
         XCTAssertEqual(heights, [400], "only the latest height lands, never the one measured a pass before it")
         XCTAssertEqual(height.top, 0, accuracy: 0.5)
+    }
+
+    func testAReplacedPresentationCannotDiscardTheCurrentPendingSize() async throws {
+        _ = NSApplication.shared
+        let panel = RecordingPickerPanel()
+        panel.window.alphaValue = 0
+        defer { panel.dismiss() }
+        let anchor = CGPoint(x: 400, y: 400)
+        let height = PickerContentHeight()
+        var pending: [@MainActor () -> Void] = []
+        panel.scheduleResize = { pending.append($0) }
+        panel.present(PickerContentOfHeight(height: height), near: anchor, focus: false) {}
+        let previous = panel.presentation
+        panel.present(PickerContentOfHeight(height: height), near: anchor, focus: false) {}
+        let current = panel.presentation
+        XCTAssertNotEqual(current, previous)
+        panel.report(size: CGSize(width: 300, height: 400), for: current)
+        panel.report(size: CGSize(width: 300, height: 250), for: previous)
+        for resize in pending { resize() }
+        XCTAssertEqual(panel.window.frame.height, 400)
     }
 
     func testThePickerHasItsContentSizeEachTimeItOpens() async throws {

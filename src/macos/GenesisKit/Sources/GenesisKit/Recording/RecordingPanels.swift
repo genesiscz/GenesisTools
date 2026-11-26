@@ -329,9 +329,12 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// setting (stay open by default): agents' apps that take the focus closed it under the person (2026-11-09).
     public var closesOnFocusLoss = true
     /// Counts the presentations, so a size reported by content that was replaced since is never applied.
-    private var presentation = 0
+    private(set) var presentation = 0
     /// The content's latest reported size, with the presentation it belongs to.
     private var reported: (presentation: Int, size: CGSize)?
+    var scheduleResize: (@escaping @MainActor () -> Void) -> Void = { action in
+        DispatchQueue.main.async { action() }
+    }
 
     override public init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
@@ -358,10 +361,7 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         // window has caught up (a main-queue turn after each layout), a list that grew cuts only the bottom; centred, it
         // cut the header and the tabs off the top by half the difference (105 pt of a 553 pt picker in a 343 pt window).
         let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
-            self?.reported = (presentation, size)
-            // Never resize the window inside the layout pass that measured it. The latest size wins: one measured a
-            // pass earlier (the list before its rows were measured) must not land after it.
-            DispatchQueue.main.async { self?.followReportedSize() }
+            self?.report(size: size, for: presentation)
         }.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)))
         let size = Self.measure(hosting)
         window.contentView = hosting
@@ -382,6 +382,13 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         let size = hosting.fittingSize
         hosting.sizingOptions = []
         return CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
+    }
+
+    func report(size: CGSize, for presentation: Int) {
+        guard presentation == self.presentation else { return }
+        reported = (presentation, size)
+        // Never resize the window inside the layout pass that measured it. The latest size wins.
+        scheduleResize { [weak self] in self?.followReportedSize() }
     }
 
     private func followReportedSize() {

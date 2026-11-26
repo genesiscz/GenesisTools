@@ -89,6 +89,7 @@ final class RecordingBarViewTests: XCTestCase {
                                                 liveCamera: false, reasonUnavailable: ["camera": "The camera starts with the recording."])
         var events: AsyncStream<RecordingEngineEvent> { stream.stream }
         var failStart = false
+        var failStop = false
         var pauses = 0
         var waitForSave: (() async -> Void)?
         func start(_ setup: RecordingSetup, excludeWindowIDs: [Int]) async throws {
@@ -97,6 +98,7 @@ final class RecordingBarViewTests: XCTestCase {
         func pause() async throws { pauses += 1 }
         func resume() async throws {}
         func stop() async throws -> URL? {
+            if failStop { throw RecordingEngineError.unsupported("Capture is still saving. Retry stop.") }
             await waitForSave?()
             return URL(fileURLWithPath: "/fixture/Movie.mp4")
         }
@@ -361,6 +363,40 @@ final class RecordingBarViewTests: XCTestCase {
             XCTAssertEqual(after, before, accuracy: 0.5,
                            "the first row moved \(after - before) pt in a window 40 pt short (drawer opening \(growth))")
         }
+    }
+
+    func testAnUpwardBarKeepsItsFirstRowWhenAStopFailureAddsANotice() async throws {
+        let f = try fixture()
+        f.panel.motion.decideGrowth = { .up }
+        await firstFrame(f)
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
+        f.model.expanded = true
+        try await f.host.wait(for: liveExpandedControls)
+        let deadline = ContinuousClock.now + .seconds(3)
+        while f.panel.motion.moving {
+            guard ContinuousClock.now < deadline else { return XCTFail("the drawer did not settle") }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let window = f.panel.window
+        func rowOnScreen() throws -> CGFloat {
+            window.contentView?.layoutSubtreeIfNeeded()
+            return window.frame.maxY - (try XCTUnwrap(FrameProbe.frames["recording.bar.target"])).minY
+        }
+        let before = try rowOnScreen()
+        let oldHeight = window.frame.height
+        f.engine.failStop = true
+        f.model.stop()
+        await f.model.pendingCommand?.value
+        XCTAssertTrue(f.model.notice?.actions.contains(.retryStop) == true)
+        let noticeDeadline = ContinuousClock.now + .seconds(3)
+        while window.frame.height <= oldHeight {
+            guard ContinuousClock.now < noticeDeadline else { return XCTFail("the notice did not resize the bar") }
+            window.contentView?.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertGreaterThan(window.frame.height, oldHeight)
+        XCTAssertEqual(try rowOnScreen(), before, accuracy: 0.5,
+                       "variable-height notices grow above the pinned first row")
     }
 
     /// The owner saw the first row jump while "…" opened and closed the extra rows. Samples the first row's place on
