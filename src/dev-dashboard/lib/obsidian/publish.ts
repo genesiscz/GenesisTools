@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { getConfig, type PublishedNote, saveConfig } from "@app/dev-dashboard/config";
+import { type DevDashboardConfig, getConfig, type PublishedNote, saveConfig } from "@app/dev-dashboard/config";
 
 function makeSlug(): string {
     return randomBytes(12).toString("base64url");
@@ -38,6 +38,7 @@ export function publishNote(vaultPath: string): Promise<PublishedNote> {
             slug,
             vaultPath,
             publishedAt: new Date().toISOString(),
+            targets: [],
         };
         await saveConfig({ ...config, publishedNotes: [...config.publishedNotes, note] });
 
@@ -52,6 +53,34 @@ export function unpublishNote(slug: string): Promise<void> {
             ...config,
             publishedNotes: config.publishedNotes.filter((note) => note.slug !== slug),
         });
+    });
+}
+
+/** Record which share targets hold the note; a slug that is no longer published is left alone. */
+export function setPublishedTargets(slug: string, targets: string[]): Promise<PublishedNote | undefined> {
+    return withConfigMutation(async () => {
+        const config = await getConfig();
+        const note = config.publishedNotes.find((entry) => entry.slug === slug);
+
+        if (!note) {
+            return undefined;
+        }
+
+        const next = { ...note, targets: [...new Set(targets)] };
+        await saveConfig({
+            ...config,
+            publishedNotes: config.publishedNotes.map((entry) => (entry.slug === slug ? next : entry)),
+        });
+
+        return next;
+    });
+}
+
+/** Save the share settings (targets and the default target). */
+export function saveShareConfig(share: DevDashboardConfig["share"]): Promise<void> {
+    return withConfigMutation(async () => {
+        const config = await getConfig();
+        await saveConfig({ ...config, share });
     });
 }
 

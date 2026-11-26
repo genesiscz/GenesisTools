@@ -385,6 +385,17 @@ export type DashboardKey = keyof typeof DASHBOARDS;
 // ---------------------------------------------------------------------------
 
 export const WEB_SERVICES = {
+    "dev-dashboard-share-server": {
+        key: "dev-dashboard-share-server",
+        name: "Share Server",
+        description: "Public /share/<slug> pages from note snapshots, on a host without the vault (Bun).",
+        port: 3044,
+        launch: null,
+        portOverride: { flag: "--port" },
+        serviceKind: "http-api",
+        note: "The dev-dashboard share-server serve command; SHARE_SERVER_PORT in src/dev-dashboard/commands/share-server.ts.",
+        matchProcess: matchGenesisTool("dev-dashboard", "share-server"),
+    },
     "youtube-server": {
         key: "youtube-server",
         name: "YouTube Server",

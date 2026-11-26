@@ -4,6 +4,7 @@ import {
     type DashboardAuthConfig,
     isCompleteAuthConfig,
 } from "@app/dev-dashboard/lib/auth";
+import { migrateShareConfig, ShareConfigSchema } from "@app/dev-dashboard/lib/share/drivers/options";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -32,6 +33,8 @@ const PublishedNoteSchema = z.object({
     slug: z.string(),
     vaultPath: z.string(),
     publishedAt: z.string(),
+    /** The share targets this note was sent to (`share.targets` names); the Mac's own page serves every note. */
+    targets: z.array(z.string()).default([]),
 });
 
 const TtydSessionSchema = z.object({
@@ -68,6 +71,7 @@ const DevDashboardConfigSchema = z.object({
     weatherCoords: WeatherCoordsSchema.prefault({}),
     pulse: PulseConfigSchema.prefault({}),
     todoListName: z.string().default("GenesisTools"),
+    share: z.preprocess(migrateShareConfig, ShareConfigSchema),
 });
 
 export type PublishedNote = z.infer<typeof PublishedNoteSchema>;

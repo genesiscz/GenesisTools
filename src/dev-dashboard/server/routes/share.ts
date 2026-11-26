@@ -1,17 +1,13 @@
-import { getConfig } from "@app/dev-dashboard/config";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
 import { offlineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
-import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsidian/publish";
-import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import {
     assetPanelQuery,
-    buildShareAssetIndex,
     buildShareBundle,
     buildShareEmbed,
     codeLanguageFor,
+    DEFAULT_SHARE_PAGE_PATH,
     downloadBaseName,
     fencedCode,
-    hashAsset,
     isMediaKind,
     isSharedNote,
     lineRangeOf,
@@ -23,24 +19,22 @@ import {
     SHARE_ASSET_HASH_RE,
     SHARE_NOTE_KEY_RE,
     type ShareAsset,
-    type ShareAssetIndex,
     type ShareEmbed,
     shareAssetUrl,
     shareAttachments,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
-import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
+import { type ShareSource, ShareSourceUnavailableError, shareTitle } from "@app/dev-dashboard/lib/share/source";
+import { vaultShareSource } from "@app/dev-dashboard/lib/share/vault-source";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { zipAsync } from "@genesiscz/utils/fs/zip";
 import { parseByteRange } from "@genesiscz/utils/http/range";
 import { logger } from "@genesiscz/utils/logger";
-import { redactSecretsInText } from "@genesiscz/utils/transclude";
 
 const { log } = logger.scoped("share");
 
 const NOT_FOUND_HTML = "<!doctype html><meta charset=utf-8><title>Not found</title><h1>Not found</h1>";
-const ASSET_CACHE_LIMIT = 64;
 const MAX_ACTIVE_DOWNLOADS = 2;
 /** Linked notes a page render reads at once; each may be up to `SHARE_ASSET_MAX_BYTES`. */
 export const LINKED_NOTE_READ_CONCURRENCY = 4;
@@ -61,44 +55,6 @@ const ASSET_HEADERS: Record<string, string> = {
     "Cache-Control": "private, max-age=31536000, immutable",
     "Cross-Origin-Resource-Policy": "same-origin",
 };
-
-/**
- * Keyed by slug; an entry is reused only while the note's text hashes the same and for at most
- * `ASSET_INDEX_TTL_MS`: an edited or newly added attachment gets its new hash URL on the next page
- * load after that, never only after a 404 on the old URL.
- */
-const assetIndexCache = new Map<string, { sourceHash: string; builtAt: number; index: ShareAssetIndex }>();
-const ASSET_INDEX_TTL_MS = 30_000;
-
-async function assetIndexFor(options: {
-    slug: string;
-    vaultRoot: string;
-    notePath: string;
-    source: string;
-}): Promise<ShareAssetIndex> {
-    const { slug, vaultRoot, notePath, source } = options;
-    const sourceHash = hashAsset(new TextEncoder().encode(`${notePath}\n${source}`));
-    const cached = assetIndexCache.get(slug);
-
-    if (cached?.sourceHash === sourceHash && Date.now() - cached.builtAt < ASSET_INDEX_TTL_MS) {
-        return cached.index;
-    }
-
-    const index = await buildShareAssetIndex({ vaultRoot, notePath, source });
-
-    assetIndexCache.delete(slug);
-    assetIndexCache.set(slug, { sourceHash, builtAt: Date.now(), index });
-
-    if (assetIndexCache.size > ASSET_CACHE_LIMIT) {
-        const oldest = assetIndexCache.keys().next().value;
-
-        if (oldest !== undefined) {
-            assetIndexCache.delete(oldest);
-        }
-    }
-
-    return index;
-}
 
 const LINES_PARAM_RE = /^(\d{1,7})(?:-(\d{1,7}))?$/;
 
@@ -179,11 +135,23 @@ function wantsHtml(ctx: RouteContext): boolean {
     return accept.includes("text/html") && !accept.includes("application/json");
 }
 
-export function shareRoutes(): RouteDef[] {
+/**
+ * The public `/share/<slug>` page. `source` is where its notes come from: the vault on the Mac, or the snapshot
+ * folders on the share server (`snapshotShareSource`).
+ */
+export interface ShareRouteOptions {
+    /** The path the pages live under: `/share` (the default, the Mac's dashboard) or another (`/md` on a share server). */
+    pagePath?: string;
+}
+
+export function shareRoutes(source: ShareSource = vaultShareSource(), options: ShareRouteOptions = {}): RouteDef[] {
+    const pagePath = options.pagePath ?? DEFAULT_SHARE_PAGE_PATH;
+    const pageUrl = (slug: string): string => `${pagePath}/${encodeURIComponent(slug)}`;
+
     return [
         {
             method: "GET",
-            pattern: "/share/:slug",
+            pattern: `${pagePath}/:slug`,
             handler: async (ctx): Promise<RouteResult> => {
                 const slug = ctx.params.slug;
                 const download = ctx.query.get("download");
@@ -216,44 +184,29 @@ export function shareRoutes(): RouteDef[] {
                         return NOT_FOUND;
                     }
 
-                    const note = await findPublishedBySlug(slug);
+                    const note = await source.findBySlug(slug);
 
                     if (!note) {
                         return NOT_FOUND;
                     }
 
-                    const { obsidianVault } = await getConfig();
-
-                    if (!obsidianVault) {
-                        return {
-                            kind: "text",
-                            status: 500,
-                            contentType: "text/plain; charset=utf-8",
-                            body: "obsidian vault not configured",
-                        };
-                    }
-
                     // The page is public: the rendered note, its source view and its download all use the masked text.
-                    const source = redactSecretsInText(await readNote(obsidianVault, note.vaultPath));
+                    const text = await source.readNoteText(note);
                     // A shared source file is one highlighted block. Its comments are not markdown, so
                     // nothing in them becomes a link or an asset the page would serve.
                     const language = codeLanguageFor(note.vaultPath);
-                    const markdown = language ? fencedCode(source, language) : source;
-                    const assets = await assetIndexFor({
-                        slug,
-                        vaultRoot: obsidianVault,
-                        notePath: note.vaultPath,
-                        source: markdown,
-                    });
-                    const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
+                    const markdown = language ? fencedCode(text, language) : text;
+                    const assets = await source.assetIndex({ note, markdown });
+                    const read = await source.assetReader(note);
+                    const title = shareTitle(note.vaultPath);
                     const fileBase = downloadBaseName(title);
 
                     if (download === "zip") {
                         const bundle = await buildShareBundle({
-                            vaultRoot: obsidianVault,
+                            read,
                             index: assets,
                             notePath: note.vaultPath,
-                            noteText: source,
+                            noteText: text,
                             folderName: fileBase,
                         });
 
@@ -276,10 +229,10 @@ export function shareRoutes(): RouteDef[] {
 
                     if (download === "html") {
                         embed = await buildShareEmbed({
-                            vaultRoot: obsidianVault,
+                            read,
                             index: assets,
                             panelBase: (asset) => `?${assetPanelQuery(assets, asset)}`,
-                            sourceBytes: Buffer.byteLength(source, "utf8"),
+                            sourceBytes: Buffer.byteLength(text, "utf8"),
                         });
 
                         if (!embed) {
@@ -287,22 +240,18 @@ export function shareRoutes(): RouteDef[] {
                         }
                     }
 
-                    const pageBase = embed ? await publicBaseUrl() : "";
+                    const pageBase = embed ? await source.publicOrigin() : "";
 
                     let openAssetUrl: string | undefined;
 
                     if (requestedHash !== null) {
-                        const found = await readShareAsset({
-                            vaultRoot: obsidianVault,
-                            index: assets,
-                            hash: requestedHash,
-                        });
+                        const found = await readShareAsset({ index: assets, hash: requestedHash, read });
 
                         if (!found) {
                             // A known hash that no longer matches its file means the file changed; rebuild next time.
                             // Unknown hashes leave the cache alone, so guessing cannot force a rebuild per request.
                             if (assets.byHash.has(requestedHash)) {
-                                assetIndexCache.delete(slug);
+                                source.forgetAssetIndex(slug);
                             }
 
                             return NOT_FOUND;
@@ -314,7 +263,7 @@ export function shareRoutes(): RouteDef[] {
                         const query = requestedNote
                             ? `asset=${asset.hash}&note=${requestedNote}`
                             : assetPanelQuery(assets, asset);
-                        const url = `/share/${encodeURIComponent(slug)}?${query}`;
+                        const url = `${pageUrl(slug)}?${query}`;
 
                         const view = ctx.query.get("view");
 
@@ -331,7 +280,7 @@ export function shareRoutes(): RouteDef[] {
                                     resolveImage: linkedImageResolver({
                                         index: assets,
                                         noteKey,
-                                        url: (image) => shareAssetUrl(slug, image.hash),
+                                        url: (image) => shareAssetUrl(slug, image.hash, pagePath),
                                     }),
                                 }),
                             };
@@ -355,11 +304,7 @@ export function shareRoutes(): RouteDef[] {
                         items: linkedNotes,
                         concurrency: LINKED_NOTE_READ_CONCURRENCY,
                         fn: async (asset) => {
-                            const found = await readShareAsset({
-                                vaultRoot: obsidianVault,
-                                index: assets,
-                                hash: asset.hash,
-                            });
+                            const found = await readShareAsset({ index: assets, hash: asset.hash, read });
 
                             if (found) {
                                 noteTexts.set(found.asset.hash, found.body.toString("utf8"));
@@ -370,7 +315,7 @@ export function shareRoutes(): RouteDef[] {
                         },
                     });
 
-                    const published = await listPublished();
+                    const published = await source.listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
                     let transclusionIndex = 0;
                     // In NFC: macOS keeps a file name's accents decomposed (NFD), a link typed in the note is NFC.
@@ -378,6 +323,7 @@ export function shareRoutes(): RouteDef[] {
                     const selfName = (selfPath.split("/").pop() ?? selfPath).replace(/\.md$/, "");
                     const rendered = renderMarkdown(markdown, {
                         pageBaseUrl: pageBase,
+                        pagePath,
                         // The index holds the note part of `[[Notes/Run#Summary]]` as its own target, resolved
                         // from this note's folder, so a qualified or `.md` self-link is found by its file.
                         isCurrentNote: (target) => {
@@ -422,7 +368,7 @@ export function shareRoutes(): RouteDef[] {
                                                       url: (image) =>
                                                           embed
                                                               ? (embed.media.get(image.hash) ?? null)
-                                                              : shareAssetUrl(slug, image.hash),
+                                                              : shareAssetUrl(slug, image.hash, pagePath),
                                                   }),
                                               }),
                                       };
@@ -431,7 +377,7 @@ export function shareRoutes(): RouteDef[] {
 
                             if (publishedSlug) {
                                 return {
-                                    url: `${pageBase}/share/${encodeURIComponent(publishedSlug)}`,
+                                    url: `${pageBase}${pageUrl(publishedSlug)}`,
                                     kind: "page",
                                     name: asset.name,
                                     ...transclusion,
@@ -449,7 +395,7 @@ export function shareRoutes(): RouteDef[] {
                             }
 
                             const query = assetPanelQuery(assets, asset);
-                            const url = embed ? `?${query}` : `/share/${encodeURIComponent(slug)}?${query}`;
+                            const url = embed ? `?${query}` : `${pageUrl(slug)}?${query}`;
                             // `doc.pdf#page=3&height=400` keeps its fragment for the PDF viewer and the frame height.
                             const pdfFragment = asset.kind === "pdf" ? (/#.*$/.exec(target)?.[0] ?? "") : "";
 
@@ -466,15 +412,15 @@ export function shareRoutes(): RouteDef[] {
                     const page = renderSharePage({
                         title,
                         rendered,
-                        source,
+                        source: text,
                         sourcePath: note.vaultPath,
                         openAssetUrl,
                         attachmentCount: shareAttachments(assets).length,
                         downloads: embed
                             ? undefined
                             : {
-                                  zip: `/share/${encodeURIComponent(slug)}?download=zip`,
-                                  html: `/share/${encodeURIComponent(slug)}?download=html`,
+                                  zip: `${pageUrl(slug)}?download=zip`,
+                                  html: `${pageUrl(slug)}?download=html`,
                               },
                         embeddedPanels: embed ? { panels: embed.panels, raws: embed.raws } : undefined,
                         offlineAssets: embed ? localAssets : undefined,
@@ -499,6 +445,15 @@ export function shareRoutes(): RouteDef[] {
                         body: page,
                     };
                 } catch (err) {
+                    if (err instanceof ShareSourceUnavailableError) {
+                        return {
+                            kind: "text",
+                            status: 500,
+                            contentType: "text/plain; charset=utf-8",
+                            body: err.message,
+                        };
+                    }
+
                     // The page is public: the error goes to the log, never into the body, since a file error
                     // names the vault's path on disk.
                     log.error({ err, slug }, "share page failed");
