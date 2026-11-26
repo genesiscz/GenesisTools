@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { logger } from "@genesiscz/utils/logger";
 import { makeTempDir } from "@genesiscz/utils/paths";
+import { auditClientOperation } from "../../publish/audit";
 import type { SyncRecord } from "../../publish/freshness";
 import { isSnapshotId, newSnapshotId } from "../../publish/ids";
 import type { PublishedKind } from "../../publish/kind";
@@ -49,9 +50,17 @@ export interface Publisher {
 
 export function publisher(kind: PublishedKind): Publisher {
     return {
-        publish: (input) => withPublicationLock(kind.id, () => publish(kind, input)),
+        publish: (input) =>
+            auditClientOperation(
+                { action: "publish", kind: kind.id, id: input.id },
+                () => withPublicationLock(kind.id, () => publish(kind, input)),
+                (result) => ({ id: result.id, status: result.outcomes.some((outcome) => outcome.error) ? 207 : 200 })
+            ),
         unpublish: (input) => withPublicationLock(kind.id, () => unpublish(kind.id, input)),
-        prune: (names) => withPublicationLock(kind.id, () => prune(kind.id, names)),
+        prune: (names) =>
+            auditClientOperation({ action: "prune", kind: kind.id }, () =>
+                withPublicationLock(kind.id, () => prune(kind.id, names))
+            ),
         list: () => listPublications(kind.id),
         find: (input) => findPublication({ kind: kind.id, ...input }),
     };
@@ -96,7 +105,9 @@ async function publish(kind: PublishedKind, input: PublishInput): Promise<Publis
                     throw new Error(`Target does not serve ${kind.title} publications`);
                 }
 
-                await transport.send({ ...location, dir });
+                await auditClientOperation({ action: "send", target: target.name, kind: kind.id, id }, () =>
+                    transport.send({ ...location, dir })
+                );
                 outcomes.push({ target: target.name, url });
                 synced.push([
                     target.name,
@@ -140,7 +151,9 @@ async function unpublish(
     const removed = new Set<string>();
     for (const target of targets) {
         try {
-            await transportFor(target).remove({ target, kind, id });
+            await auditClientOperation({ action: "remove", target: target.name, kind, id }, () =>
+                transportFor(target).remove({ target, kind, id })
+            );
             removed.add(target.name);
             outcomes.push({ target: target.name });
         } catch (err) {
@@ -181,7 +194,9 @@ async function prune(kind: string, names: readonly string[]): Promise<Array<{ ta
         );
         const stale = held.filter((id) => !keep.has(id));
         for (const id of stale) {
-            await transport.remove({ target, kind, id });
+            await auditClientOperation({ action: "remove", target: target.name, kind, id }, () =>
+                transport.remove({ target, kind, id })
+            );
         }
 
         result.push({ target: target.name, removed: stale });

@@ -351,6 +351,8 @@ export const env = {
     },
 
     log: {
+        /** Overrides the day-log directory for an isolated service. */
+        getDirectory: () => getTrimmed("GENESIS_TOOLS_LOG_DIR"),
         isTrace: () => isFlag("LOG_TRACE"),
         isDebug: () => isFlag("LOG_DEBUG"),
         isSilent: () => isFlag("LOG_SILENT"),

@@ -12,6 +12,7 @@ import {
     SnapshotListSchema,
     WhoamiSchema,
 } from "../api";
+import { auditClientOperation } from "../audit";
 import { KIND_ID_RE, originOf } from "../ids";
 import { packSnapshot } from "../snapshot-store";
 import { isPrivateOrHttps, PublishTargetSchema, TARGET_NAME_RE, type TargetWith } from "../targets";
@@ -40,7 +41,7 @@ async function requireOk(res: Response, operation: string): Promise<void> {
     }
 
     await res.body?.cancel();
-    throw new Error(`${operation}: HTTP ${res.status}`);
+    throw Object.assign(new Error(`${operation}: HTTP ${res.status}`), { status: res.status });
 }
 
 function validatePairingUrl(value: string): string | undefined {
@@ -70,9 +71,15 @@ export function createPairedTransport(
     deps: PairedTransportDeps = liveDeps
 ): PublishTransport & { readonly kind: "paired" } {
     const authorized = async (target: TargetWith<"paired">): Promise<string> => {
-        const token = await deps.resolveToken(target.transport.token);
+        const token = await auditClientOperation(
+            { action: "token-read", target: target.name, deviceId: target.transport.deviceId },
+            () => deps.resolveToken(target.transport.token),
+            (value) => ({ status: value ? 200 : 404 })
+        );
         if (!token) {
-            throw new Error(`publish target "${target.name}" has no token in the vault; pair it again`);
+            throw Object.assign(new Error(`publish target "${target.name}" has no token in the vault; pair it again`), {
+                status: 404,
+            });
         }
 
         return token;
@@ -91,7 +98,7 @@ export function createPairedTransport(
         await requireOk(res, "checking paired device");
         const device = WhoamiSchema.parse(await res.json());
         if (device.deviceId !== deviceId) {
-            throw new Error("The token belongs to a different device on the server");
+            throw Object.assign(new Error("The token belongs to a different device on the server"), { status: 403 });
         }
 
         return device.name;
@@ -151,72 +158,92 @@ export function createPairedTransport(
                 return `${url} serves ${health.kinds.join(", ")}`;
             });
             const device = await checkRow("Paired device", async () => {
-                const name = await whoami(url, await authorized(paired), deviceId);
+                const token = await authorized(paired);
+                const name = await auditClientOperation({ action: "token-check", target: paired.name, deviceId }, () =>
+                    whoami(url, token, deviceId)
+                );
                 return `${name} (${deviceId})`;
             });
 
             return [health, device];
         },
-        setup: async (input) => {
-            if (!TARGET_NAME_RE.test(input.name)) {
-                throw new Error(`Invalid publish target name: ${input.name}`);
-            }
-
-            const url = originOf(
-                await setupValue(input, {
-                    flag: "url",
-                    message: "Publish server origin (e.g. https://share.example.com)",
-                    validate: validatePairingUrl,
-                })
-            );
-            const base = input.values["public-base"]?.trim() || url;
-            const publicBaseProblem = validateUrl(base);
-            if (publicBaseProblem) {
-                throw new Error(`--public-base: ${publicBaseProblem}`);
-            }
-
-            const publicBase = originOf(base);
-            const code = await setupValue(input, {
-                flag: "code",
-                message: `Pairing code (run ${shareServerPairCommand()} on the server)`,
-            });
-            const deviceName = input.values["device-name"]?.trim() || hostname();
-            const pairing = PairRequestSchema.parse({ code, deviceName });
-            const paired = await redeemPairingCode({
-                url,
-                ...pairing,
-                fetch: Object.assign(
-                    async (request: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-                        const res = await deps.fetch(request, init);
-                        if (res.status === 404 && res.headers.get(PUBLISH_SERVER_HEADER) === PUBLISH_SERVER_ID) {
-                            await res.body?.cancel();
-                            throw new Error(
-                                `Update the publish server by running ${shareServerSetupCommand("server")} there`
-                            );
-                        }
-
-                        return res;
-                    },
-                    { preconnect: deps.fetch.preconnect }
-                ),
-            });
-            await whoami(url, paired.token, paired.deviceId);
-            const token = await (await deps.secrets()).set(tokenPath(input.name), paired.token);
-
-            return PublishTargetSchema.parse({
-                name: input.name,
-                publicBase,
-                transport: {
-                    kind: "paired",
-                    url,
-                    deviceId: paired.deviceId,
-                    token,
-                    pairedAt: new Date().toISOString(),
+        setup: (input) =>
+            auditClientOperation(
+                {
+                    action: input.values["previous-device-id"] ? "re-pair" : "pair",
+                    target: input.name,
+                    deviceId: input.values["previous-device-id"],
                 },
-            });
-        },
+                async () => {
+                    if (!TARGET_NAME_RE.test(input.name)) {
+                        throw new Error(`Invalid publish target name: ${input.name}`);
+                    }
+
+                    const url = originOf(
+                        await setupValue(input, {
+                            flag: "url",
+                            message: "Publish server origin (e.g. https://share.example.com)",
+                            validate: validatePairingUrl,
+                        })
+                    );
+                    const base = input.values["public-base"]?.trim() || url;
+                    const publicBaseProblem = validateUrl(base);
+                    if (publicBaseProblem || !isPrivateOrHttps(new URL(base))) {
+                        throw new Error(`--public-base: ${publicBaseProblem ?? "HTTP requires a private host"}`);
+                    }
+
+                    const publicBase = originOf(base);
+                    const code = await setupValue(input, {
+                        flag: "code",
+                        message: `Pairing code (run ${shareServerPairCommand()} on the server)`,
+                    });
+                    const deviceName = input.values["device-name"]?.trim() || hostname();
+                    const pairing = PairRequestSchema.parse({ code, deviceName });
+                    const paired = await redeemPairingCode({
+                        url,
+                        ...pairing,
+                        fetch: Object.assign(
+                            async (request: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+                                const res = await deps.fetch(request, init);
+                                if (
+                                    res.status === 404 &&
+                                    res.headers.get(PUBLISH_SERVER_HEADER) === PUBLISH_SERVER_ID
+                                ) {
+                                    await res.body?.cancel();
+                                    throw new Error(
+                                        `Update the publish server by running ${shareServerSetupCommand("server")} there`
+                                    );
+                                }
+
+                                return res;
+                            },
+                            { preconnect: deps.fetch.preconnect }
+                        ),
+                    });
+                    await whoami(url, paired.token, paired.deviceId);
+                    const token = await (await deps.secrets()).set(tokenPath(input.name), paired.token);
+
+                    return PublishTargetSchema.parse({
+                        name: input.name,
+                        publicBase,
+                        transport: {
+                            kind: "paired",
+                            url,
+                            deviceId: paired.deviceId,
+                            token,
+                            pairedAt: new Date().toISOString(),
+                        },
+                    });
+                },
+                (target) => ({ deviceId: target.transport.kind === "paired" ? target.transport.deviceId : undefined })
+            ),
         forget: async (target) => {
-            await (await deps.secrets()).delete(targetWith(target, "paired").transport.token.path);
+            const paired = targetWith(target, "paired");
+            await auditClientOperation(
+                { action: "forget", target: target.name, deviceId: paired.transport.deviceId },
+                async () => (await deps.secrets()).delete(paired.transport.token.path),
+                (deleted) => ({ status: deleted ? 200 : 404 })
+            );
         },
     };
 }

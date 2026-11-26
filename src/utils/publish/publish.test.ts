@@ -288,7 +288,8 @@ describe("publish server", () => {
         expect(unauthenticated.bodyUsed).toBe(false);
         expect((await handle(request(PUBLISH_API.whoami))).status).toBe(401);
         expect((await handle(request("/unknown/_api/elsewhere"))).status).toBe(401);
-        expect(await readdir(root)).toEqual([]);
+        expect(await readdir(root)).toEqual(["state"]);
+        expect(await readdir(stateDir)).toEqual(["audit.jsonl"]);
     });
 
     test("migrates the old page and pairs, lists, serves and revokes over real sockets", async () => {

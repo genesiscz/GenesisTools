@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { clientAuditDir, readAudit } from "@genesiscz/utils/publish/audit";
 import { artifactKind, writeArtifactSnapshot } from "@genesiscz/utils/publish/kinds/artifact";
 import type { PublishTarget } from "@genesiscz/utils/publish/targets";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -143,4 +144,16 @@ test("a successful send writes one sync record and a failed target leaves its ou
     expect(await artifacts.find({ source })).toEqual(stored.publications[0]);
     expect(await artifacts.unpublish({ id: result.id, targetNames: [] })).toEqual([{ target: "live" }]);
     expect(SafeJSON.parse(await readFile(publicationsPath(), "utf8"))).toEqual({ version: 1, publications: [] });
+    await expect(artifacts.prune([])).rejects.toThrow("no token in the vault");
+    const audit = await readAudit(clientAuditDir());
+    expect(audit.map(({ side, action, target, status }) => [side, action, target, status])).toEqual([
+        ["client", "token-read", "unpaired", 404],
+        ["client", "send", "unpaired", 404],
+        ["client", "send", "live", 200],
+        ["client", "publish", undefined, 207],
+        ["client", "remove", "live", 200],
+        ["client", "token-read", "unpaired", 404],
+        ["client", "prune", undefined, 404],
+    ]);
+    expect(audit.find((entry) => entry.action === "publish")).toMatchObject({ kind: "artifact", id: result.id });
 });

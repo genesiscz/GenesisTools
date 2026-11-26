@@ -4,6 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadShareConfig, updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { auditClientOperation } from "@genesiscz/utils/publish/audit";
 import { ALL_TARGETS, TARGET_NAME_RE } from "@genesiscz/utils/publish/targets";
 import {
     isTransportKind,
@@ -100,8 +101,16 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
             }
 
             const pair = previous?.transport.kind === "paired" ? previous.transport : undefined;
-            const oldToken = pair?.token.path === tokenPath(name) ? await resolveSecret(pair.token) : undefined;
+            const oldToken =
+                pair?.token.path === tokenPath(name)
+                    ? await auditClientOperation(
+                          { action: "token-read", target: name, deviceId: pair.deviceId },
+                          () => resolveSecret(pair.token),
+                          (value) => ({ status: value ? 200 : 404 })
+                      )
+                    : undefined;
             if (pair && previous) {
+                input.values["previous-device-id"] = pair.deviceId;
                 const url = opts.url ?? pair.url;
                 input.values.url = url;
                 if (!opts.publicBase && URL.canParse(url) && new URL(url).origin === pair.url) {
@@ -130,14 +139,13 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
 
             if (pair && target.transport.kind === "paired") {
                 if (pair.token.path !== target.transport.token.path) {
-                    await (await secrets())
-                        .delete(pair.token.path)
-                        .catch((err: unknown) =>
-                            logger.warn(
-                                { err, target: name },
-                                "could not remove the previous token from the local vault"
-                            )
-                        );
+                    await auditClientOperation(
+                        { action: "forget", target: name, deviceId: pair.deviceId },
+                        async () => (await secrets()).delete(pair.token.path),
+                        (deleted) => ({ status: deleted ? 200 : 404 })
+                    ).catch((err: unknown) =>
+                        logger.warn({ err, target: name }, "could not remove the previous token from the local vault")
+                    );
                 }
 
                 const revoke = toolCommand("dev-dashboard share-server devices", "--revoke", pair.deviceId);
@@ -198,7 +206,12 @@ export async function runTargetRemove(name: string): Promise<void> {
                 targets: current.targets.filter((entry) => entry.name !== name),
             };
         });
-        await transportFor(target).forget(target);
+        const forget = () => transportFor(target).forget(target);
+        if (target.transport.kind === "paired") {
+            await forget();
+        } else {
+            await auditClientOperation({ action: "forget", target: name }, forget);
+        }
     });
     out.println(`removed share target ${name}`);
     await out.flush();

@@ -54,34 +54,40 @@ const origin = z.string().refine((value) => {
     return !!url && isHttpUrl(url) && url.origin === value;
 }, "expected an HTTP(S) origin");
 
-export const PublishTargetSchema: z.ZodType<PublishTarget> = z.object({
-    name: z.string().regex(TARGET_NAME_RE),
-    publicBase: origin,
-    transport: z.discriminatedUnion("kind", [
-        z.object({
-            kind: z.literal("mac-live"),
-            mounts: z.record(z.string().regex(KIND_ID_RE), z.string().refine(isMountPath)),
-        }),
-        z.object({
-            kind: z.literal("paired"),
-            url: origin.refine(
-                (value) => URL.canParse(value) && isPrivateOrHttps(new URL(value)),
-                "HTTP requires a private host"
-            ),
-            deviceId: z.string().min(1),
-            pairedAt: z.iso.datetime().optional(),
-            token: z.custom<SecureRef>(isSecureRef, { message: "token must be a vault reference" }),
-        }),
-        z.object({
-            kind: z.literal("ssh-rsync"),
-            host: z.string().refine(isSshHost, "expected user@host or host"),
-            dataDir: z
-                .string()
-                .refine(isRemoteDataDir)
-                .transform((dir) => dir.replace(/\/+$/, "")),
-        }),
-    ]),
-});
+export const PublishTargetSchema: z.ZodType<PublishTarget> = z
+    .object({
+        name: z.string().regex(TARGET_NAME_RE),
+        publicBase: origin,
+        transport: z.discriminatedUnion("kind", [
+            z.object({
+                kind: z.literal("mac-live"),
+                mounts: z.record(z.string().regex(KIND_ID_RE), z.string().refine(isMountPath)),
+            }),
+            z.object({
+                kind: z.literal("paired"),
+                url: origin.refine(
+                    (value) => URL.canParse(value) && isPrivateOrHttps(new URL(value)),
+                    "HTTP requires a private host"
+                ),
+                deviceId: z.string().min(1),
+                pairedAt: z.iso.datetime().optional(),
+                token: z.custom<SecureRef>(isSecureRef, { message: "token must be a vault reference" }),
+            }),
+            z.object({
+                kind: z.literal("ssh-rsync"),
+                host: z.string().refine(isSshHost, "expected user@host or host"),
+                dataDir: z
+                    .string()
+                    .refine(isRemoteDataDir)
+                    .transform((dir) => dir.replace(/\/+$/, "")),
+            }),
+        ]),
+    })
+    .refine(
+        ({ transport, publicBase }) =>
+            transport.kind !== "paired" || (URL.canParse(publicBase) && isPrivateOrHttps(new URL(publicBase))),
+        { message: "HTTP requires a private host", path: ["publicBase"] }
+    );
 
 export function resolveTargets(input: {
     targets: readonly PublishTarget[];

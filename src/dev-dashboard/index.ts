@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { resolveShareTargetFlags, runShare, runShareSync, runUnshare } from "@app/dev-dashboard/commands/share";
 import {
+    runShareServerAudit,
     runShareServerDevices,
     runShareServerPair,
     runShareServerServe,
@@ -421,6 +422,16 @@ serverPaths(shareServer.command("status"))
     .option("--min-free-gb <n>", "override the minimum free disk space in GiB", minFreeOption)
     .option("--json", "print check results as JSON")
     .action(runShareServerStatus);
+
+shareServer
+    .command("audit")
+    .description("Read publish access records")
+    .option("--server <name>", "read the named server's access log")
+    .option("--client", "read this computer's publishing log")
+    .option("--since <time>", "filter by an ISO time or a duration such as 7d")
+    .option("--device <id>", "filter by device id")
+    .option("--json", "print records as JSON")
+    .action(runShareServerAudit);
 
 serverPaths(shareServer.command("pair"))
     .description("Print a one-time pairing code (valid for 10 minutes)")

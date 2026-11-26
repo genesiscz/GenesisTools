@@ -94,7 +94,7 @@ export class DeviceStore {
             createdAt: new Date(at).toISOString(),
         };
         await this.withWriteLock(async () => this.write([...(await this.read()), device]));
-        log.info({ deviceId: device.id, deviceName }, "share device paired");
+        log.info({ deviceId: device.id }, "share device paired");
 
         return { deviceId: device.id, token };
     }

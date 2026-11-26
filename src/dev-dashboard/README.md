@@ -116,8 +116,9 @@ tools dev-dashboard share unshare "Notes/Weekly.md" --target relay
 ```
 
 `share target list` shows the targets and marks the default. Use `share target default relay` to select the
-paired server for commands without `--target`. `share sync --all` sends notes again to their previously used
-targets, and `share sync --prune` removes stale server copies. The Mac still serves live pages under `/share/<id>`.
+paired server for commands without `--target`. `share sync --all` uses each note's previous targets and sends
+never-sent notes to the default target. `share sync --prune` removes stale server copies. The Mac serves
+live pages under `/share/<id>`.
 
 Setup saves servers and publishing targets together in `~/.genesis-tools/share/config.json`. It can install a
 systemd service on Linux or a launchd agent on macOS. For a reverse proxy it prints the routing snippet and
@@ -126,6 +127,9 @@ free space, and target. `share-server up` enables and restarts the selected serv
 stops it. `share-server serve` runs the default server in the foreground. Use `--server <name>` to select
 another. The serve flags override saved settings, including the 2 GiB default upload reserve.
 `share-server pair` prints a fresh code, and `share-server devices --revoke <id>` revokes an upload token.
+Use `share-server audit --server <name> --since 1d --json` to read server access records and
+`share-server audit --client` to read this computer's publishing records. Each audit file is private to
+the account that runs it. Status also shows the most recent pairing attempt and failed token check when recorded.
 
 ### Remote access and the phone: `tunnel setup`, `pair`, `agent`
 
