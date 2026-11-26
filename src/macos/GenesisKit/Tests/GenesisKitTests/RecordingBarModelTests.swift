@@ -112,6 +112,11 @@ final class RecordingBarModelTests: XCTestCase {
         await fulfillment(of: [delivered], timeout: 2)
         elapsedObservation.cancel()
         XCTAssertEqual(model.liveDisplay, side, "another take's report changes nothing")
+        engine.rejection = .unsupported("fixture refusal")
+        model.apply(.target(display))
+        await model.pendingCommand?.value
+        XCTAssertEqual(model.liveDisplay, side, "a refused target keeps the current display")
+        engine.rejection = nil
         model.apply(.target(display))
         await model.pendingCommand?.value
         XCTAssertNil(model.liveDisplay, "a new target forgets the previous Follow display report")
