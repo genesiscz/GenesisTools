@@ -18,10 +18,11 @@ struct WidgetInboxEntry: View {
 
     var body: some View {
         let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
+        let stage = stagedLine(item)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 2) {
-                WidgetInboxOverviewRow(item: item, open: open, focused: focused,
-                                       source: sourceLabel(session), stagedLine: stagedLine(item), toggle: toggle)
+                WidgetInboxRowHead(value: .init(item: item, source: sourceLabel(session)), open: open,
+                                   selected: open || focused, focused: focused, stage: stage, toggle: toggle)
                     .equatable()
                 if context == .inlineSource, let session {
                     IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
@@ -37,13 +38,7 @@ struct WidgetInboxEntry: View {
                     .transition(.genReveal)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
-        // The keyboard's row: a focus ring, the look of the system's own.
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
+        .decisionChrome(waiting: item.needsAnswer, staged: stage != nil, open: open, focused: focused)
         .id(item.id)
     }
 
@@ -85,33 +80,26 @@ struct WidgetInboxEntryDetail: View {
     @State private var groupLimit = 5
     @State private var loadedLimit = 0
 
-    /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
-    /// row, so this list, the alert and a session's inbox draw an option one way.
-    @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
-        if ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options, !options.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    let letter = WidgetInboxOverview.letter(index)
-                    WidgetItemOptionButton(model: model, item: item, index: index, option: option,
-                                           focused: focusRow && focusedOption == letter)
-                        .id(item.id + "#" + letter)
+    /// An open decision on the shared decision body: its summary, or its card's text and sections while that session's
+    /// cards are cached here, its options (each staging or sending, by the setting), the compact own answer and the
+    /// staged Send and Unstage. The hover list (`compact`) adds Send now (all N): it has no staged chip, which the
+    /// overview draws above its list.
+    private func decision(_ item: WidgetInboxItem) -> some View {
+        WidgetDecisionBody(
+            model: model, value: WidgetDecisionValue(item: item, card: model.card(for: item)),
+            surface: .feed(compact: compact),
+            host: WidgetItemStagingHost(model: model, item: item, surface: surface, sendsAll: compact),
+            focusedOption: focusRow ? focusedOption : nil,
+            ownAnswer: {
+                if item.kind == "decision" {
+                    // No typing in place: the list is no session, so the click opens the decision with its full field.
+                    WidgetCompactOwnAnswer(text: model.ownAnswerText(for: item),
+                                           identifier: "widget.overview.ownAnswer." + item.sourceId) {
+                        model.openAlert(item, on: surface, ownAnswer: true)
+                    }
                 }
-                // A set's clicks only tick, so its Send lives here, beside the options it sends.
-                if item.takesSeveral { setSendBar(item) }
-            }
-        }
-    }
-
-    /// The Send of a decision that takes any set of its options, and its recommended set in one click.
-    private func setSendBar(_ item: WidgetInboxItem) -> some View {
-        WidgetSetSendBar(
-            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-            recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
-            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-            identifier: "widget.overview.sendSet." + item.sourceId,
-            pick: { model.pickSet(item, option: $0) },
-            send: { model.sendStaged([item.sourceId], known: [item]) })
-            .padding(.top, 2)
+            },
+            footer: { EmptyView() })
     }
 
     @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
@@ -123,7 +111,11 @@ struct WidgetInboxEntryDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            summary(item)
+            if WidgetDecisionValue.answerable(item) {
+                decision(item)
+            } else {
+                summary(item)
+            }
             if let message = item.message {
                 WidgetOverviewMessage(message: message, clamp: compact ? 8 : 14, imageHeight: compact ? 64 : 96,
                                       showMedia: { model.showMedia?($0) }, load: { try await model.messageBody(for: item) })
@@ -145,7 +137,6 @@ struct WidgetInboxEntryDetail: View {
             if let count = item.count, count > 1, item.reply != nil || item.message != nil {
                 earlierEntries(count - 1)
             }
-            choices(item)
             if !compact, let session {
                 HStack(spacing: 8) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)

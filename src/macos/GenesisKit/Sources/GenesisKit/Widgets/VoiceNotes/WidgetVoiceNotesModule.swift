@@ -75,9 +75,7 @@ private struct WidgetVoiceNotesView: View {
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(.cyan)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Label("Voice Notes", systemImage: "recordingtape").font(.system(size: 15, weight: .semibold))
-                        Spacer()
+                    WidgetModuleHeader(symbol: "recordingtape", title: "Voice Notes", tint: .cyan) {
                         Text("\(store.notes.count) local").font(.caption2).foregroundStyle(.secondary)
                         IconButton(systemName: "arrow.clockwise", tooltip: "Refresh voice notes") { store.refresh(force: true) }
                             .disabled(store.isBusy)
@@ -90,7 +88,7 @@ private struct WidgetVoiceNotesView: View {
                         Text("Recordings stay on this Mac until you choose Transcribe.")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
-                }.padding(16)
+                }.padding(WidgetModuleMetrics.padding)
             }
         }
         .accessibilityIdentifier("voice-notes-widget")

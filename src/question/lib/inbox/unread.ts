@@ -61,16 +61,20 @@ const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (${IN
                         SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (${INBOX_GROUP}) AS recentAfterClear,
                         SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY messageKind) AS recentAfterClearTotal`;
 
-const UNSEEN = `unseen AS (
-    SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
+/** The columns every inbox read takes from a Q→A entry. */
+const INBOX_COLUMNS = `id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
         COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle, tag AS itemTag, CASE WHEN tag = 'message' THEN 1 ELSE 0 END AS messageKind,
         CASE WHEN session_id='unknown' AND tag='message' THEN project END AS externalProject,
-        CASE WHEN session_id='unknown' AND tag='message' THEN COALESCE(NULLIF(trim(agent_label),''),source) END AS externalSender
-    FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
-        AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
+        CASE WHEN session_id='unknown' AND tag='message' THEN COALESCE(NULLIF(trim(agent_label),''),source) END AS externalSender`;
+/** An entry the inbox can list: not superseded, and not the stored answer of a pending form. */
+const INBOX_LISTED = "superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)";
+
+const UNSEEN = `unseen AS (
+    SELECT ${INBOX_COLUMNS}
+    FROM entries WHERE read_at IS NULL AND ${INBOX_LISTED}
 )`;
 
 /** The session id the Q→A log files a message under when no session sent it (an external sender). */
@@ -200,6 +204,80 @@ export function readInboxGroupEntries({
             `)
                 .all(id, window.clearedAt, staleBefore, limit);
             return rows.map((row) => ({ id: row.id, at: row.at, ...visibleReply(row.question, row.answer) }));
+        },
+    });
+}
+
+/** The most read entries one read returns; the newest stay. */
+export const RECENTLY_READ_MAX = 50;
+
+/** An answer or message already read, with the fields of an unread group's newest item. */
+export type RecentlyReadEntry = Pick<
+    WidgetInboxGroup,
+    | "id"
+    | "sessionId"
+    | "provider"
+    | "title"
+    | "project"
+    | "cwd"
+    | "at"
+    | "itemTitle"
+    | "itemTag"
+    | "messageText"
+    | "reply"
+    | "sender"
+>;
+
+/**
+ * The answers and messages already read that were recorded at or after `since` (epoch ms), newest first, at most
+ * `limit`: the widget's Items list shows them dimmed below the unread entries. The time bound and the limit are in
+ * SQL, so a long history costs one range read of `idx_entries_active_ts`.
+ */
+export function readRecentlyReadEntries({
+    since,
+    limit = RECENTLY_READ_MAX,
+    enabled = { answer: true, message: true },
+}: {
+    since: number;
+    limit?: number;
+    enabled?: { answer: boolean; message: boolean };
+}): RecentlyReadEntry[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > RECENTLY_READ_MAX) {
+        throw new Error(`Choose a read entry limit between 1 and ${RECENTLY_READ_MAX}.`);
+    }
+
+    return readQuestionSnapshot({
+        dbPath: toolDataDir("question", "qa.db"),
+        read: (db) => {
+            runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
+            const rows = db
+                .query<
+                    RecentlyReadEntry & { questionText: string | null; answerText: string | null },
+                    [number, number, number, number]
+                >(`
+                WITH RECURSIVE seen AS (
+                    SELECT ${INBOX_COLUMNS}
+                    FROM entries WHERE read_at IS NOT NULL AND ts >= ?1 AND ${INBOX_LISTED}
+                      AND ((?3 = 1 AND COALESCE(tag, '') <> 'message') OR (?4 = 1 AND tag = 'message'))
+                    ORDER BY ts DESC,id DESC LIMIT ?2
+                ), preview_source AS (
+                    SELECT seen.id,entries.question,entries.answer_md AS answer
+                    FROM seen JOIN entries USING(id) WHERE seen.messageKind=0 AND entries.answer_md IS NOT NULL
+                ), ${PREVIEW_PROJECTION}
+                SELECT seen.id,sessionId,provider,title,seen.project,seen.cwd,at,itemTitle,itemTag,
+                    q.text AS questionText, a.text AS answerText,
+                    CASE WHEN messageKind=1 THEN substr(msg.answer_md,1,${MESSAGE_PREVIEW_CHARS + 1}) END AS messageText,
+                    CASE WHEN messageKind=1 THEN COALESCE(NULLIF(trim(msg.agent_label),''),msg.source) END AS sender
+                  FROM seen LEFT JOIN entries msg ON msg.id=seen.id
+                    LEFT JOIN previews q ON q.id=seen.id AND q.field='question'
+                    LEFT JOIN previews a ON a.id=seen.id AND a.field='answer'
+                  ORDER BY at DESC,seen.id DESC
+            `)
+                .all(since, limit, Number(enabled.answer), Number(enabled.message));
+            return rows.map(({ questionText, answerText, ...row }) => ({
+                ...row,
+                ...(answerText != null ? { reply: visibleReply(questionText ?? "", answerText) } : {}),
+            }));
         },
     });
 }

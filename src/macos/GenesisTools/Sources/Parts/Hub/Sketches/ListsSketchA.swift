@@ -852,7 +852,7 @@ extension ListsSketchA {
         @ViewBuilder
         private func card(_ entry: Entry) -> some View {
             if let task = entry.item.task {
-                InboxTaskCard(store: inbox.tasks, task: task, session: entry.session).id(entry.item.id)
+                WidgetTaskActionsCard(store: inbox.tasks, task: task, style: .card, sourceHome: entry.session.sourceHome, identifier: "hub.inbox.task." + task.id).id(entry.item.id)
             } else if entry.item.isForm {
                 InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
             } else {

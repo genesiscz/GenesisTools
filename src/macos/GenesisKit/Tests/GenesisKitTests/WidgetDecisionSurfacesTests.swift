@@ -11,6 +11,68 @@ import XCTest
 /// `WIDGET_DECISION_SHOTS=<folder>` (the same calls before and after a change, so the pairs match).
 @MainActor
 final class WidgetDecisionSurfacesTests: XCTestCase {
+    /// An inbox item unstages with an Undo note (`holdDiscard`); a session card puts its staged note back into its own
+    /// answer field (`unstage(card)`). The two hosts never swap them.
+    func testTheWidgetHostsUnstageByTheirKind() throws {
+        var staged = Self.card(key + "0", number: 8, draftOption: "b")
+        staged["status"] = "drafted"
+        staged["draft"] = "keep the crate"
+        let model = try self.model(cards: [staged])
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let card = try XCTUnwrap(model.cards.first { $0.number == 8 })
+        let itemHost = WidgetItemStagingHost(model: model, item: WidgetModel.inboxItem(card), surface: nil, sendsAll: false)
+        XCTAssertTrue(itemHost.stage.staged)
+        XCTAssertEqual(itemHost.stage.letters, "b")
+        itemHost.unstage()
+        XCTAssertTrue(model.heldDecisionIDs.contains(card.sourceId), "an inbox item unstages with Undo")
+        model.undoHeldDiscard()
+        XCTAssertFalse(model.heldDecisionIDs.contains(card.sourceId))
+        let cardHost = WidgetCardStagingHost(model: model, card: card)
+        XCTAssertTrue(cardHost.stage.staged)
+        cardHost.unstage()
+        XCTAssertFalse(model.heldDecisionIDs.contains(card.sourceId), "a session card unstages without the Undo hold")
+        XCTAssertTrue(model.draft.text.contains("keep the crate"), "its note goes back into its own answer field")
+    }
+
+    /// One option row draws every state in the widget's look and the hub's: open, a staged word, answered, and a key
+    /// badge with the letter before the text.
+    func testOneOptionRowDrawsEveryStateInBothLooks() throws {
+        let rows = VStack(alignment: .leading, spacing: 8) {
+            ForEach([DecisionOptionLook.widget, .hub], id: \.self) { look in
+                DecisionOptionRow(state: .open, badge: .letter("a"), look: look, recommended: true, text: "Wicker",
+                                  rationale: "It keeps the shape")
+                DecisionOptionRow(state: .staged(word: "Sending"), badge: .letter("b"), look: look, recommended: false,
+                                  text: "Crate", rationale: nil)
+                DecisionOptionRow(state: .answered, badge: .letter("c"), look: look, recommended: false, text: "Sack",
+                                  rationale: nil)
+            }
+            DecisionOptionRow(state: .open, badge: .key("4", letter: "d"), recommended: false, text: "Barrel",
+                              rationale: nil)
+        }.frame(width: 360)
+        let text = try WidgetInboxRender.draw(rows, size: CGSize(width: 380, height: 420)).joined(separator: " ")
+        // The answered letter is black on green in the hub's look, which the text reader misses; its text is read.
+        for word in ["Wicker", "It keeps the shape", "Crate", "Sending", "Sack", "a)", "b)", "Barrel", "d)"] {
+            XCTAssertTrue(text.contains(word), "\(word): \(text)")
+        }
+        XCTAssertEqual(text.components(separatedBy: "Sending").count - 1, 2, "the staged word in both looks: \(text)")
+        XCTAssertEqual(DecisionOptionMetrics.textInset(multiple: true), 8 + 20 + 8 + WidgetOptionCheckBox.width + 8)
+    }
+
+    /// One chrome for every decision row: a staged decision's edge is blue at 1.5 pt even while it waits, a waiting
+    /// one's orange at 1 pt, a closed one takes its surface's tint, and the rest draws none.
+    func testOneChromeMarksStagedBlueAndWaitingOrange() {
+        let staged = WidgetDecisionChrome.border(waiting: true, staged: true, closedTint: nil)
+        XCTAssertEqual(staged?.color, SessionPalette.blue.opacity(0.6))
+        XCTAssertEqual(staged?.width, 1.5)
+        let waiting = WidgetDecisionChrome.border(waiting: true, staged: false, closedTint: .green)
+        XCTAssertEqual(waiting?.color, Color.orange.opacity(0.28))
+        XCTAssertEqual(waiting?.width, 1)
+        XCTAssertEqual(WidgetDecisionChrome.border(waiting: false, staged: false, closedTint: .green)?.color, .green)
+        XCTAssertNil(WidgetDecisionChrome.border(waiting: false, staged: false, closedTint: nil))
+        XCTAssertEqual(WidgetDecisionChrome.cornerRadius, 11)
+    }
+
     private let key = "local:claude:fixture-decisions:"
 
     /// `inbox`: the first session's waiting entries, and the only session in the inbox of every session; nil lists the
@@ -795,8 +857,12 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         }
         let line = try shown("staged-row-age")
         XCTAssertTrue(line.contains("Staged: b)"), line)
-        XCTAssertTrue(line.contains("2m ago"), "the age is the stage's: \(line)")
-        XCTAssertFalse(line.contains("3h ago"), "not the ask's: \(line)")
+        // The stage line counts from the stage. The kind line under it keeps the ask's age, as the overview's row does.
+        let stageLine = line.components(separatedBy: "Staged: b)").dropFirst().first?
+            .components(separatedBy: "Decision").first ?? ""
+        XCTAssertTrue(stageLine.contains("2m ago"), "the age is the stage's: \(line)")
+        XCTAssertFalse(stageLine.contains("3h ago"), "not the ask's: \(line)")
+        XCTAssertTrue(line.contains("3h ago"), "the kind line says when it was asked: \(line)")
 
         model.sendingDecisionIDs.insert("d8")
         XCTAssertTrue(try shown("sending-row").contains("Sending: b)"))
@@ -1207,6 +1273,104 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
             .replacingOccurrences(of: "\n", with: " ")
         XCTAssertTrue(hidden.contains("empty it now"), hidden)
         XCTAssertFalse(hidden.contains("free space is 8.3 GB"), "the setting hides the description: \(hidden)")
+    }
+
+    /// An open entry of the inbox of every session draws its card's Context and the agent's pick under its option while
+    /// that session's cards are cached here, and only while the list shows context (`overviewSummary`); without the
+    /// card it draws the item's summary as before. Every open decision has the compact own answer, whose click opens
+    /// the decision in its session.
+    func testAFeedEntryDrawsItsCardsContextWhenTheSessionIsCached() throws {
+        var item = Self.item(key + "0", number: 1, options: ["a) allow at 1 GB or more", "b) allow any size",
+                                                              "c) keep the block, fix the message"])
+        item["summary"] = "Whether an agent may open the approval dialog by itself."
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        let field = "widget.overview.ownAnswer.d1"
+        func entryText(_ model: WidgetModel, _ name: String) throws -> String {
+            FrameProbe.reset()
+            return try recognizedText(try XCTUnwrap(openOverviewEntry(model, name: name).cgImage))
+                .replacingOccurrences(of: "\n", with: " ")
+        }
+
+        let cached = try model(cards: [Self.contextCard(key + "0")], inbox: [item])
+        defer { cached.stop() }
+        XCTAssertNotNil(cached.card(for: try XCTUnwrap(cached.inboxFor(key + "0")?.pendingItem)), "the card is cached")
+        let text = try entryText(cached, "overview-context-cached")
+        for expected in ["Context", "Show more", "it matches both of your instructions", "approval dialog by itself"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        XCTAssertNotNil(FrameProbe.frames[field], "the open entry has the compact own answer")
+
+        let quiet = try model(preferences: ["overviewSummary": false], cards: [Self.contextCard(key + "0")], inbox: [item])
+        defer { quiet.stop() }
+        let hidden = try entryText(quiet, "overview-context-quiet")
+        XCTAssertFalse(hidden.contains("Context"), "the list's switch hides the card's sections too: \(hidden)")
+        XCTAssertFalse(hidden.contains("it matches both"), hidden)
+        XCTAssertTrue(hidden.contains("keep the block"), hidden)
+
+        let bare = try model(inbox: [item])
+        defer { bare.stop() }
+        let plain = try entryText(bare, "overview-context-bare")
+        XCTAssertTrue(plain.contains("approval dialog by itself"), "the summary as before: \(plain)")
+        XCTAssertFalse(plain.contains("Context"), plain)
+        XCTAssertFalse(plain.contains("it matches both"), plain)
+        XCTAssertNotNil(FrameProbe.frames[field], "every open decision has the compact own answer")
+
+        let opened = try XCTUnwrap(bare.inboxFor(key + "0")?.pendingItem)
+        let (window, host) = WidgetInboxFeedTests.clickableHost(
+            WidgetInboxEntryDetail(model: bare, item: opened, session: bare.session(forKey: opened.key),
+                                   compact: false, context: .inlineSource),
+            size: CGSize(width: 480, height: 700))
+        defer { window.close() }
+        WidgetInboxRender.settle()
+        let button = try XCTUnwrap(WidgetInboxFeedTests.recognized(host).first { $0.text.contains("own answer") })
+        WidgetInboxFeedTests.click(button.box, in: window, host: host)
+        WidgetInboxRender.settle()
+        XCTAssertEqual(bare.selectedCardID, opened.id, "the click opens the decision in its session")
+        XCTAssertEqual(bare.ownAnswerFocusRequest, opened.id, "with its full field ready to type")
+    }
+
+    func testAFeedEntryRejectsCardsFromAnotherRevisionOrSession() throws {
+        let model = try self.model(cards: [Self.contextCard(key + "0")])
+        defer { model.stop() }
+        let card = try XCTUnwrap(model.cards.first)
+        var item = WidgetModel.inboxItem(card)
+        XCTAssertNotNil(model.card(for: item))
+        item.revision = (item.revision ?? 0) + 1
+        XCTAssertNil(model.card(for: item))
+        item = WidgetModel.inboxItem(card)
+        item.key = key + "other"
+        XCTAssertNil(model.card(for: item))
+    }
+
+    func testTheRenderedSendAllBatchKeepsLaterStagesForTheirOwnSend() throws {
+        for useItemHost in [false, true] {
+            let first = Self.card(key + "0", number: 1, draftOption: "a")
+            let third = Self.card(key + "0", number: 3)
+            let picks = [Self.item(key + "0", number: 1, options: Self.threeOptions, draftOption: "a"),
+                         Self.item(key + "0", number: 2, options: Self.threeOptions, draftOption: "b")]
+            let model = try self.model(cards: [first, third], staged: picks)
+            defer { model.stop() }
+            var calls: [WidgetJSON] = []
+            model.actionRunner = { value in calls.append(value); return ["ok": true] }
+            let card = try XCTUnwrap(model.cards.first { $0.number == 1 })
+            let host: any DecisionStagingHost = useItemHost
+                ? WidgetItemStagingHost(model: model, item: WidgetModel.inboxItem(card), surface: nil, sendsAll: true)
+                : WidgetCardStagingHost(model: model, card: card)
+            XCTAssertEqual(host.stage.othersStaged, 1)
+            model.pickSet(try XCTUnwrap(model.cards.first { $0.number == 3 }), option: "c")
+            WidgetInboxRender.settle()
+            XCTAssertTrue(model.stagedForLeave.contains { $0.sourceId == "d3" })
+            host.sendAll()
+            WidgetInboxRender.settle()
+            let sent = calls.compactMap { value -> [WidgetJSON]? in
+                guard case .object(let fields) = value, fields["action"] == .string("send-staged"),
+                      case .array(let ids) = fields["ids"] else { return nil }
+                return ids
+            }
+            XCTAssertEqual(sent, [[.string("d1"), .string("d2")]])
+            XCTAssertTrue(model.stagedForLeave.contains { $0.sourceId == "d3" })
+        }
     }
 
     /// Decision 31's card in its session's inbox: the options say their words, and the agent's reasoning sits under

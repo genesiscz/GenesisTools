@@ -1573,34 +1573,6 @@ private struct InboxSessionRow: View, Equatable {
     }
 }
 
-/// A task performs only task actions, including in the focus and table Inbox layouts.
-struct InboxTaskCard: View {
-    @ObservedObject var store: WidgetTasksStore
-    let task: WidgetTask
-    let session: InboxSession
-
-    var body: some View {
-        let busy = store.mutatingIDs.contains(task.id)
-        VStack(alignment: .leading, spacing: 6) {
-            Text(task.title).font(.headline).textSelection(.enabled)
-            HStack(spacing: 6) {
-                Text(task.addressee + " · " + task.statusLabel)
-                if busy { ProgressView("Saving…").controlSize(.small) }
-            }.font(.caption).foregroundStyle(.secondary)
-            if task.summary != task.title { Text(task.summary).textSelection(.enabled) }
-            if task.sendUncertain == true { Text("Check the session before sending this task again.") }
-            WrapLayout(spacing: 6, lineSpacing: 4) {
-                ForEach(task.actions, id: \.self) { action in
-                    Button(action.title) { store.perform(action, on: task, sourceHome: session.sourceHome) }
-                        .buttonStyle(.genHover()).accessibilityLabel(action.title + ": " + task.title)
-                }
-            }.disabled(busy)
-        }
-        .padding(.vertical, 6)
-        .accessibilityIdentifier("hub.inbox.task." + task.id)
-    }
-}
-
 struct InboxAddTaskButton: View {
     let model: HubModel
     @ObservedObject var tasks: WidgetTasksStore
@@ -1649,7 +1621,7 @@ struct InboxAddTaskButton: View {
                         Toggle("Send to the session now", isOn: $sendImmediately)
                     }
                     if triedToAdd, let error = tasks.error {
-                        InboxTaskFailure(report: tasks.createFailureReport, message: error)
+                        WidgetTaskFailureRow(report: tasks.createFailureReport, message: error, area: "hub", identifier: "hub.inbox.taskFailure")
                     }
                     HStack {
                         Spacer()
@@ -1674,18 +1646,6 @@ struct InboxAddTaskButton: View {
     }
 }
 
-/// A task mutation's failure in the widget's words: its headline and next step, with the tool's own output behind
-/// Details. The generic report stands in only when the store kept no report for the message.
-private struct InboxTaskFailure: View {
-    let report: FailureReport?
-    let message: String
-    var body: some View {
-        FailureInline(report ?? FailureReport(title: "Task update", headline: "The task update could not be confirmed.",
-                                              summary: "Check the saved task before trying again.", action: "Update task",
-                                              log: message, area: "hub"), form: .compact, identifier: "hub.inbox.taskFailure")
-    }
-}
-
 struct InboxTaskFeedback: View {
     @ObservedObject var store: WidgetTasksStore
     let saved: () -> Void
@@ -1694,7 +1654,7 @@ struct InboxTaskFeedback: View {
         Group {
             if let error = store.error {
                 HStack {
-                    InboxTaskFailure(report: store.latestFailureReport, message: error)
+                    WidgetTaskFailureRow(report: store.latestFailureReport, message: error, area: "hub", identifier: "hub.inbox.taskFailure")
                     IconButton(systemName: "xmark", tooltip: "Dismiss task feedback", action: store.clearFeedback)
                 }.padding(.horizontal)
             } else if let receipt = store.receipt {
@@ -1907,7 +1867,7 @@ struct InboxMain: View {
         case .card(let session, let item):
             Group {
                 if let task = item.task {
-                    InboxTaskCard(store: inbox.tasks, task: task, session: session)
+                    WidgetTaskActionsCard(store: inbox.tasks, task: task, style: .card, sourceHome: session.sourceHome, identifier: "hub.inbox.task." + task.id)
                 } else if item.kind == "message" || item.kind == "answer" {
                     VStack(alignment: .leading) {
                         Text(item.kind.capitalized).font(.caption).foregroundStyle(.secondary)
@@ -2453,11 +2413,9 @@ struct InboxDecisionCard: View, Equatable {
             footerRow
         }
         .padding(13)
-        .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(item.isOpen ? 0.045 : 0.025)))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(borderColor))
-        // The main list's key card: the system's focus colour, as the widget's keyboard option draws it.
-        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(keyed ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear,
-                                                                 lineWidth: 1.5).allowsHitTesting(false))
+        // The widget's decision chrome: the main list's key card wears the system's focus ring, a closed card its state.
+        .decisionChrome(waiting: item.isOpen, staged: staged, open: item.isOpen, focused: keyed,
+                        closedTint: item.isOpen ? nil : closedTint.opacity(0.3))
         // The key card and an open note keep the controls live without the pointer.
         .rowLive(live)
         .findRow(item.id, cornerRadius: 11)
@@ -2490,11 +2448,16 @@ struct InboxDecisionCard: View, Equatable {
         }
     }
 
-    private var borderColor: Color {
-        if !item.isOpen {
-            return closedTint.opacity(0.3)
-        }
-        return staged ? SessionPalette.blue.opacity(0.7) : InboxStyle.accent.opacity(0.3)
+    /// The card's stage and actions for the shared staged block, from its values and its note.
+    private var stagingHost: HubInboxDecisionHost {
+        HubInboxDecisionHost(inbox: inbox, session: session, item: item, state: state,
+                             note: { noteDirty ? note : nil }, field: { note },
+                             afterUnstage: { noteDirty = !note.isEmpty },
+                             openTranscript: {
+                                 guard let hubSession = state.hubSession else { return }
+                                 model.transcriptQuery = "DECISION \(item.number ?? 0)"
+                                 model.openSession(hubSession)
+                             })
     }
 
     private var headerRow: some View {
@@ -2733,29 +2696,12 @@ struct InboxDecisionCard: View, Equatable {
             HStack(spacing: 10) {
                 // A staged decision sends from its own card, next to the pick, or leaves the staged list (F2).
                 if staged, pickable {
-                    // A set's Send names the ticked letters: "Send a + b + c".
-                    let namesSet = item.takesSeveral && !letters.isEmpty
-                    Button {
-                        inbox.sendNow(item, in: session, note: noteDirty ? note : nil)
-                    } label: {
-                        Label(DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral),
-                              systemImage: "paperplane.fill").font(.system(size: 12))
-                    }
-                    .buttonStyle(.genPrimary())
-                    .fixedSize()
-                    .disabled(sessionSending || writing)
-                    .instantTooltip(sessionSending ? "This session's send is running"
-                        : namesSet ? DecisionAnswering.setSendTooltip(letters)
-                        : "Send this staged decision alone, without the others")
-                    LiveButton(tooltip: "Take the pick and the note off the staged list; the note stays here",
-                               enabled: !(sessionSending || writing), pressable: true) {
-                        inbox.unstage(item, in: session, keeping: note)
-                        noteDirty = !note.isEmpty
-                    } label: {
-                        Text("Unstage")
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.renamed)
+                    // The shared staged block: "Sending…" while this session's send runs.
+                    WidgetStagedActions(host: stagingHost, placement: .footer, sendSymbol: "paperplane.fill",
+                                        identifier: "hub.inbox.send." + item.id,
+                                        unstageTooltip: "Take the pick and the note off the staged list; the note stays here")
+                        .buttonStyle(.genHoverPlain())
+                        .font(.system(size: 11.5))
                 }
                 if writing {
                     ProgressView().controlSize(.small)
@@ -2814,71 +2760,27 @@ struct InboxDecisionCard: View, Equatable {
         let recommended = choice.recommended == true || item.recommended == choice.id
         // A decision that takes any set of its options: a check box per option, and a click only ticks it.
         let multiple = item.takesSeveral
-        let shape = RoundedRectangle(cornerRadius: 8)
         // A second pick while the session's send runs would race it (P14).
         let enabled = pickable && !sessionSending
-        let choose = {
-            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
-            inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
-                         shift: flags.contains(.shift), command: flags.contains(.command))
-        }
-        let label = HStack(alignment: .top, spacing: 9) {
-            if multiple {
-                // Ticked in the staged blue while open, in the answered green once closed.
-                WidgetOptionCheckBox(checked: picked, tint: answered ? ReviewPalette.added : SessionPalette.blue)
-                    .padding(.top, 0.5)
-            }
-            // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps
-            // the white letter at 4.5:1.
-            Text(verbatim: "\(choice.id))")
-                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                .foregroundColor(stagedPick ? .white : answered ? .black : Color.white.opacity(0.85))
-                .frame(width: 26, height: 21)
-                .background(RoundedRectangle(cornerRadius: 5).fill(
-                    stagedPick ? GenPrimaryButtonStyle.blue : answered ? ReviewPalette.added : Color.white.opacity(0.08)))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Color.white.opacity(item.isOpen || picked ? 0.92 : 0.55))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if recommended {
-                        DecisionRecommendedBadge()
-                    }
-                    // A set's ticked box already says it; the word stays for a one-letter pick.
-                    if stagedPick && !multiple {
-                        Text("Staged")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(SessionPalette.blue)
-                    }
-                }
+        let host = stagingHost
+        let choose = { host.choose(choice.id) }
+        return DecisionOptionButton(
+            live: live, enabled: enabled,
+            tooltip: !item.isOpen
+                ? "This decision is closed: \(statusPhrase)"
+                : sessionSending ? "This session's send is running"
+                : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
+                                                  swaps: preferences.decisionCommandSwaps,
+                                                  key: index < 9 ? index + 1 : nil, multiple: multiple),
+            action: choose) {
+            DecisionOptionRow(state: stagedPick ? .staged(word: "Staged") : answered ? .answered : .open,
+                              badge: .letter(choice.id), look: .hub, recommended: recommended, multiple: multiple,
+                              dimmed: !(item.isOpen || picked)) {
+                FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
+            } rationale: {
                 if let rationale = choice.rationale, !rationale.isEmpty {
                     FindText(inlineMarkdown(rationale), field: "rationale:\(choice.id)")
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.dim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(stagedPick ? SessionPalette.blue.opacity(0.16) : Color.clear, in: shape)
-        .overlay(shape.strokeBorder(stagedPick ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
-        .contentShape(shape)
-        return Group {
-            if live {
-                Button(action: choose) { label }
-                    // The kit's row button: a soft fill in the row's own frame, not the white outline (P1).
-                    .buttonStyle(RowButtonStyle(cornerRadius: 8))
-                    .disabled(!enabled)
-                    .instantTooltip(!item.isOpen
-                        ? "This decision is closed: \(statusPhrase)"
-                        : sessionSending ? "This session's send is running"
-                        : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                                          swaps: preferences.decisionCommandSwaps,
-                                                          key: index < 9 ? index + 1 : nil, multiple: multiple))
-            } else {
-                label.restingButton(enabled: enabled, action: choose)
             }
         }
         .modifier(SetOptionAccessibility(

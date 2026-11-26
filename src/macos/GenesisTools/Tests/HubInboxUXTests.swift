@@ -790,6 +790,31 @@ final class HubInboxUXTests: XCTestCase {
     /// Decision 4 of session s1 (stored draft "old") with `note` typed and staged, its write answering `result`;
     /// returns once the reload after the write ran.
     @MainActor
+    /// The card's Send and Unstage go through its staging host: the stage comes from the card's values ("Sending…"
+    /// while its session's send runs), and Unstage keeps the note in the field.
+    func testTheCardsSendAndUnstageGoThroughItsStagingHost() async throws {
+        let (inbox, item, session) = try await stagedNote("keep", result: ProcessCapture(status: 0, stdout: Data(), stderr: Data()))
+        let state = inbox.cardState(for: item, in: session, hubSession: nil)
+        var unstaged = false
+        let host = HubInboxDecisionHost(inbox: inbox, session: session, item: item, state: state, note: { nil },
+                                        field: { "keep" }, afterUnstage: { unstaged = true })
+        XCTAssertTrue(host.stage.staged, "the stored note is staged")
+        XCTAssertEqual(host.stage.phase, .staged(since: nil, unsent: nil))
+        XCTAssertFalse(host.stage.busy)
+        var sending = state
+        sending.sessionSending = true
+        let busy = HubInboxDecisionHost(inbox: inbox, session: session, item: item, state: sending, note: { nil })
+        XCTAssertEqual(busy.stage.phase.sendTitle(nil, multiple: false), "Sending…")
+        XCTAssertTrue(busy.stage.busy)
+        let settled = expectation(description: "unstage write settled")
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        host.unstage()
+        XCTAssertEqual(inbox.noteTexts[item.id], "keep", "Unstage keeps the note in the field, unstaged")
+        XCTAssertTrue(unstaged)
+        await fulfillment(of: [settled], timeout: 2)
+    }
+
+    @MainActor
     private func stagedNote(_ note: String, result: ProcessCapture) async throws -> (HubInboxModel, InboxItem, InboxSession) {
         let inbox = HubInboxModel()
         let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)

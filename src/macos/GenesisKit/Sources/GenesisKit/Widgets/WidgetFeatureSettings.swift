@@ -283,6 +283,14 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().frame(width: 150, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsRow("Mark messages read", detail: "A click on its card always marks a message or answer read. \"When the panel opens\" also marks the one on show at once.") {
+                    Picker("Mark messages read", selection: field(\.markReadOn)) {
+                        Text("On click").tag("click")
+                        Text("When the panel opens").tag("panel-open")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.markReadOn")
+                }
+                Divider()
                 NativeSettingsToggle(
                     "Changed files", detail: "Show a session's working changes alongside its conversation.",
                     isOn: field(\.showChanges))
@@ -779,6 +787,18 @@ private struct WidgetSessionSettings: View {
                 selection: Binding(get: { prefs.previewView }, set: { view in
                     model.writePreferences { $0.previewView = view }
                 }))
+            if prefs.previewView == "items" {
+                NativeSettingsRow("Read items", detail: "Messages and answers you already read stay in the list, grey and below the unread ones, for this long. They never count as unread.") {
+                    Picker("Read items", selection: Binding(get: { prefs.previewReadHours }, set: { hours in
+                        model.writePreferences { $0.previewReadHours = hours }
+                    })) {
+                        ForEach(WidgetReadItemsHeader.choices(current: prefs.previewReadHours), id: \.self) { hours in
+                            Text(hours == 0 ? "None" : WidgetReadItemsHeader.window(hours)).tag(hours)
+                        }
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
+                        .accessibilityIdentifier("widget.settings.previewReadHours")
+                }
+            }
             if prefs.previewView == "sessions" {
                 NativeSettingsSegmented(
                     "Show", identifier: "widget.preview.filter",
@@ -940,12 +960,41 @@ private struct WidgetModuleSettings: View {
         VStack(spacing: 18) {
             WidgetSettingsLoading(model: model)
             if model.settingsLoaded {
+                showCard
                 group("Top notch", index: nil)
                 ForEach(0..<3) { index in group("Side group \(index + 1)", index: index) }
             }
             WidgetSettingsError(model: model)
         }.task { model.refreshSettings() }
     }
+    /// The widget's own switch, first on this page: it shows or hides the top notch and every side group and keeps
+    /// each choice below (Martin, 2026-11-24: "the first you check"). The same preference as General's "Show the widget".
+    /// One switch per edge (Martin, 2026-11-24: "Show the top notch" "Show the side widget"), over General's
+    /// "Show the widget" and "Visible edges": `WidgetPreferences.showEdges`.
+    private var showCard: some View {
+        let shown = model.preferences.shownEdges
+        return NativeSettingsCard("Widget") {
+            NativeSettingsToggle(
+                "Show the top notch", detail: "The bar at the top of the screen, with the Top notch modules below.",
+                identifier: "widget.modules.showTop",
+                isOn: Binding(
+                    get: { model.preferences.shownEdges.top },
+                    set: { top in model.writePreferences { $0.showEdges(top: top, side: $0.shownEdges.side) } }))
+            Divider()
+            NativeSettingsToggle(
+                "Show the side widget",
+                detail: "The side groups at the \(model.preferences.side) edge. Turning both off keeps every choice below.",
+                identifier: "widget.modules.showSide",
+                isOn: Binding(
+                    get: { model.preferences.shownEdges.side },
+                    set: { side in model.writePreferences { $0.showEdges(top: $0.shownEdges.top, side: side) } }))
+            if !shown.top && !shown.side {
+                Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     private func group(_ title: String, index: Int?) -> some View {
         let placement = model.preferences.placement
         // "Visible edges" hides this edge, so a module change here showed nothing (Martin, 2026-10-22).

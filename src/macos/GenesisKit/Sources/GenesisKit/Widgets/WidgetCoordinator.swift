@@ -169,7 +169,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             try modules.register(
                 WidgetModuleDescriptor(
                     id: WidgetModuleChoice.agents.id, title: WidgetModuleChoice.agents.title,
-                    symbol: WidgetModuleChoice.agents.symbol, tint: .blue,
+                    symbol: WidgetModuleChoice.agents.symbol, tint: .blue, previewChrome: .module,
                     summary: { [weak model] in model?.selected?.title ?? "Your local agents" }
                 ) { [model] presentation in AgentWidgetModuleView(model: model, presentation: presentation) })
             try modules.register(shelf.captureModule())

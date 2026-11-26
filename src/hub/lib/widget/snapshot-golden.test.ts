@@ -7,6 +7,7 @@ import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { kitFixturePath } from "@app/macos/lib/kit-fixtures";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { DEFAULT_INBOX_KINDS } from "@app/question/lib/inbox/kinds";
+import type { RecentlyReadEntry } from "@app/question/lib/inbox/unread";
 import type { AskForm } from "@app/question/lib/pending/types";
 import type { QaRow } from "@app/question/lib/read-model";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
@@ -332,6 +333,21 @@ const WORK_AGENTS: AgentsTree = {
     orphans: [],
 };
 
+/** `qa_message_fixture` as the read query returns it: the message the work session sent and the reader read. */
+const READ_MESSAGE: RecentlyReadEntry = {
+    id: "qa_message_fixture",
+    sessionId: WORK.sessionId,
+    provider: "claude",
+    title: "Work session",
+    project: "work",
+    cwd: WORK.cwd,
+    at: minutesAgo(6),
+    itemTitle: "The nightly job finished",
+    itemTag: "message",
+    messageText: "The nightly job finished\n\nAll 12 steps passed.",
+    sender: "mcp",
+};
+
 /** Two sessions (work and personal) holding every kind of card the builder makes. */
 const everyKindSources: WidgetSources = {
     sessions: async () => [
@@ -368,6 +384,7 @@ const everyKindSources: WidgetSources = {
         complete: true,
         truncated: false,
     }),
+    recentlyRead: (since) => (since <= minutesAgo(6) ? [READ_MESSAGE] : []),
     events: (ids) =>
         ids.includes("d_1_fixture")
             ? [{ id: "ev_fixture", sourceId: "d_1_fixture", at: minutesAgo(30), title: "DECISION 1 asked", body: "" }]
@@ -520,6 +537,94 @@ it("counts configured message groups beyond the visible rows while showing uncou
     } finally {
         await rm(root, { recursive: true, force: true });
     }
+});
+
+describe("the read messages and answers of the Items list", () => {
+    async function snapshotWith(
+        hours?: number,
+        extraRead: RecentlyReadEntry[] = []
+    ): Promise<{ since: number[]; snapshot: Awaited<ReturnType<typeof widgetSnapshot>> }> {
+        const root = await mkdtemp(join(tmpdir(), "widget-read-items-"));
+        const since: number[] = [];
+
+        try {
+            if (hours !== undefined) {
+                await mutateWidgetState(root, (state) => {
+                    state.preferences.previewReadHours = hours;
+                });
+            }
+
+            const sources: WidgetSources = {
+                ...everyKindSources,
+                recentlyRead: (from) => {
+                    since.push(from);
+                    return [
+                        ...(everyKindSources.recentlyRead?.(from, { answer: true, message: true }) ?? []),
+                        ...extraRead,
+                    ];
+                },
+            };
+            return { since, snapshot: await widgetSnapshot({ root, sources, now: NOW }) };
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }
+
+    it("are read for the last 24 hours by default and listed as read, apart from every count", async () => {
+        const { since, snapshot } = await snapshotWith();
+        const { snapshot: none } = await snapshotWith(0);
+        expect(since).toEqual([NOW - 24 * 3_600_000]);
+        expect(snapshot.notifications?.recentlyRead).toEqual([
+            {
+                id: "answer:qa_message_fixture",
+                sourceId: "qa_message_fixture",
+                kind: "answer",
+                key: widgetSessionKey(WORK),
+                at: minutesAgo(6),
+                needsAnswer: false,
+                title: "The nightly job finished",
+                tag: "message",
+                message: { text: "All 12 steps passed." },
+                read: true,
+            },
+        ]);
+        const listed = snapshot.notifications?.sessions.flatMap((session) => session.items ?? []) ?? [];
+        expect(listed.some((item) => item.read === true || item.sourceId === "qa_message_fixture")).toBe(false);
+        expect(snapshot.notifications?.unread).toBe(none.notifications?.unread);
+        expect(snapshot.notifications?.badgeCount).toBe(none.notifications?.badgeCount);
+        expect(snapshot.notifications?.sessions).toEqual(none.notifications?.sessions);
+    });
+
+    it("keeps read answers with their reply and excludes unread duplicates after an interleaved read", async () => {
+        const readAnswer: RecentlyReadEntry = {
+            ...READ_MESSAGE,
+            id: "qa_read_answer",
+            itemTag: "question",
+            itemTitle: "Which shelf?",
+            reply: { question: "Which shelf?", text: "The upper shelf." },
+            messageText: undefined,
+            sender: undefined,
+        };
+        const duplicate: RecentlyReadEntry = { ...readAnswer, id: "qa_answer_fixture" };
+        const { snapshot } = await snapshotWith(24, [readAnswer, duplicate]);
+        const { snapshot: withoutRead } = await snapshotWith(0);
+        expect(snapshot.notifications?.recentlyRead.map((row) => row.sourceId)).toEqual([
+            "qa_message_fixture",
+            "qa_read_answer",
+        ]);
+        expect(snapshot.notifications?.recentlyRead[1]).toMatchObject({ read: true, reply: readAnswer.reply });
+        expect(snapshot.notifications?.unread).toBe(withoutRead.notifications?.unread);
+        expect(snapshot.notifications?.badgeCount).toBe(withoutRead.notifications?.badgeCount);
+    });
+
+    it("are not read at all while the setting is none, and the window follows the setting", async () => {
+        const none = await snapshotWith(0);
+        expect(none.since).toEqual([]);
+        expect(none.snapshot.notifications?.recentlyRead).toEqual([]);
+        const hour = await snapshotWith(1);
+        expect(hour.since).toEqual([NOW - 3_600_000]);
+        expect(hour.snapshot.notifications?.recentlyRead.map((item) => item.sourceId)).toEqual(["qa_message_fixture"]);
+    });
 });
 
 describe("a preferences write from the widget", () => {

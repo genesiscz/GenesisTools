@@ -25,7 +25,10 @@ public final class WidgetModel: ObservableObject {
             // Only the preferences changed (a live setting): the sessions and the inbox are the same, so only what
             // the preferences decide is computed again. Rebuilding the inbox was most of a live apply (2026-10-28).
             if preferencesOnlyChange {
-                if oldValue?.state.preferences.inboxFeedRuns != snapshot?.state.preferences.inboxFeedRuns { refreshInboxFeeds() }
+                let old = oldValue?.state.preferences, new = snapshot?.state.preferences
+                if old?.inboxFeedRuns != new?.inboxFeedRuns || old?.previewReadHours != new?.previewReadHours {
+                    refreshInboxFeeds()
+                }
                 refreshPreferenceDerived()
                 return
             }
@@ -265,7 +268,18 @@ public final class WidgetModel: ObservableObject {
         } else {
             hoverTask?.cancel()
             previewOpenItemID = item.id
+            markPreviewItemRead(item)
         }
+    }
+
+    private func markPreviewItemRead(_ item: WidgetInboxItem) {
+        guard !stopping, !item.isRead, ["answer", "result"].contains(item.kind) else { return }
+        let token = item.key + "|" + item.id + "|" + String(item.at)
+        guard inboxReadRequests.insert(token).inserted else { return }
+        action(["action": "inbox-read", "key": .string(item.key), "id": .string(item.id),
+                "kind": .string(item.kind), "at": .number(item.at)], failed: { [weak self] in
+            self?.inboxReadRequests.remove(token)
+        })
     }
 
     func closePreviewEntry() {
@@ -276,7 +290,7 @@ public final class WidgetModel: ObservableObject {
     /// The Open Widget shortcut: an entry the reader opened in the hover list opens in its session, so the expanded
     /// widget keeps it; with none open, the agents pane opens as it last was.
     func openFromShortcut(on surface: WidgetSurfaceID) {
-        if let id = previewOpenItemID, let item = inboxOverviewItems.first(where: { $0.id == id }) {
+        if let id = previewOpenItemID, let item = previewItem(id: id) {
             closePreviewEntry()
             openInboxItem(item, on: surface)
             return
@@ -860,6 +874,13 @@ public final class WidgetModel: ObservableObject {
         return true
     }
 
+    public func retryInbox() {
+        stopping = true
+        watcher?.stop()
+        watcher = nil
+        start()
+    }
+
     public func start() {
         guard watcher == nil else { return }
         stopping = false
@@ -1237,7 +1258,9 @@ public final class WidgetModel: ObservableObject {
         refreshContext()
         presentationChanged?()
         scheduleQuietReduction()
-        if openingInbox == nil, let card, card.kind == "answer", !card.read {
+        // Only the old way marks the answer on show read as the panel opens; by default a click on its card does
+        // (decision 30 b, 2026-11-25: a message that arrived seconds before the panel opened left the unread list).
+        if preferences.markReadOn == "panel-open", openingInbox == nil, let card, card.kind == "answer", !card.read {
             action(["action": "read", "id": .string(card.sourceId)])
         }
     }
@@ -1425,6 +1448,17 @@ public final class WidgetModel: ObservableObject {
     public func openCard(_ card: WidgetCard) {
         foldedCardIDs.remove(card.id)
         selectedCardID = card.id
+        markCardRead(card)
+    }
+
+    /// Folds an open inbox card. The click that folds it is a click on the card too, so an unread answer or result
+    /// counts as read: the card the panel opened on is shown open, and by default the opening did not mark it.
+    public func foldCard(_ card: WidgetCard) {
+        foldedCardIDs.insert(card.id)
+        markCardRead(card)
+    }
+
+    private func markCardRead(_ card: WidgetCard) {
         guard !stopping, !card.read, ["answer", "result"].contains(card.kind) else { return }
         let token = card.sessionKey + "|" + card.id + "|" + String(card.at)
         guard inboxReadRequests.insert(token).inserted else { return }
@@ -1716,7 +1750,16 @@ public final class WidgetModel: ObservableObject {
     private(set) var inboxFeeds = WidgetInboxFeeds()
 
     private func refreshInboxFeeds() {
-        inboxFeeds = WidgetInboxFeeds(inboxOverviewItems, by: preferences.inboxFeedRuns) { sessionIndex[$0.key]?.project }
+        // The hub lists the read entries for the hours it last read; at 0 none show, also before its next snapshot.
+        let read = preferences.previewReadHours > 0 ? inbox.recentlyRead ?? [] : []
+        inboxFeeds = WidgetInboxFeeds(inboxOverviewItems, read: read, by: preferences.inboxFeedRuns) {
+            sessionIndex[$0.key]?.project
+        }
+    }
+
+    /// An entry of the hover list's Items view by its id: an unread or waiting one, else one already read.
+    func previewItem(id: String) -> WidgetInboxItem? {
+        inboxOverviewItems.first { $0.id == id } ?? inboxFeeds.read.lazy.flatMap(\.items).first { $0.id == id }
     }
 
     nonisolated static func overviewItems(_ sessions: [WidgetInboxSession]) -> [WidgetInboxItem] {
@@ -1771,9 +1814,10 @@ public final class WidgetModel: ObservableObject {
         acknowledgeOpenedInbox()
     }
 
-    /// The alert card's header, Open and Write my own answer: the alert's own item opens in its session (not the
-    /// session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a staged note.
-    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, ownAnswer: Bool = false) {
+    /// The alert card's header, Open and Write my own answer, and a list entry's Write my own answer: the item opens in
+    /// its session (not the session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a
+    /// staged note. A nil surface is the open panel itself (the inbox of every session).
+    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID?, ownAnswer: Bool = false) {
         openInboxItem(item, on: surface)
         // The card the popup opened flashes, so the eye finds it in the session's list.
         reveal("card-" + item.id)
@@ -2012,7 +2056,7 @@ public final class WidgetModel: ObservableObject {
             } else if foldedCardIDs.contains(shown[current].id) {
                 openCard(shown[current])
             } else {
-                foldedCardIDs.insert(shown[current].id)
+                foldCard(shown[current])
             }
         case .up, .down:
             let step = kind == .up ? -1 : 1

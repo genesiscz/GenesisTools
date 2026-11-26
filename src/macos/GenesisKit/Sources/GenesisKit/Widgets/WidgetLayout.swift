@@ -6,6 +6,12 @@ import SwiftUI
 struct WidgetTopBarLayout: Layout {
     var cutout: CGFloat
     var notch: CGFloat = 0
+    /// What the primary button's title adds to its width (the text and the button's 7 pt spacing). The title shows only
+    /// in the one-piece bar (`cutout` 0), so the plain and split widths below are measured as if it were there and as
+    /// if it were not, whichever layout the bar is drawn in now. Measured from the drawn layout, the bar flipped: split,
+    /// it measured too narrow and snapped beside the notch; beside it, the title made it wide enough to snap back, about
+    /// 100 times a second (2026-11-24, top position 0.438 on a display with a notch).
+    var titleWidth: CGFloat = 0
     var intrinsicSizeChanged: (CGSize) -> Void = { _ in }
     var placementsMeasured: (CGSize, CGSize) -> Void = { _, _ in }
     struct Cache {
@@ -22,8 +28,9 @@ struct WidgetTopBarLayout: Layout {
             ? max(sizes[0].width, sizes[1].width) * 2 + cutout + 16
             : sizes[0].width + sizes[1].width + 16
         let intrinsic = CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
-        let plain = CGSize(width: sizes[0].width + sizes[1].width + 16, height: intrinsic.height)
-        let split = CGSize(width: max(sizes[0].width, sizes[1].width) * 2 + notch + 16, height: intrinsic.height)
+        let (plain, split) = Self.placements(
+            left: sizes[0].width, right: sizes[1].width, height: intrinsic.height,
+            cutout: cutout, notch: notch, titleWidth: titleWidth)
         if cache.intrinsic != intrinsic {
             cache.intrinsic = intrinsic
             intrinsicSizeChanged(intrinsic)
@@ -34,6 +41,17 @@ struct WidgetTopBarLayout: Layout {
             placementsMeasured(plain, split)
         }
         return CGSize(width: min(proposal.width ?? width, width), height: intrinsic.height)
+    }
+
+    /// The bar's size in one piece (the primary button with its title) and split around a notch `notch` wide (without
+    /// it). `left` is the primary button as drawn now: with its title when `cutout` is 0, without it otherwise.
+    static func placements(
+        left: CGFloat, right: CGFloat, height: CGFloat, cutout: CGFloat, notch: CGFloat, titleWidth: CGFloat
+    ) -> (plain: CGSize, split: CGSize) {
+        let titled = cutout > 0 ? left + titleWidth : left
+        let untitled = cutout > 0 ? left : max(0, left - titleWidth)
+        return (CGSize(width: titled + right + 16, height: height),
+                CGSize(width: max(untitled, right) * 2 + notch + 16, height: height))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {

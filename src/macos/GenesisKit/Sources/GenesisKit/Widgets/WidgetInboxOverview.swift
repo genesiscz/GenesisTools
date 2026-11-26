@@ -236,22 +236,23 @@ struct WidgetInboxOverview: View {
                     readingBoundary = feed && scrolled ? feedRuns.first?.items.first : nil
                 }
             if items.isEmpty {
-                VStack(spacing: 10) {
-                    GenesisWidgetMark()
-                    Text(!model.inbox.complete ? "Inbox status unavailable." : filter == "needs"
-                         ? "Nothing waits for your answer." : filter == "unread" ? "No unread items." : "Nothing new in the inbox.")
-                        .font(.headline)
-                    if !model.inboxOverviewItems.isEmpty, filter != "all" {
-                        Button("Show all items") {
-                            model.holdAgentFit()
-                            model.overviewFilterPick = "all"
-                        }
-                            .buttonStyle(.genHover())
-                    } else if model.inbox.complete {
-                        Text("Questions, screenshots and finished work from every session land here.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity).padding(.vertical, 28)
+                let showAll: (() -> Void)? = !model.inboxOverviewItems.isEmpty && filter != "all" ? {
+                    model.holdAgentFit()
+                    model.overviewFilterPick = "all"
+                } : nil
+                if model.inbox.complete {
+                    WidgetEmptyState(size: .regular, text: filter == "needs" ? "Nothing waits for your answer."
+                                         : filter == "unread" ? "No unread items." : "Nothing new in the inbox.",
+                                     detail: showAll == nil
+                                         ? "Questions, screenshots and finished work from every session land here." : nil,
+                                     actionTitle: showAll == nil ? nil : "Show all items", action: showAll)
+                        .frame(maxWidth: .infinity).padding(.vertical, 28)
+                } else {
+                    VStack(spacing: 10) {
+                        WidgetInboxStatusFailure(error: model.error) { model.retryInbox() }
+                        if let showAll { Button("Show all items", action: showAll).buttonStyle(.genHover()) }
+                    }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
             } else {
                 Text(Self.summary(items, waits: model.waitsForAnswer, hidden: model.inboxHiddenItems) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.bottom, 8)
@@ -397,8 +398,8 @@ struct WidgetInboxOverview: View {
     static func kindLabel(_ item: WidgetInboxItem) -> String {
         if item.needsAnswer { return item.kind == "decision" ? "Decision · waiting for your answer" : "Waiting for your answer" }
         switch item.kind {
-        case "answer" where item.tag == "message": return "New message"
-        case "answer": return "New answer"
+        case "answer" where item.tag == "message": return item.isRead ? "Message" : "New message"
+        case "answer": return item.isRead ? "Answer" : "New answer"
         case "result": return "Agent result"
         // Words, never the wire kind: "Todo" and "Form" read as raw data.
         case "todo": return "Task"
@@ -408,75 +409,163 @@ struct WidgetInboxOverview: View {
     }
 }
 
-/// The head of one overview entry, from values: the dot, kind, title, staged line, kind, session and age, the ×count
-/// and the chevron. It is a button (open or fold the entry) and the count has its tooltip only while live (`liveRow`:
-/// hovered, open, or the keyboard's row); at rest it draws the same labels with no control, so a model publish
-/// re-renders only the entries whose values changed and an accessibility client walks no buttons of the hundreds of
-/// entries at rest (swift skill, "Dense lists and accessibility clients"). VoiceOver still presses it (`rowButton`).
-struct WidgetInboxOverviewRow: View, Equatable {
-    let item: WidgetInboxItem
+/// What one inbox row's head shows, as values: a session's inbox builds it from a card, the inbox of every session and
+/// the hover list from an item. Each surface keeps its identifier prefix, its probe, its spoken words and its dot rule.
+struct WidgetRowHeadValue: Equatable {
+    enum Surface: Equatable { case list, card }
+
+    var surface: Surface
+    var id: String
+    var identifierPrefix: String
+    /// The wire kind, for its symbol.
+    var kind: String
+    var title: String
+    /// A one-question form's title is its prompt, drawn as Markdown.
+    var titleIsMarkdown: Bool
+    var openLineLimit: Int?
+    var askedIn: String?
+    var needsAnswer: Bool
+    /// The overview's rule: a staged decision waits until a send took it. A session's inbox: staging ends the wait.
+    var waitsWhileStaged: Bool
+    /// The dot is drawn at all: orange while it waits, else blue.
+    var dotLit: Bool
+    /// A read item of the Items list: grey, below the unread ones for `previewReadHours`.
+    var dimmed: Bool
+    var kindLabel: String
+    var spokenTitle: String
+    /// Only the source information that the enclosing group has not already identified.
+    var source: String?
+    var count: Int?
+    var at: Double
+    /// A closed card's first line of text.
+    var previewLine: String?
+    var blocking: Bool
+    var confidence: String?
+}
+
+extension WidgetRowHeadValue {
+    init(item: WidgetInboxItem, source: String?) {
+        let title = WidgetInboxOverview.title(item)
+        self.init(surface: .list, id: item.id, identifierPrefix: "widget.overview.row.", kind: item.kind, title: title,
+                  titleIsMarkdown: false, openLineLimit: item.reply == nil ? 6 : nil, askedIn: item.askedIn,
+                  needsAnswer: item.needsAnswer, waitsWhileStaged: true, dotLit: !item.isRead, dimmed: item.isRead,
+                  kindLabel: WidgetInboxOverview.kindLabel(item), spokenTitle: title, source: source, count: item.count,
+                  at: item.at, previewLine: nil, blocking: false, confidence: nil)
+    }
+}
+
+/// The head of one inbox row, from values: the dot, kind, title, the open card's facts, the staged line, the kind,
+/// source and age, the ×count and the chevron. It is a button (open or fold the row) and its controls exist only while
+/// live (`liveRow`: hovered, open, selected, or the keyboard's row); at rest it draws the same labels with no control,
+/// so a model publish re-renders only the rows whose values changed and an accessibility client walks no buttons of
+/// the hundreds of rows at rest (swift skill, "Dense lists and accessibility clients"). VoiceOver still presses it
+/// (`rowButton`).
+struct WidgetInboxRowHead: View, Equatable {
+    let value: WidgetRowHeadValue
     let open: Bool
+    let selected: Bool
     /// The keyboard's row.
     let focused: Bool
-    /// Only the source information that the enclosing group has not already identified.
-    let source: String?
     /// The staged pick or note of a waiting decision with where its send is, read from the model by the parent.
-    let stagedLine: WidgetStageLine?
+    let stage: WidgetStageLine?
     let toggle: () -> Void
 
-    static func == (a: WidgetInboxOverviewRow, b: WidgetInboxOverviewRow) -> Bool {
-        a.item == b.item && a.open == b.open && a.focused == b.focused
-            && a.source == b.source && a.stagedLine == b.stagedLine
+    static func == (a: WidgetInboxRowHead, b: WidgetInboxRowHead) -> Bool {
+        a.value == b.value && a.open == b.open && a.selected == b.selected && a.focused == b.focused
+            && a.stage == b.stage
+    }
+
+    /// A decision being sent or sent no longer waits for an answer, though the snapshot still says so for a moment.
+    private var waiting: Bool {
+        guard value.needsAnswer else { return false }
+        guard let stage else { return true }
+        return value.waitsWhileStaged && !stage.phase.onItsWay
     }
 
     var body: some View {
-        let _ = RenderProbe.hit("widget.overview.row.body")
+        let _ = probe()
         labels
             .rowButton(cornerRadius: 11) { toggle() }
-            // A staged decision says where its send is ("Decision · Sent"), as its line does: a snapshot from before the
-            // send still says it waits for your answer.
-            .accessibilityLabel([stagedLine.map { "Decision · " + $0.phase.label } ?? WidgetInboxOverview.kindLabel(item),
-                                 WidgetInboxOverview.title(item), source].compactMap { $0 }.joined(separator: ", "))
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            .accessibilityLabel(spokenLabel)
+            .accessibilityValue((value.dimmed ? "Read, " : "") + (open ? "Expanded" : "Collapsed"))
             .accessibilityAddTraits(focused ? .isSelected : [])
-            .accessibilityIdentifier("widget.overview.row." + item.id)
-            .liveRow(selected: open || focused)
+            .accessibilityIdentifier(value.identifierPrefix + value.id)
+            .liveRow(selected: selected)
+    }
+
+    private func probe() {
+        switch value.surface {
+        case .list: RenderProbe.hit("widget.overview.row.body")
+        case .card: RenderProbe.hit("widget.inbox.card.body")
+        }
+    }
+
+    /// A staged decision says where its send is ("Decision · Sent"), as its line does: a snapshot from before the send
+    /// still says it waits for your answer. An open card adds the facts its badges show: ", blocking, high confidence".
+    private var spokenLabel: String {
+        switch value.surface {
+        case .list:
+            return [stage.map { "Decision · " + $0.phase.label } ?? value.kindLabel, value.spokenTitle, value.source]
+                .compactMap { $0 }.joined(separator: ", ")
+        case .card:
+            var facts: [String] = []
+            if open, value.blocking { facts.append("blocking") }
+            if open, let confidence = value.confidence { facts.append(confidence + " confidence") }
+            return (stage?.phase.label ?? value.kindLabel) + ": " + value.spokenTitle + facts.map { ", " + $0 }.joined()
+        }
     }
 
     private var labels: some View {
-        // A decision being sent or sent no longer waits for an answer, though the snapshot still says so for a moment.
-        let waiting = item.needsAnswer && !(stagedLine?.phase.onItsWay ?? false)
+        let waiting = self.waiting
         return HStack(alignment: .top, spacing: 9) {
-            Circle().fill(waiting ? Color.orange : SessionPalette.blue)
+            // An item already read keeps the dot's room but draws none.
+            Circle().fill(!value.dotLit ? Color.clear : waiting ? Color.orange : SessionPalette.blue)
                 .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
+            Image(systemName: LiveWidgetView.kindSymbol(value.kind)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
-                Text(WidgetInboxOverview.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? (item.reply == nil ? 6 : nil) : 2)
+                (value.titleIsMarkdown ? Text(.init(value.title)) : Text(value.title))
+                    .font(.system(size: 12.5, weight: open ? .semibold : .medium))
+                    .lineLimit(open ? value.openLineLimit : 2)
                     .fixedSize(horizontal: false, vertical: true)
-                if let askedIn = item.askedIn, !askedIn.isEmpty {
+                // A sub-agent's decision names its thread and lead: each session numbers its own (DECISION 46 b).
+                if let askedIn = value.askedIn, !askedIn.isEmpty {
                     WidgetAskedInLine(askedIn)
                 }
-                if let stagedLine {
-                    stagedLine
+                // Open, the facts the hub's card shows beside its title: blocking, and how sure the agent is.
+                if open, value.blocking || value.confidence != nil {
+                    HStack(spacing: 6) {
+                        if value.blocking {
+                            Badge("Blocking", color: KitPalette.removed, look: .filled)
+                        }
+                        if let confidence = value.confidence {
+                            DecisionConfidenceBadge(confidence)
+                        }
+                    }
+                }
+                if !open, let preview = value.previewLine {
+                    Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let stage {
+                    stage
                 }
                 HStack(spacing: 4) {
-                    if let source {
+                    if let source = value.source {
                         Text(source).lineLimit(1).truncationMode(.middle).help(source)
                         Text("·")
                     }
                     // A decision on its way no longer says it waits for your answer.
-                    let kind = waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision"
-                    if WidgetInboxOverview.title(item) != kind {
+                    let kind = waiting || !value.needsAnswer ? value.kindLabel : "Decision"
+                    if value.title != kind {
                         Text(kind).lineLimit(1)
                         Text("·")
                     }
-                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .spelled).fixedSize()
+                    // One age style in a list (.claude/rules/macos-app.md): "12m ago".
+                    LiveAgo(date: Date(timeIntervalSince1970: value.at / 1000), style: .brief).fixedSize()
                 }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
             }
             Spacer(minLength: 4)
-            if let count = item.count, count > 1 {
+            if let count = value.count, count > 1 {
                 Text(verbatim: "×\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(.secondary).padding(.top, 3)
                     .instantTooltip("\(count) items like this one in this session")
@@ -485,6 +574,7 @@ struct WidgetInboxOverviewRow: View, Equatable {
                 .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0)).padding(.top, 4)
         }
         .padding(.horizontal, 10).padding(.vertical, 9)
+        .opacity(value.dimmed ? (open ? 0.8 : 0.55) : 1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
