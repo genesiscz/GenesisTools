@@ -113,16 +113,16 @@ public enum MarkdownTaskDoneStyle: String, CaseIterable, Sendable {
     }
 }
 
-/// The source editor's text size beside the page's body text.
+/// The source editor's text size relative to inline code on the page.
 public enum MarkdownEditorTextSize: String, CaseIterable, Sendable {
-    /// Two points under the page's size.
+    /// Two points under the page's inline-code size.
     case smaller
     /// The size the page gives code inside its text, so the two panes of split view read alike. The default.
     case page
-    /// Two points over the page's size.
+    /// Two points over the page's inline-code size.
     case larger
 
-    /// Points added to the page's size at 100%.
+    /// Points added to the page's inline-code size at 100%.
     public var offset: Double {
         switch self {
         case .smaller: return -2

@@ -132,74 +132,92 @@
         if (close) {
             return { name: close[1].toLowerCase(), close: true };
         }
-        var open = /^<([A-Za-z][A-Za-z0-9-]*)([\s\S]*?)(\/?)>$/.exec(html);
+        // Consume complete attribute values before recognizing the optional self-closing slash.
+        var open =
+            /^<([A-Za-z][A-Za-z0-9-]*)((?:\s+[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>$/.exec(
+                html
+            );
         if (!open) {
             return null;
         }
         return { name: open[1].toLowerCase(), attrs: /\S/.test(open[2]), selfClosing: open[3] === "/" };
     }
-    function gnBalanceInlineHTML(kids, state) {
-        var open = [];
+    function gnBalanceInlineHTML(kids, state, containers) {
+        var open = [],
+            latest = Object.create(null),
+            out = [];
         function closer(name) {
             var t = new state.Token("html_inline", "", 0);
             t.content = `</${name}>`;
             return t;
         }
-        // A placeholder is text: the renderer escapes it, so the page shows the brackets.
+        function pop() {
+            var entry = open.pop();
+            latest[entry.name] = entry.previous;
+            return entry;
+        }
         function unclosed(entry) {
             if (entry.attrs) {
-                return closer(entry.name);
+                out.push(closer(entry.name));
+            } else {
+                entry.token.type = "text";
             }
-            entry.token.type = "text";
-            return null;
         }
         for (var j = 0; j < kids.length; j++) {
             var k = kids[j];
             var tag = k.type === "html_inline" ? gnInlineTag(k.content) : null;
             if (!tag || GN_VOID_TAG[tag.name]) {
+                out.push(k);
                 continue;
             }
             if (!tag.close) {
+                out.push(k);
                 if (tag.selfClosing) {
-                    // `<span/>` opens a span in HTML; the author meant an empty one.
-                    kids.splice(j + 1, 0, closer(tag.name));
-                    j++;
+                    out.push(closer(tag.name));
                 } else {
-                    open.push({ name: tag.name, attrs: tag.attrs, token: k });
+                    var entry = { name: tag.name, attrs: tag.attrs, token: k, previous: latest[tag.name] };
+                    latest[tag.name] = open.length;
+                    open.push(entry);
                 }
                 continue;
             }
-            var at = open.length - 1;
-            while (at >= 0 && open[at].name !== tag.name) {
-                at--;
-            }
-            if (at < 0) {
-                k.type = "text";
+            var at = latest[tag.name];
+            if (at === undefined) {
+                if (containers[tag.name]) {
+                    containers[tag.name]--;
+                } else {
+                    k.type = "text";
+                }
+                out.push(k);
                 continue;
             }
-            // Tags opened inside this one and still open end here too.
             while (open.length - 1 > at) {
-                var end = unclosed(open.pop());
-                if (end) {
-                    kids.splice(j, 0, end);
-                    j++;
-                }
+                unclosed(pop());
             }
-            open.pop();
+            pop();
+            out.push(k);
         }
         while (open.length) {
-            var last = unclosed(open.pop());
-            if (last) {
-                kids.push(last);
-            }
+            unclosed(pop());
         }
+        return out;
     }
-    // Before linkify, which counts html <a> tags to leave the text inside a link alone.
+    // Keep structural containers from earlier HTML blocks available to later inline closing tags.
     md.core.ruler.after("inline", "gn_inline_html", (state) => {
-        var t = state.tokens;
+        var t = state.tokens,
+            containers = Object.create(null);
         for (var i = 0; i < t.length; i++) {
-            if (t[i].type === "inline" && t[i].children) {
-                gnBalanceInlineHTML(t[i].children, state);
+            if (t[i].type === "html_block") {
+                GN_BLOCK_TAG.lastIndex = 0;
+                var m;
+                for (m = GN_BLOCK_TAG.exec(t[i].content); m; m = GN_BLOCK_TAG.exec(t[i].content)) {
+                    var name = m[3] && m[3].toLowerCase();
+                    if (name && !GN_BLOCK_FORMATTING[name] && !GN_VOID_TAG[name]) {
+                        containers[name] = Math.max(0, (containers[name] || 0) + (m[2] ? -1 : 1));
+                    }
+                }
+            } else if (t[i].type === "inline" && t[i].children) {
+                t[i].children = gnBalanceInlineHTML(t[i].children, state, containers);
             }
         }
     });
@@ -207,7 +225,21 @@
     // A raw HTML block stays as written (CommonMark), but a formatting tag it leaves open ends with it: the page parses
     // the whole note at once, so a line holding only `<b>` made every block after it bold. A structural tag (`<a href>`,
     // `<div>`, `<details>`) may wrap the blocks after it, as CommonMark allows, and is left open.
-    var GN_BLOCK_FORMATTING = { b: 1, i: 1, em: 1, strong: 1, u: 1, s: 1, code: 1, span: 1 };
+    var GN_BLOCK_FORMATTING = {
+        b: 1,
+        i: 1,
+        em: 1,
+        strong: 1,
+        u: 1,
+        s: 1,
+        code: 1,
+        span: 1,
+        small: 1,
+        sub: 1,
+        sup: 1,
+        mark: 1,
+        del: 1,
+    };
     // A comment, and the text of an element whose content is raw text, hold no tags.
     var GN_BLOCK_TAG =
         /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea)\b[\s\S]*?(?:<\/\1\s*>|$)|<(\/?)([A-Za-z][A-Za-z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/gi;
@@ -228,7 +260,7 @@
                 if (at >= 0) {
                     open.splice(at, 1);
                 }
-            } else if (m[5]) {
+            } else if (gnInlineTag(m[0])?.selfClosing) {
                 // `<span/>` opens a span in HTML; the author meant an empty one.
                 out += `${html.slice(from, GN_BLOCK_TAG.lastIndex)}</${name}>`;
                 from = GN_BLOCK_TAG.lastIndex;
@@ -1234,21 +1266,20 @@
         }
     }
     // A render builds every fold as the note wrote it. The folds of the same document keep the state the reader or a
-    // jump gave them: a fold is known by its summary's text and its place among the folds with that text.
+    // jump gave them: explicit IDs identify a fold, and otherwise its content disambiguates repeated summaries.
     function gnFoldKeys(art) {
         var ds = art.querySelectorAll("details"),
-            seen = {},
+            seen = Object.create(null),
             out = [];
         for (var i = 0; i < ds.length; i++) {
-            var s = ds[i].querySelector(":scope > summary"),
-                t = s ? (s.textContent || "").replace(/\s+/g, " ").trim() : "";
+            var t = ds[i].id ? "id " + ds[i].id : "content " + (ds[i].textContent || "").replace(/\s+/g, " ").trim();
             seen[t] = (seen[t] || 0) + 1;
             out.push({ el: ds[i], key: seen[t] + " " + t });
         }
         return out;
     }
     function gnCaptureFolds(art) {
-        var open = {},
+        var open = Object.create(null),
             fs = gnFoldKeys(art);
         for (var i = 0; i < fs.length; i++) {
             open[fs[i].key] = fs[i].el.open;
@@ -2671,7 +2702,7 @@
             next = null;
         for (var i = 0; i < nodes.length; i++) {
             var line = parseInt(nodes[i].getAttribute("data-line"), 10);
-            if (isNaN(line) || gnFolded(nodes[i])) {
+            if (isNaN(line)) {
                 continue;
             }
             if (line <= n) {
@@ -2688,8 +2719,9 @@
         if (!prev || n <= first) {
             top = 0;
         } else {
-            var a = prev.el.getBoundingClientRect().top + sc.scrollTop;
-            if (next && next.line > prev.line) {
+            var visible = gnShownBox(prev.el);
+            var a = visible.getBoundingClientRect().top + sc.scrollTop;
+            if (visible === prev.el && next && next.line > prev.line) {
                 var b = next.el.getBoundingClientRect().top + sc.scrollTop;
                 top = a + (b - a) * Math.min(1, (n - prev.line) / (next.line - prev.line));
             } else {
@@ -3267,6 +3299,7 @@
                 g.b = Math.max(g.b, r.bottom);
             }
         }
+        var lanes = [];
         for (var j = 0; j < order.length; j++) {
             idx = order[j];
             var interactive = idx.charAt(0) !== "d",
@@ -3287,7 +3320,12 @@
             } else {
                 bar.setAttribute("aria-hidden", "true");
             }
-            bar.style.left = x + "px";
+            var lane = 0;
+            while (lanes[lane] !== undefined && lanes[lane] > gg.t - 10) {
+                lane++;
+            }
+            lanes[lane] = gg.b + 10;
+            bar.style.left = x - lane * 14 + "px";
             if (gg.k === "deleted") {
                 bar.style.top = gg.t - c.top - 5 + "px";
             } else {
@@ -3693,8 +3731,15 @@
         );
         for (var i = 0; i < els.length; i++) {
             if ((els[i].textContent || "").toLowerCase().indexOf(q) !== -1) {
-                gnUnfold(els[i]);
-                els[i].scrollIntoView({ behavior: gnScrollBehavior(), block: "center" });
+                var match = els[i],
+                    nested = match.querySelectorAll("p,li,h1,h2,h3,td");
+                for (var j = 0; j < nested.length; j++) {
+                    if (match.contains(nested[j]) && (nested[j].textContent || "").toLowerCase().indexOf(q) !== -1) {
+                        match = nested[j];
+                    }
+                }
+                gnUnfold(match);
+                match.scrollIntoView({ behavior: gnScrollBehavior(), block: "center" });
                 ((el) => {
                     el.classList.remove("gn-flash");
                     void el.offsetWidth;
@@ -3702,7 +3747,7 @@
                     setTimeout(() => {
                         el.classList.remove("gn-flash");
                     }, 1300);
-                })(els[i]);
+                })(match);
                 break;
             }
         }

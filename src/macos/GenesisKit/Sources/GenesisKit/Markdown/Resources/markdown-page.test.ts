@@ -91,6 +91,26 @@ describe("markdown page text passes", () => {
         );
     });
 
+    test("keeps structural closers from earlier blocks and slashes inside unquoted attributes", () => {
+        const text = createMarkdownText(markdownit);
+        const html = text.render("<details>\n<summary>Fold</summary>\n\ninside </details>\n\nAfter");
+        expect(html).toContain("inside </details>");
+        expect(html).not.toContain("&lt;/details&gt;");
+        expect(text.render("See <span title=/docs/>the docs</span>.")).toContain("<span title=/docs/>the docs</span>");
+        for (const tag of ["small", "sub", "sup", "mark", "del"]) {
+            expect(text.render("<" + tag + ">\n\nAfter")).toContain("<" + tag + "></" + tag + ">\n");
+        }
+    });
+
+    test("balances many empty tags and nonmatching closers without losing tokens", () => {
+        const text = createMarkdownText(markdownit);
+        const html = text.render("Start " + "<span/>".repeat(2000) + " End");
+        expect(html.match(/<span\/><\/span>/g)).toHaveLength(2000);
+        const unmatched = text.render("Start " + "<b title=x>".repeat(2000) + "</i>".repeat(2000));
+        expect(unmatched.match(/&lt;\/i&gt;/g)).toHaveLength(2000);
+        expect(unmatched.match(/<\/b>/g)).toHaveLength(2000);
+    });
+
     test("ends a formatting tag a raw HTML block leaves open with that block and keeps a structural one open", () => {
         const text = createMarkdownText(markdownit);
         // A line holding only `<b>` is an HTML block, and the page drew every block after it bold.

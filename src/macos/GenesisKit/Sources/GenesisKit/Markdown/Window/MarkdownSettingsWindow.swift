@@ -67,10 +67,10 @@ struct MarkdownSettingsView: View {
                                          identifier: "markdown.settings.completeWhileTyping", isOn: $configuration.completeWhileTyping)
                     Divider()
                     NativeSettingsSegmented("Text size", identifier: "markdown.settings.editorTextSize", options: [
-                        NativeSettingsOption(.smaller, "Smaller", detail: "Two points under the page's text."),
+                        NativeSettingsOption(.smaller, "Smaller", detail: "Two points under the page's inline code."),
                         NativeSettingsOption(.page, "Like the page",
-                                             detail: "As large as the page beside it in Split. The toolbar's reading size (⌘+ and ⌘−) sizes both."),
-                        NativeSettingsOption(.larger, "Larger", detail: "Two points over the page's text."),
+                                             detail: "As large as inline code on the page. The toolbar's reading size (⌘+ and ⌘−) sizes both."),
+                        NativeSettingsOption(.larger, "Larger", detail: "Two points over the page's inline code."),
                     ], selection: $configuration.editorTextSize, minSegmentWidth: 84)
                     Divider()
                     NativeSettingsSegmented("Line spacing", identifier: "markdown.settings.editorLineSpacing", options: [

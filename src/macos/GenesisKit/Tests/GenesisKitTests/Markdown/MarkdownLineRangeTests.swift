@@ -374,7 +374,7 @@ final class MarkdownLineRangeTests: XCTestCase {
 
         // A find match in the inner fold opens it and the fold around it.
         _ = try await run(closeAll)
-        _ = try await run("window.gnFind('needle',false,{});true")
+        _ = try await run("window.gnFind('needle',false,{ticks:true});true")
         let found = try await run(folds) as? String
         XCTAssertEqual(found, "open,open")
         let matchShown = try await shown("document.querySelector('#gn-article mark.gn-find-current')")
@@ -404,6 +404,30 @@ final class MarkdownLineRangeTests: XCTestCase {
             return r.top>=f.top-4&&r.bottom<=f.bottom+4?'beside the fold':'at '+Math.round(r.top-f.top)+' px from the fold';})()
             """) as? String
         XCTAssertEqual(bar, "beside the fold")
+    }
+
+    func testFindTicksTrackASecondClosedFoldBeforeAndAfterItOpens() async throws {
+        let web = try await page()
+        _ = try await web.evaluateJavaScript("window.requestAnimationFrame = callback => setTimeout(callback,16);true")
+        let spacer = String(repeating: "Spacer\n\n", count: 50)
+        let note = "needle first\n\n" + spacer + "<details>\n<summary>Fold</summary>\n\n" + spacer + "needle second\n\n</details>\n\n" + spacer
+        _ = try await web.evaluateJavaScript("window.gnRender(\(MarkdownWebView.jsString(note)),[],false,null,{},false);window.gnFind('needle',false,{ticks:true});true")
+        let probe = """
+            (function(){var d=document.querySelector('#gn-article details'),m=document.querySelectorAll('mark.gn-find')[1],
+            t=document.querySelector('.gn-find-tick[data-i="1"]'),s=document.scrollingElement;
+            var e=d.open?m:d,top=e.getBoundingClientRect().top+s.scrollTop;
+            var expected=Math.max(1,Math.min(s.clientHeight-3,Math.round(top/Math.max(1,s.scrollHeight)*s.clientHeight)));
+            return !!t&&Math.abs(parseFloat(t.style.top)-expected)<1;})()
+            """
+        let closed = try await web.evaluateJavaScript(probe) as? Bool
+        XCTAssertEqual(closed, true, "the noncurrent match ticks at its still-closed fold")
+        let oldTop = try await web.evaluateJavaScript("document.querySelector('.gn-find-tick[data-i=\"1\"]').style.top") as? String
+        _ = try await web.evaluateJavaScript("document.querySelector('#gn-article details').open=true;window.dispatchEvent(new Event('resize'));true")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let opened = try await web.evaluateJavaScript(probe) as? Bool
+        let newTop = try await web.evaluateJavaScript("document.querySelector('.gn-find-tick[data-i=\"1\"]').style.top") as? String
+        XCTAssertEqual(opened, true, "the tick moves to the revealed match")
+        XCTAssertNotEqual(oldTop, newTop)
     }
 
     /// The shape of a polished meeting (`tools meetings polish build`): turns inside a fold, a fold inside it.

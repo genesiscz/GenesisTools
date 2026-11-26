@@ -317,6 +317,69 @@ final class MarkdownPageExtrasWebTests: XCTestCase {
                        "neither the open <b> nor the open <em> reaches a later block, and the open <div> still wraps one")
     }
 
+    func testStructuralClosersAndUnquotedAttributeSlashesRemainHTML() async throws {
+        try await render("<details>\n<summary>Fold</summary>\n\ninside </details>\n\nAfter\n\nSee <span title=/docs/>the docs</span>.")
+        let result = try await eval("""
+            (function(){var a=document.getElementById('gn-article'),d=a.querySelector('details'),s=a.querySelector('span[title]');
+            return [d.textContent.includes('inside'),d.textContent.includes('After'),a.textContent.includes('</details>'),
+            s.textContent,s.getAttribute('title')].join('|');})()
+            """) as? String
+        XCTAssertEqual(result, "true|false|false|the docs|/docs/")
+        for tag in ["small", "sub", "sup", "mark", "del"] {
+            try await render("<\(tag)>\n\nAfter")
+            let leaked = try await eval("!!document.querySelector('#gn-article p').closest('\(tag)')") as? Bool
+            XCTAssertEqual(leaked, false, tag)
+        }
+    }
+
+    func testManyInlineTagsKeepBalancedOutputAndLiteralUnmatchedClosers() async throws {
+        let empty = String(repeating: "<span/>", count: 2_000)
+        let unmatched = String(repeating: "<b title=x>", count: 2_000) + String(repeating: "</i>", count: 2_000)
+        try await render("Start \(empty) End\n\n\(unmatched)")
+        let result = try await eval("""
+            (function(){var a=document.getElementById('gn-article'),p=a.querySelector('p');
+            return [p.textContent,a.querySelectorAll('span').length,a.textContent.match(/<\\/i>/g).length].join('|');})()
+            """) as? String
+        XCTAssertEqual(result, "Start  End|2000|2000")
+    }
+
+    func testHighlightOpensTheFoldInsideAMatchingListItem() async throws {
+        try await render("- Parent\n\n  <details>\n  <summary>Fold</summary>\n\n  Needle paragraph.\n\n  </details>")
+        _ = try await eval("window.gnHighlight('Needle paragraph');true")
+        let opened = try await eval("document.querySelector('#gn-article details').open") as? Bool
+        let flashed = try await eval("document.querySelector('#gn-article .gn-flash').localName") as? String
+        XCTAssertEqual(opened, true)
+        XCTAssertEqual(flashed, "p")
+    }
+
+    func testAnInsertedSameTitleFoldDoesNotTakeTheExistingFoldsState() async throws {
+        let first = "<details>\n<summary>__proto__</summary>\n\nFirst body\n\n</details>\n\n"
+        let second = "<details>\n<summary>__proto__</summary>\n\nSecond body\n\n</details>\n\n"
+        try await render(first + second)
+        _ = try await eval("document.querySelectorAll('#gn-article details')[1].open=true;true")
+        try await render("<details>\n<summary>__proto__</summary>\n\nInserted body\n\n</details>\n\n" + first + second)
+        let states = try await eval("Array.from(document.querySelectorAll('#gn-article details')).map(d=>d.open).join(',')") as? String
+        XCTAssertEqual(states, "false,false,true")
+    }
+
+    func testClosedFoldGitControlsHaveSeparatePointerTargetsAndHiddenSourceSyncShowsTheFold() async throws {
+        let code = (1...100).map { "let value\($0) = \($0)" }.joined(separator: "\n")
+        let note = "~~~\n\(code)\n~~~\n\n<details>\n<summary>Fold</summary>\n\nFirst\n\nSecond\n\n</details>\n\n"
+            + String(repeating: "After\n\n", count: 25)
+        try await render(note)
+        let lines = note.components(separatedBy: "\n")
+        let first = try XCTUnwrap(lines.firstIndex(of: "First"))
+        let second = try XCTUnwrap(lines.firstIndex(of: "Second"))
+        _ = try await eval("window.gnSyncLine(\(second));window.gnGitMarks([{k:'added',a:\(first),b:\(first),i:0},{k:'modified',a:\(second),b:\(second),i:1}]);true")
+        let result = try await eval("""
+            (function(){var d=document.querySelector('#gn-article details'),r=d.getBoundingClientRect(),
+            bs=document.querySelectorAll('.gn-git-bar'),a=bs[0].getBoundingClientRect(),b=bs[1].getBoundingClientRect();
+            return [d.open,r.top>=0&&r.top<innerHeight,bs.length,Math.abs(a.left-b.left)>=14,
+            Array.from(bs).every(x=>!!x.getAttribute('aria-label')&&x.tagName==='BUTTON')].join('|');})()
+            """) as? String
+        XCTAssertEqual(result, "false|true|2|true|true")
+    }
+
     // MARK: Through the app's coordinator
 
     private func coordinatorPage(_ view: MarkdownWebView, markdown: String? = nil) async throws -> (WKWebView, MarkdownWebView.Coordinator) {
