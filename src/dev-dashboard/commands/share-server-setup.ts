@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chown, mkdir, readFile, rename } from "node:fs/promises";
+import { chown, mkdir, readFile, rename, unlink } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Executor, isInteractive } from "@genesiscz/utils/cli";
@@ -25,6 +25,7 @@ import { SYSTEMD_UNITS, stagedSystemdUnit } from "@genesiscz/utils/publish/servi
 import {
     runServiceCommand,
     type ServiceInstaller,
+    type ServiceRunner,
     type ServiceUnitInput,
     writeServiceFile,
 } from "@genesiscz/utils/publish/service/types";
@@ -78,6 +79,7 @@ export interface SetupServerDeps {
     platform: NodeJS.Platform;
     account: ServiceAccount;
     installer(server: ShareServerConfig): ServiceInstaller;
+    runSystemCommand?: ServiceRunner;
     prepareExposure?(server: ShareServerConfig): Promise<void>;
 }
 
@@ -501,7 +503,12 @@ export async function configureShareServer(
         }
     }
 
+    const ownerIsOtherUser = deps.account.uid === 0 && owner.uid !== 0;
+    const file =
+        owner.home === env.tools.getHome() ? shareConfigPath() : genesisToolsDirIn(owner.home, "share", "config.json");
+    let beforeSave: ShareConfig | undefined;
     let undo: (() => Promise<void>) | undefined;
+    let installStarted = false;
     const priorService = adoption ? deps.installer(adoption.server) : undefined;
     if (move) {
         await priorService?.stop(adoption.server);
@@ -512,20 +519,19 @@ export async function configureShareServer(
             undo = await moveAdoptedShareFolders(adoption.server, server);
         }
 
-        await ensureDirs(server, owner, deps.account.uid === 0 && owner.uid !== 0);
-        const file =
-            owner.home === env.tools.getHome()
-                ? shareConfigPath()
-                : genesisToolsDirIn(owner.home, "share", "config.json");
+        await ensureDirs(server, owner, ownerIsOtherUser);
         await updateShareConfigForHome({
             home: owner.home,
-            change: (current) => ({
-                ...current,
-                defaults: { ...current.defaults, server: current.defaults.server ?? name },
-                servers: [...current.servers.filter((entry) => entry.name !== name), server],
-            }),
+            change: (current) => {
+                beforeSave = current;
+                return {
+                    ...current,
+                    defaults: { ...current.defaults, server: current.defaults.server ?? name },
+                    servers: [...current.servers.filter((entry) => entry.name !== name), server],
+                };
+            },
         });
-        if (deps.account.uid === 0 && owner.uid !== 0) {
+        if (ownerIsOtherUser) {
             await chown(file, owner.uid, owner.gid);
         }
 
@@ -536,6 +542,7 @@ export async function configureShareServer(
         }
 
         await deps.prepareExposure?.(server);
+        installStarted = true;
         const { unitFile } = await installer.install(unitInput);
         if (unitFile) {
             out.println(`Installed ${unitFile}`);
@@ -543,11 +550,68 @@ export async function configureShareServer(
 
         await installer.restart(server);
     } catch (err) {
-        if (move && adoption && priorService) {
-            await undo?.();
-            await writeServiceFile(adoption.path, adoption.text);
-            await runServiceCommand(["systemctl", "daemon-reload"]);
-            await priorService.restart(adoption.server);
+        if (adoption && priorService) {
+            const errors: unknown[] = [];
+            const attempt = async (restore: () => Promise<void>) => {
+                try {
+                    await restore();
+                } catch (failure) {
+                    errors.push(failure);
+                }
+            };
+
+            if (installStarted) {
+                await attempt(() => installer.stop(server));
+            }
+
+            if (undo) {
+                await attempt(undo);
+            }
+
+            const previous = beforeSave;
+            if (previous) {
+                await attempt(async () => {
+                    const saved = previous.servers.find((entry) => entry.name === name);
+                    await updateShareConfigForHome({
+                        home: owner.home,
+                        change: (current) => ({
+                            ...current,
+                            defaults: {
+                                ...current.defaults,
+                                server:
+                                    current.defaults.server === name
+                                        ? previous.defaults.server
+                                        : current.defaults.server,
+                            },
+                            servers: [
+                                ...current.servers.filter((entry) => entry.name !== name),
+                                ...(saved ? [saved] : []),
+                            ],
+                        }),
+                    });
+                    if (ownerIsOtherUser) {
+                        await chown(file, owner.uid, owner.gid);
+                    }
+                });
+            }
+
+            if (move || installStarted) {
+                await attempt(async () => {
+                    const run =
+                        deps.runSystemCommand ??
+                        ((args) => runServiceCommand(deps.account.uid === 0 ? args : ["sudo", ...args]));
+                    const staged = `${stagedSystemdUnit({ ...unitInput, server: adoption.server })}.rollback`;
+                    await writeServiceFile(staged, adoption.text);
+                    await run(["install", "-m", "0644", "--", staged, adoption.path]);
+                    await run(["systemctl", "daemon-reload"]);
+                    await priorService.restart(adoption.server);
+                    await unlink(staged);
+                });
+            }
+
+            if (errors.length) {
+                throw new AggregateError([err, ...errors], "Share service setup failed and rollback was incomplete");
+            }
         }
 
         throw err;

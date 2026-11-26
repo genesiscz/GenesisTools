@@ -328,26 +328,29 @@ describe("published note snapshots", () => {
         }
     });
 
-    function scratchSystemd() {
+    function scratchSystemd(failure?: { restart: boolean }) {
         const unitDir = join(dir, "units");
         const calls: string[][] = [];
-        const installer = createSystemdInstaller({
-            unitDir,
-            root: true,
-            run: async (argv) => {
-                calls.push(argv);
-                const [from, to] = argv.slice(-2);
-                if (argv[0] === "install") {
-                    await mkdir(dirname(to), { recursive: true });
-                    await copyFile(from, to);
-                }
-            },
-        });
+        const run = async (argv: string[]) => {
+            calls.push(argv);
+            const [from, to] = argv.slice(-2);
+            if (argv[0] === "install") {
+                await mkdir(dirname(to), { recursive: true });
+                await copyFile(from, to);
+            }
+
+            if (failure?.restart && argv[0] === "systemctl" && argv[1] === "restart") {
+                failure.restart = false;
+                throw new Error("fixture restart failed");
+            }
+        };
+        const installer = createSystemdInstaller({ unitDir, root: true, run });
         const deps = {
             interactive: false,
             platform: "linux" as const,
             account: { name: "desk", uid: 1000, gid: 1000, home: dir },
             installer: () => installer,
+            runSystemCommand: run,
         };
         return { unitDir, calls, deps };
     }
@@ -395,11 +398,12 @@ describe("published note snapshots", () => {
         ]);
     });
 
-    test("adopts a flag-based unit and moves its snapshots and devices into the named share directories", async () => {
-        const { unitDir, calls, deps } = scratchSystemd();
+    test("rolls back a failed adoption and retries with the original snapshots and devices", async () => {
+        const { unitDir, calls, deps } = scratchSystemd({ restart: true });
         const oldData = join(dir, "original data");
         const oldState = join(dir, "original-state");
-        const original = join(dir, "genesis-share-server.service");
+        const original = join(unitDir, "genesis-share-server.service");
+        mkdirSync(unitDir);
         mkdirSync(oldData);
         mkdirSync(oldState);
         writeFileSync(join(oldData, "snapshot-marker"), "kept");
@@ -413,7 +417,17 @@ describe("published note snapshots", () => {
             publicOrigin: "https://share.example.com",
             listen: { host: "127.0.0.1", port: 3944 },
         });
-        const { server } = await configureShareServer({ server: "desk", yes: true, adoptUnit: original }, deps);
+        const opts = { server: "desk", yes: true, adoptUnit: original } as const;
+        const before = await loadShareConfig();
+        await expect(configureShareServer(opts, deps)).rejects.toThrow("fixture restart failed");
+        expect(await loadShareConfig()).toEqual(before);
+        expect(readFileSync(original, "utf8")).toBe(text);
+        expect(readFileSync(join(oldData, "snapshot-marker"), "utf8")).toBe("kept");
+        expect(readFileSync(join(oldState, "devices.json"), "utf8")).toBe('{"version":1,"devices":[]}');
+        expect(existsSync(shareServerDir("desk", "data"))).toBe(false);
+        expect(existsSync(shareServerDir("desk", "state"))).toBe(false);
+        expect(calls.at(-1)).toEqual(["systemctl", "restart", "genesis-share-server.service"]);
+        const { server } = await configureShareServer(opts, deps);
         expect(server.dataDir).toBe(shareServerDir("desk", "data"));
         expect(server.stateDir).toBe(shareServerDir("desk", "state"));
         expect(readFileSync(join(server.dataDir, "snapshot-marker"), "utf8")).toBe("kept");
