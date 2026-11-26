@@ -356,7 +356,7 @@ export interface RunReportJson {
         diffStat?: { added: number; removed: number };
         diff?: string;
         ops: Array<{
-            status: "OK" | "MISS" | "SKIP" | "NOOP";
+            status: "OK" | "MISS" | "SKIP";
             desc: string;
             found?: number;
             expected: number | "all";

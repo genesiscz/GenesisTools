@@ -32,12 +32,27 @@ the next turn.
 **Keep the batch in a variable, never inline in the call.** Build `edits` (or `spec`) once, dry-run it,
 and when an op misses, change only that op in the variable (`edits[1].ops[0].find = …` after reading
 the lines its report names) and run the same variable again. The REPL keeps the variable between
-calls, so a second call fixes one needle instead of retyping a batch of twenty, and the batch that
-lands is exactly the one the dry run checked:
+calls, so a second call fixes one needle instead of retyping a batch of twenty. Apply revalidates
+the same edits against the current files, so another writer's changes can produce a different diff.
+A whole-file rewrite uses `expectSha256` to pin the bytes reviewed in the dry run:
 
 ```js
+const replace = tools["mcp__genesis-tools__genesis_replace"];
+async function run(edits, options = {}) {
+    try {
+        return JSON.parse(await replace({ cwd: repo, edits, ...options }));
+    } catch (error) {
+        if (!error.detail) {
+            throw error;
+        }
+        return error.detail;
+    }
+}
 const edits = [/* every FileEdit of the change */];
-let report = await run(edits, { dryRun: true });          // run(): the MCP call or the --json CLI below
+let report = await run(edits, { dryRun: true });
+if (!Array.isArray(report.files)) {
+    throw new Error(report.error ?? "No file report was returned");
+}
 for (const op of report.files.flatMap((f) => f.ops.filter((o) => o.status !== "OK" && o.status !== "SKIP").map((o) => ({ file: f.file, ...o })))) {
     log(op.file, op.status, op.reason, op.lines);           // read those lines, then fix the op in `edits`
 }
@@ -101,9 +116,11 @@ heredoc, and do not parse the printed lines.
   `action`, `sha256Before` (the hash of the content the run read), `diffStat`, `diff` and `ops`.
   A file that a pre-flight check refused (exit 2, for example a rewrite without `expectSha256` on
   a real run) is `{ file, action: "refused", reason }` with no ops.
-- **Each op** has `status` (OK, MISS, SKIP, or NOOP for an op whose find equals its replace: refused like a MISS and counted in `missCount`), `found`, `expected` (the declared count: a
+- **Each op** in the v1 JSON report has `status` (OK, MISS or SKIP), `found`, `expected` (the declared count: a
   number, or `"all"`), `lines` (the 1-based line of each occurrence it found), `reason`, and on a
-  rewrite MISS `currentSha256`. `expected` and `lines` are there on OK and MISS alike, so a count
+  rewrite MISS `currentSha256`. An internal NOOP (find equals replace) is a wire MISS with reason
+  `find === replace (no-op edit)` and contributes to `missCount`. Human output still names it NOOP.
+  `expected` and `lines` are there on OK and MISS alike, so a count
   mismatch reads as data: `found: 3, expected: 1, lines: [1, 1, 4]`. An insert or a block reports
   the line of its anchor; append and rewrite have no needle, so their `lines` is empty.
 - **Diff levels** (`--diff <level>`, or `diff` on a FileEdit and on the MCP call): in the printed

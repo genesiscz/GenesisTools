@@ -160,7 +160,8 @@ describe("--edits - --json", () => {
         expect(child.stderr).toBe("");
     });
 
-    test("an op whose find equals its replace is NOOP, not MISS, and the batch still writes nothing", async () => {
+    test("a no-op refusal stays MISS in the v1 wire report and the batch writes nothing", async () => {
+        put("edits/a.ts", "const x = 1;\n");
         put("edits/c.ts", "const c = 1;\n");
         const edits = [
             { file: "c.ts", ops: [{ find: "c = 1", replace: "c = 1" }] },
@@ -175,7 +176,7 @@ describe("--edits - --json", () => {
         const report = reportOf(child);
         expect(report).toMatchObject({ ok: false, exitCode: 1, missCount: 1, written: [] });
         expect(report.files[0].ops[0]).toMatchObject({
-            status: "NOOP",
+            status: "MISS",
             found: 1,
             reason: "find === replace (no-op edit)",
         });

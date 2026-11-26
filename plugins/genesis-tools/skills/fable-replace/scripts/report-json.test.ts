@@ -168,6 +168,40 @@ describe("reportToJson", () => {
         expect(JSON.parse(JSON.stringify(json))).toEqual(json);
     });
 
+    test("an internal NOOP remains a MISS with its reason in the frozen v1 report", () => {
+        const refused: RunReport = {
+            ...report,
+            ok: false,
+            missCount: 1,
+            written: [],
+            files: [
+                {
+                    ...report.files[0],
+                    ops: [
+                        {
+                            status: "NOOP",
+                            desc: "same text",
+                            found: 1,
+                            expected: 1,
+                            lines: [1],
+                            reason: "find === replace (no-op edit)",
+                        },
+                    ],
+                },
+            ],
+        };
+        const json = reportToJson({ report: refused, dryRun: true });
+        expect(json.v).toBe(1);
+        expect(json.files[0].ops[0]).toMatchObject({
+            status: "MISS",
+            found: 1,
+            expected: 1,
+            lines: [1],
+            reason: "find === replace (no-op edit)",
+        });
+        expect(json.missCount).toBe(1);
+    });
+
     test("a returned report is exit 0 and carries no error", () => {
         const json = reportToJson({ report: { ...report, ok: true, verify: undefined }, dryRun: false });
         expect(json.ok).toBe(true);

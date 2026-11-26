@@ -353,7 +353,7 @@ export const editsFromJson = (value: unknown): FileEdit[] => {
 
 const opResultToJson = (op: OpResult): RunReportJson["files"][number]["ops"][number] => {
     return compact({
-        status: op.status,
+        status: op.status === "NOOP" ? "MISS" : op.status,
         desc: op.desc,
         found: op.found,
         expected: op.expected,

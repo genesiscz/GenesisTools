@@ -679,7 +679,9 @@ export const GENESIS_REPLACE_DESCRIPTION =
     "ran and its status is unknown, exit 3); no control key means none was asked or it could not be measured. The " +
     "report: ok, exitCode (0 landed, 1 a MISS and nothing written, 2 refused, 3 written but the verify failed), " +
     "files with sha256Before (the hash of the content the run read), renamedTo on a renamed file and each op's " +
-    'status (OK | MISS | SKIP), found, reason, expected (the declared count: a number or "all") and lines (the ' +
+    'status (OK | MISS | SKIP), with an internal NOOP refusal encoded as MISS and reason "find === replace ' +
+    '(no-op edit)" so the v1 status union stays frozen; it contributes to missCount. Then found, expected ' +
+    '(the declared count: a number or "all") and lines (the ' +
     "1-based line of each occurrence it found), expected and lines on OK and MISS alike; a file pre-flight refused " +
     '(exit 2) is { file, action: "refused", reason } with no ops. Then written (plain paths: the new path after a ' +
     "rename), backupDir (only when the run backed a file up, so a run that wrote nothing has none), verify, " +
