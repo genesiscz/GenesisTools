@@ -1,7 +1,6 @@
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ADMIN_API, PairRequestSchema, SHARE_API } from "@app/dev-dashboard/lib/share/server/api";
-import { ShareDeviceStore } from "@app/dev-dashboard/lib/share/server/devices";
 import {
     installSnapshotUpload,
     listSnapshotSlugs,
@@ -9,11 +8,13 @@ import {
     removeSnapshot,
 } from "@app/dev-dashboard/lib/share/server/upload";
 import { snapshotShareSource } from "@app/dev-dashboard/lib/share/snapshot";
-import { RequestBodyTooLargeError, readBoundedWebBody } from "@app/dev-dashboard/server/adapters/body-reader";
 import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { Router } from "@app/dev-dashboard/server/router";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
+import { bearerToken } from "@genesiscz/utils/device-pairing/client";
+import { DeviceStore } from "@genesiscz/utils/device-pairing/device-store";
+import { RequestBodyTooLargeError, readBoundedWebBody } from "@genesiscz/utils/http/bounded-body";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -51,7 +52,7 @@ export function parsePublicBase(publicBase: string): { origin: string; pagePath:
 export interface ShareServerContext {
     dataDir: string;
     pagePath: string;
-    devices: ShareDeviceStore;
+    devices: DeviceStore;
     router: Router;
 }
 
@@ -66,7 +67,7 @@ export function createShareServerContext(options: {
     return {
         dataDir: options.dataDir,
         pagePath,
-        devices: new ShareDeviceStore(join(options.stateDir, DEVICES_FILE)),
+        devices: new DeviceStore({ file: join(options.stateDir, DEVICES_FILE), tokenPrefix: "gtshare_" }),
         router: new Router().addAll(shareRoutes(source, { pagePath })),
     };
 }
@@ -82,13 +83,6 @@ function respond(status: number, body: unknown): Response {
 }
 
 const NOT_FOUND = (): Response => respond(404, "not found");
-
-function bearer(req: Request): string | null {
-    const header = req.headers.get("authorization") ?? "";
-    const match = /^Bearer (\S+)$/.exec(header);
-
-    return match?.[1] ?? null;
-}
 
 async function handleApi(req: Request, ctx: ShareServerContext, pathname: string): Promise<Response> {
     if (pathname === `${ctx.pagePath}${SHARE_API.pair}` && req.method === "POST") {
@@ -107,7 +101,7 @@ async function handleApi(req: Request, ctx: ShareServerContext, pathname: string
         return paired ? respond(200, paired) : respond(403, "wrong or expired pairing code");
     }
 
-    const token = bearer(req);
+    const token = bearerToken(req);
     const device = token ? await ctx.devices.authenticate(token) : null;
 
     if (!device) {

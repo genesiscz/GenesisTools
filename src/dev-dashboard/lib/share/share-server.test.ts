@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SHARE_DRIVERS } from "@app/dev-dashboard/lib/share/drivers";
@@ -15,7 +15,6 @@ import {
     parsePublicBase,
     type ShareServerContext,
 } from "@app/dev-dashboard/lib/share/server/app";
-import { hashToken, MAX_PAIR_FAILURES, ShareDeviceStore } from "@app/dev-dashboard/lib/share/server/devices";
 import { installSnapshotUpload } from "@app/dev-dashboard/lib/share/server/upload";
 import { SHARE_SNAPSHOT_VERSION, type ShareSnapshotManifest } from "@app/dev-dashboard/lib/share/snapshot";
 import { resolveTargets } from "@app/dev-dashboard/lib/share/targets";
@@ -146,7 +145,6 @@ describe("share server public base", () => {
 describe("share server", () => {
     let dir = "";
     let ctx: ShareServerContext;
-    let clock = Date.parse("2026-01-01T00:00:00Z");
 
     beforeAll(() => {
         dir = mkdtempSync(join(tmpdir(), "share-server-"));
@@ -155,7 +153,6 @@ describe("share server", () => {
             stateDir: join(dir, "state"),
             publicBase: "https://share.example.com/share",
         });
-        ctx.devices = new ShareDeviceStore(join(dir, "state", "devices.json"), () => clock);
     });
 
     afterAll(() => {
@@ -176,34 +173,6 @@ describe("share server", () => {
 
         return body.token;
     }
-
-    test("a pairing code works once, the server keeps only the token's hash, and the token authenticates", async () => {
-        const { code } = ctx.devices.createPairingCode();
-        const paired = await ctx.devices.pair(code, "work");
-
-        expect(paired).not.toBeNull();
-        expect(await ctx.devices.pair(code, "again")).toBeNull();
-
-        const stored = readFileSync(join(dir, "state", "devices.json"), "utf8");
-        expect(stored).not.toContain(paired?.token ?? "missing");
-        expect(stored).toContain(hashToken(paired?.token ?? ""));
-        expect((await ctx.devices.authenticate(paired?.token ?? ""))?.name).toBe("work");
-        expect(await ctx.devices.authenticate("gtshare_not-a-real-token")).toBeNull();
-    });
-
-    test("an expired code fails, and enough wrong codes drop every pending code", async () => {
-        const expired = ctx.devices.createPairingCode(1000);
-        clock += 2000;
-        expect(await ctx.devices.pair(expired.code, "late")).toBeNull();
-
-        const live = ctx.devices.createPairingCode();
-
-        for (let attempt = 0; attempt < MAX_PAIR_FAILURES; attempt++) {
-            expect(await ctx.devices.pair("WRONG-CODE", "guess")).toBeNull();
-        }
-
-        expect(await ctx.devices.pair(live.code, "too late")).toBeNull();
-    });
 
     test("uploads need a paired token; a valid one is served as a page, HEAD has no body, delete removes it", async () => {
         const token = await pairedToken();
