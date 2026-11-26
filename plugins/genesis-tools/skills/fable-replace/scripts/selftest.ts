@@ -127,7 +127,7 @@ console.log("applyOps");
 }
 {
     const r = applyOps("abc", [{ find: "abc", replace: "abc" }]);
-    check("no-op edit (find===replace) is MISS", r.results[0].status === "MISS");
+    check("no-op edit (find===replace) is NOOP and refused", r.results[0].status === "NOOP" && r.content === "abc");
 }
 {
     const r = applyOps("useFoo(1) useFoo(2)", [

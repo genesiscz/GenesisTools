@@ -910,7 +910,9 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
                 console.log(`  ${paint(COLORS.skip, "SKIP")} ${op.desc} ${paint(COLORS.dim, `— ${op.reason ?? ""}`)}`);
             } else {
                 missCount += 1;
-                console.log(`  ${paint(COLORS.miss, "MISS")} ${op.desc} ${paint(COLORS.dim, `— ${op.reason ?? ""}`)}`);
+                console.log(
+                    `  ${paint(COLORS.miss, op.status === "NOOP" ? "NOOP" : "MISS")} ${op.desc} ${paint(COLORS.dim, `— ${op.reason ?? ""}`)}`
+                );
             }
         }
         for (const failure of plan.result.postConditionFailures) {

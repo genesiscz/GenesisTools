@@ -350,7 +350,9 @@ const journalVerify = (verify: VerifyResult | undefined): JournalEntry["verify"]
 
 const missReasons = (report: RunReport | undefined): string[] =>
     (report?.files ?? []).flatMap((file) => [
-        ...file.ops.filter((op) => op.status === "MISS").map((op) => `${file.file}: ${op.desc}: ${op.reason ?? ""}`),
+        ...file.ops
+            .filter((op) => op.status === "MISS" || op.status === "NOOP")
+            .map((op) => `${file.file}: ${op.desc}: ${op.reason ?? ""}`),
         ...file.postConditionFailures.map((failure) => `${file.file}: ${failure}`),
     ]);
 
