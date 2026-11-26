@@ -132,6 +132,28 @@ describe("--edits - --json", () => {
         expect(child.stderr).toBe("");
     });
 
+    test("an op whose find equals its replace is NOOP, not MISS, and the batch still writes nothing", async () => {
+        put("edits/c.ts", "const c = 1;\n");
+        const edits = [
+            { file: "c.ts", ops: [{ find: "c = 1", replace: "c = 1" }] },
+            { file: "a.ts", ops: [{ find: "const x = 1;", replace: "const x = 2;" }] },
+        ];
+        const child = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
+            cwd: base,
+            stdin: JSON.stringify(edits),
+        });
+
+        expect(child.status).toBe(1);
+        const report = reportOf(child);
+        expect(report).toMatchObject({ ok: false, exitCode: 1, missCount: 1, written: [] });
+        expect(report.files[0].ops[0]).toMatchObject({
+            status: "NOOP",
+            found: 1,
+            reason: "find === replace (no-op edit)",
+        });
+        expect(read("edits/a.ts")).toBe("const x = 1;\n");
+    });
+
     test("a refusal (input that is not JSON) is a report with exit 2, and nothing else is printed", async () => {
         const child = await cli(["--edits", "-", "--json", "--cwd", path.join(base, "edits")], {
             cwd: base,

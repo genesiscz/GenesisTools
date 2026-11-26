@@ -439,8 +439,10 @@ function objects(value: unknown): Record<string, unknown>[] {
 function failureSummary(report: Record<string, unknown>, stderr: string[]): string {
     const lines = [runSummary(report)];
     for (const entry of objects(report.files)) {
-        for (const op of objects(entry.ops).filter((candidate) => candidate.status === "MISS")) {
-            lines.push(`MISS ${String(entry.file)}: ${String(op.desc)}: ${String(op.reason ?? "")}`);
+        for (const op of objects(entry.ops).filter(
+            (candidate) => candidate.status === "MISS" || candidate.status === "NOOP"
+        )) {
+            lines.push(`${String(op.status)} ${String(entry.file)}: ${String(op.desc)}: ${String(op.reason ?? "")}`);
         }
 
         const failed = Array.isArray(entry.postConditionFailures) ? entry.postConditionFailures : [];

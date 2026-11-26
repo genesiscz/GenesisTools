@@ -250,7 +250,7 @@ export interface RunOptions {
 }
 
 export interface OpResult {
-    status: "OK" | "MISS" | "SKIP";
+    status: "OK" | "MISS" | "SKIP" | "NOOP";
     /** Human description of the op. */
     desc: string;
     /** Why it missed (only for MISS/SKIP). */
@@ -356,7 +356,7 @@ export interface RunReportJson {
         diffStat?: { added: number; removed: number };
         diff?: string;
         ops: Array<{
-            status: "OK" | "MISS" | "SKIP";
+            status: "OK" | "MISS" | "SKIP" | "NOOP";
             desc: string;
             found?: number;
             expected: number | "all";

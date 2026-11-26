@@ -81,7 +81,8 @@ const applyLiteral = (content: string, op: LiteralOp, batch?: BatchContext): App
     const want = op.count ?? 1;
 
     if (op.find === op.replace) {
-        return { content, result: { status: "MISS", desc, reason: "find === replace (no-op edit)", found, lines } };
+        // Refused like a MISS, but named apart: the needle matched, the op itself changes nothing.
+        return { content, result: { status: "NOOP", desc, reason: "find === replace (no-op edit)", found, lines } };
     }
 
     if (found === 0) {
