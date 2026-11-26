@@ -35,6 +35,8 @@ const PublishedNoteSchema = z.object({
     /** Read as NFC, so an entry stored decomposed by an older build matches a typed path (normalizeVaultPath). */
     vaultPath: z.string().transform((path) => path.normalize("NFC")),
     publishedAt: z.string(),
+    /** A removed live target stays private while remote removals remain retryable. */
+    live: z.boolean().optional(),
     /** Legacy fields read only for import into the publication ledger. */
     targets: z.array(z.string()).optional(),
     syncs: z.record(z.string(), z.object({ syncedAt: z.string(), sourceModifiedAt: z.string() })).optional(),
@@ -134,7 +136,10 @@ export const LegacyShareSourceSchema = z.object({
     share: LegacyShare,
 });
 
-const DevDashboardConfigSchema = LegacyShareSourceSchema.extend({
+const DevDashboardConfigSchema = z.object({
+    publishedNotes: z.array(PublishedNoteSchema).default([]),
+    // Preserve deprecated data intact so a migration error cannot invalidate unrelated settings.
+    share: z.unknown().optional(),
     port: z.number().int().min(1).max(65535).default(3042),
     allowedHosts: z.array(z.string()).default([]),
     obsidianVault: z.string().optional(),

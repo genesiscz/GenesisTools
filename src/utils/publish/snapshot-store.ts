@@ -1,8 +1,9 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
-import { unzip } from "@genesiscz/utils/fs/unzip";
+import { unzipAsync } from "@genesiscz/utils/fs/unzip";
 import { zipAsync } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -15,6 +16,7 @@ const { log } = logger.scoped("publish-snapshots");
 
 export const SNAPSHOT_MANIFEST = "manifest.json";
 export const MAX_SNAPSHOT_FILES = 5000;
+const DEFAULT_MAX_PACK_BYTES = 64 * 1024 * 1024;
 
 export interface SnapshotManifestBase {
     title: string;
@@ -122,7 +124,7 @@ export async function installSnapshot(input: {
 
     let files: Map<string, Uint8Array>;
     try {
-        files = unzip(body, { maxTotalBytes: kind.maxUploadBytes });
+        files = await unzipAsync(body, { maxTotalBytes: kind.maxUploadBytes });
     } catch (err) {
         log.warn({ err, kind: kind.id, id }, "snapshot upload is not a readable zip");
         return { ok: false, status: 400, error: "not a readable snapshot zip" };
@@ -176,6 +178,38 @@ async function swapIn(kindDir: string, id: string, incoming: string): Promise<vo
     }
 
     await rm(backup, { recursive: true, force: true });
+}
+
+/** Restore old snapshots left between the two replacement renames before requests can be served. */
+export async function recoverSnapshots(input: { dataDir: string; kinds: readonly string[] }): Promise<void> {
+    for (const kind of input.kinds) {
+        if (!KIND_ID_RE.test(kind)) {
+            throw new Error(`Invalid published kind id: ${kind}`);
+        }
+
+        const kindDir = join(input.dataDir, kind);
+        const entries = await missingAsNull(readdir(kindDir, { withFileTypes: true }));
+        for (const entry of entries ?? []) {
+            if (!entry.isDirectory() || !entry.name.startsWith(".old-")) {
+                continue;
+            }
+
+            const backup = join(kindDir, entry.name);
+            for (const saved of await readdir(backup, { withFileTypes: true })) {
+                if (!saved.isDirectory() || !isSnapshotId(saved.name)) {
+                    continue;
+                }
+
+                const target = join(kindDir, saved.name);
+                if (!(await missingAsNull(lstat(target)))) {
+                    await rename(join(backup, saved.name), target);
+                    log.info({ kind, id: saved.name }, "restored interrupted snapshot replacement");
+                }
+            }
+
+            await rm(backup, { recursive: true, force: true });
+        }
+    }
 }
 
 export async function removeSnapshot(input: { dataDir: string; kind: string; id: string }): Promise<boolean> {
@@ -233,21 +267,26 @@ export async function listSnapshotIds(input: { dataDir: string; kind: string }):
 
     const dir = join(input.dataDir, input.kind);
     const entries = await missingAsNull(readdir(dir, { withFileTypes: true }));
-    const ids: string[] = [];
-    for (const entry of entries ?? []) {
-        if (
-            entry.isDirectory() &&
-            isSnapshotId(entry.name) &&
-            (await missingAsNull(lstat(join(dir, entry.name, SNAPSHOT_MANIFEST))))?.isFile()
-        ) {
-            ids.push(entry.name);
-        }
-    }
-
-    return ids.sort();
+    const candidates = (entries ?? []).filter((entry) => entry.isDirectory() && isSnapshotId(entry.name));
+    const checks = await concurrentMap({
+        items: candidates,
+        concurrency: 16,
+        fn: async (entry) => (await missingAsNull(lstat(join(dir, entry.name, SNAPSHOT_MANIFEST))))?.isFile() ?? false,
+        onError: (_entry, err) => {
+            throw err;
+        },
+    });
+    return candidates
+        .filter((entry) => checks.get(entry))
+        .map((entry) => entry.name)
+        .sort();
 }
 
-async function snapshotFiles(dir: string, kind?: PublishedKind): Promise<Map<string, Uint8Array>> {
+async function snapshotFiles(
+    dir: string,
+    kind?: PublishedKind,
+    maxBytes = kind?.maxUploadBytes ?? DEFAULT_MAX_PACK_BYTES
+): Promise<Map<string, Uint8Array>> {
     const files = new Map<string, Uint8Array>();
     const folders = [""];
     let size = 0;
@@ -274,13 +313,13 @@ async function snapshotFiles(dir: string, kind?: PublishedKind): Promise<Map<str
             }
 
             const file = Bun.file(join(dir, name));
-            if (kind && size + file.size > kind.maxUploadBytes) {
+            if (size + file.size > maxBytes) {
                 throw new Error("snapshot files are too large");
             }
 
             const data = await file.bytes();
             size += data.byteLength;
-            if (kind && size > kind.maxUploadBytes) {
+            if (size > maxBytes) {
                 throw new Error("snapshot files are too large");
             }
 
@@ -309,9 +348,17 @@ export async function checkSnapshotDir(input: {
     }
 }
 
-export async function packSnapshot(dir: string): Promise<Uint8Array> {
-    const files = await snapshotFiles(dir);
-    return zipAsync(Array.from(files, ([name, data]) => ({ name, data })));
+export async function packSnapshot(dir: string, options: { maxBytes?: number } = {}): Promise<Uint8Array<ArrayBuffer>> {
+    const maxBytes = options.maxBytes ?? DEFAULT_MAX_PACK_BYTES;
+    const files = await snapshotFiles(dir, undefined, maxBytes);
+    const body = await zipAsync(Array.from(files, ([name, data]) => ({ name, data })));
+    if (body.byteLength > maxBytes) {
+        throw new Error("snapshot zip is too large");
+    }
+
+    return body.buffer instanceof ArrayBuffer
+        ? new Uint8Array(body.buffer, body.byteOffset, body.byteLength)
+        : new Uint8Array(body);
 }
 
 export async function migrateFlatDataDir(input: {
@@ -319,16 +366,31 @@ export async function migrateFlatDataDir(input: {
     kind: string;
     kindIds: readonly string[];
 }): Promise<string[]> {
-    const { dataDir, kind, kindIds } = input;
+    const { dataDir, kind } = input;
     if (!KIND_ID_RE.test(kind)) {
         throw new Error(`Invalid published kind id: ${kind}`);
     }
 
     const moved: string[] = [];
+    const collision = join(dataDir, `.legacy-${kind}`);
+    if (await missingAsNull(lstat(collision))) {
+        await mkdir(join(dataDir, kind), { recursive: true });
+        await rename(collision, join(dataDir, kind, kind));
+        moved.push(kind);
+    }
+
+    const kindDir = join(dataDir, kind);
+    if ((await missingAsNull(lstat(join(kindDir, SNAPSHOT_MANIFEST))))?.isFile()) {
+        await rename(kindDir, collision);
+        await mkdir(kindDir, { recursive: true });
+        await rename(collision, join(kindDir, kind));
+        moved.push(kind);
+    }
+
     const entries = await missingAsNull(readdir(dataDir, { withFileTypes: true }));
     for (const entry of entries ?? []) {
         const id = entry.name;
-        if (!entry.isDirectory() || !isSnapshotId(id) || id === kind || kindIds.includes(id)) {
+        if (!entry.isDirectory() || !isSnapshotId(id)) {
             continue;
         }
 
@@ -346,6 +408,7 @@ export async function migrateFlatDataDir(input: {
 
         await mkdir(kindDir, { recursive: true });
         await rename(from, to);
+
         moved.push(id);
         log.info({ kind, id }, "moved legacy snapshot into kind folder");
     }

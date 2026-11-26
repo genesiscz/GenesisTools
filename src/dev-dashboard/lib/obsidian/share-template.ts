@@ -1019,6 +1019,8 @@ html.dd-freshness-right .dd-share-freshness {
 
 @media (max-width: 600px) {
     body { padding: 28px 16px 64px; }
+    body:has(.dd-share-freshness) { padding-top: 76px; }
+    html.dd-freshness-right body:has(.dd-share-freshness) { padding-top: 120px; }
     .dd-share-freshness { max-width: calc(100vw - 172px); }
     .dd-share-freshness-detail { display: none; }
     article { font-size: 16px; }
@@ -1142,7 +1144,7 @@ export function renderFreshnessBadge(freshness: ShareFreshness, now = Date.now()
     return `<div class="dd-share-freshness" id="dd-share-freshness" ${attrs} title="${escapeHtml(title)}"><span class="dd-share-freshness-dot" aria-hidden="true"></span><span class="dd-share-freshness-main">${escapeHtml(main)}</span>${detail ? `<span class="dd-share-freshness-detail">${escapeHtml(detail)}</span>` : ""}</div>`;
 }
 
-/** Keeps the badge's words, colour and local-time tooltip current: once a minute, never faster. */
+/** Updates each second while the timestamp is under a minute old, then once a minute. */
 function buildFreshnessScript(): string {
     return `<script>
 (function () {
@@ -1157,16 +1159,9 @@ function buildFreshnessScript(): string {
     var main = badge.querySelector(".dd-share-freshness-main");
     var detail = badge.querySelector(".dd-share-freshness-detail");
 
+    var formatAge = ${formatAgo.toString()};
     function ago(iso) {
-        var ms = Math.max(0, Date.now() - Date.parse(iso));
-        var min = 60000, hour = 60 * min, day = 24 * hour;
-        if (ms < 10000) { return "just now"; }
-        if (ms < min) { return Math.floor(ms / 1000) + " s ago"; }
-        if (ms < hour) { return Math.floor(ms / min) + " min ago"; }
-        if (ms < day) { return Math.floor(ms / hour) + " h ago"; }
-        var days = Math.floor(ms / day);
-        if (days < 14) { return days + (days === 1 ? " day ago" : " days ago"); }
-        return Math.floor(days / 7) + " weeks ago";
+        return formatAge(Date.now() - Date.parse(iso));
     }
     function tone(iso) {
         var ms = Date.now() - Date.parse(iso);

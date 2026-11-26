@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
+import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { ShareServerConfig } from "../../genesis-tools/publish/store";
 import { proxySnippet } from "../exposure";
 import { SERVICE_INSTALLERS } from "./index";
 import { createLaunchdInstaller } from "./launchd";
+import { withStagedSystemdUnit } from "./systemd";
 import type { ServiceUnitInput } from "./types";
 
 const server: ShareServerConfig = {
@@ -16,7 +19,12 @@ const server: ShareServerConfig = {
     exposure: { kind: "reverse-proxy", proxy: "apache" },
     service: { manager: "none" },
 };
-const input: ServiceUnitInput = { server, checkoutDir: "/srv/project", bunPath: "/usr/bin/bun", home: "/home/desk" };
+const input: ServiceUnitInput = {
+    server,
+    checkoutDir: "/srv/project",
+    command: ["/usr/bin/bun", "/srv/project/src/dev-dashboard/index.ts", "share-server", "serve", "--server", "desk"],
+    home: "/home/desk",
+};
 
 test("service renderers use the same config-based serve invocation", () => {
     const linux = {
@@ -93,9 +101,23 @@ test("the launchd installer delegates lifecycle changes to the shared agent", as
     expect(calls).toEqual(["install dev.fixture", "restart dev.fixture", "stop dev.fixture", "start dev.fixture"]);
 });
 
+test("privileged unit files are staged in a private directory through installation", async () => {
+    let staged = "";
+    await withStagedSystemdUnit("fixture unit", async (file) => {
+        staged = file;
+        expect(await Bun.file(file).text()).toBe("fixture unit");
+        if (process.platform !== "win32") {
+            expect((await stat(dirname(file))).mode & 0o777).toBe(0o700);
+        }
+    });
+    expect(await Bun.file(staged).exists()).toBe(false);
+});
+
 test("proxy snippets forward the chosen origin to the configured listener", () => {
     expect(proxySnippet({ proxy: "apache", server })).toContain('ProxyPass "/" "http://127.0.0.1:3944/"');
     expect(proxySnippet({ proxy: "nginx", server })).toContain("proxy_pass http://127.0.0.1:3944;");
+    expect(proxySnippet({ proxy: "nginx", server })).toContain("client_max_body_size 64m;");
+    expect(proxySnippet({ proxy: "nginx", server })).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
     expect(proxySnippet({ proxy: "caddy", server })).toContain(
         "share.example.com {\n    reverse_proxy http://127.0.0.1:3944"
     );

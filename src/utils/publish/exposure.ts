@@ -1,5 +1,7 @@
 import type { ShareServerConfig } from "../genesis-tools/publish/store";
 
+export const TUNNEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 export function listenOrigin(host: string, port: number): string {
     const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
     return `http://${authority}:${port}`;
@@ -23,7 +25,9 @@ ProxyPassReverse "/" "${backend}/"`;
         case "nginx":
             return `# In the server block for ${hostname}
 location / {
+    client_max_body_size 64m;
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_pass ${backend};
 }`;
         case "caddy":

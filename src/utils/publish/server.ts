@@ -7,6 +7,7 @@ import { PairRequestSchema } from "@genesiscz/utils/device-pairing/types";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import type { ShareServerConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import {
+    RequestBodyTimeoutError,
     RequestBodyTooLargeError,
     readBoundedRequestText,
     readBoundedWebBody,
@@ -17,7 +18,13 @@ import { ADMIN_API, PUBLISH_API, PUBLISH_SERVER_HEADER, PUBLISH_SERVER_ID } from
 import { type AuditRecord, clientAddress, recordAudit } from "./audit";
 import { API_SEGMENT, isSnapshotId, KIND_ID_RE, originOf } from "./ids";
 import type { KindServer } from "./kind";
-import { installSnapshot, listSnapshotIds, migrateFlatDataDir, removeSnapshot } from "./snapshot-store";
+import {
+    installSnapshot,
+    listSnapshotIds,
+    migrateFlatDataDir,
+    recoverSnapshots,
+    removeSnapshot,
+} from "./snapshot-store";
 
 const { log } = logger.scoped("publish-server");
 
@@ -52,7 +59,10 @@ class PairRateLimit {
                 }
             }
 
-            this.reapAt = now + PAIR_WINDOW_MS;
+            this.reapAt = Math.min(
+                now + PAIR_WINDOW_MS,
+                ...[...this.entries.values()].map((times) => (times.at(-1) ?? now) + PAIR_WINDOW_MS)
+            );
         }
 
         const previous = this.entries.get(key);
@@ -77,6 +87,8 @@ export interface PublishServerOptions {
     stateDir: string;
     /** An HTTP(S) origin. The deployed /<kind> suffix is also accepted. */
     publicBase: string;
+    /** Only explicitly configured reverse-proxy ingress supplies trusted forwarded addresses. */
+    trustProxy?: boolean;
     minFreeBytes?: number;
     /** The kind whose folders need to move from the old flat data directory. */
     legacyFlatKind?: string;
@@ -89,6 +101,7 @@ export interface PublishServerContext {
     devices: DeviceStore;
     minFreeBytes: number;
     stateDir: string;
+    trustProxy: boolean;
     pairRateLimit: PairRateLimit;
 }
 
@@ -130,6 +143,7 @@ export function serverOptionsFrom(
         dataDir: server.dataDir,
         stateDir: server.stateDir,
         publicBase: server.publicOrigin,
+        trustProxy: server.exposure.kind !== "local",
         legacyFlatKind: server.kinds.includes("md") ? "md" : undefined,
         minFreeBytes: Math.ceil(server.minFreeGb * 1024 ** 3),
         ...server.listen,
@@ -155,9 +169,14 @@ export function createPublishServerContext(options: PublishServerOptions): Publi
         kinds,
         dataDir: options.dataDir,
         origin: parsePublicOrigin(options.publicBase, [...kinds.keys()]),
-        devices: new DeviceStore({ file: join(options.stateDir, DEVICES_FILE), tokenPrefix: DEVICE_TOKEN_PREFIX }),
+        devices: new DeviceStore({
+            file: join(options.stateDir, DEVICES_FILE),
+            tokenPrefix: DEVICE_TOKEN_PREFIX,
+            invalidateCodesAfterFailures: false,
+        }),
         minFreeBytes: options.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES,
         stateDir: options.stateDir,
+        trustProxy: options.trustProxy ?? false,
         pairRateLimit: new PairRateLimit(),
     };
 }
@@ -255,7 +274,7 @@ async function routeApi(input: {
         return (await removeSnapshot({ ...location, id })) ? respond(200, { id }) : notFound();
     }
 
-    const body = await readBoundedWebBody(request, kind.maxUploadBytes);
+    const body = await readBoundedWebBody(request, kind.maxUploadBytes, { timeoutMs: 300_000 });
     const outcome = await installSnapshot({
         dataDir: context.dataDir,
         kind,
@@ -383,7 +402,7 @@ async function handleRequest(input: {
     const clock = performance.now();
     const token = bearerToken(request) ?? undefined;
     const trace: RequestTrace = {
-        address: clientAddress(input.peer, request.headers.get("x-forwarded-for")),
+        address: clientAddress(input.peer, request.headers.get("x-forwarded-for"), { trustProxy: context.trustProxy }),
         sensitive: token ? [token] : [],
         token,
     };
@@ -394,7 +413,9 @@ async function handleRequest(input: {
         }
         response = await input.route(url, trace);
     } catch (err) {
-        if (err instanceof RequestBodyTooLargeError) {
+        if (err instanceof RequestBodyTimeoutError) {
+            response = respond(408, "request body timed out");
+        } else if (err instanceof RequestBodyTooLargeError) {
             response = respond(413, "too large");
         } else {
             log.error({ errorName: err instanceof Error ? err.name : undefined }, "publish server request failed");
@@ -541,6 +562,7 @@ export async function startPublishServer(
         });
     }
 
+    await recoverSnapshots({ dataDir: options.dataDir, kinds: [...context.kinds.keys()] });
     const server = Bun.serve({
         hostname: options.host,
         port: options.port,
@@ -569,11 +591,16 @@ export async function startPublishServer(
     }
 }
 
-export async function adminRequest(input: { stateDir: string; path: string; method?: string }): Promise<unknown> {
+export async function adminRequest(input: {
+    stateDir: string;
+    path: string;
+    method?: string;
+    timeoutMs?: number;
+}): Promise<unknown> {
     const res = await fetch(`http://localhost${input.path}`, {
         method: input.method ?? "GET",
         unix: join(input.stateDir, ADMIN_SOCKET),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(Math.min(10_000, input.timeoutMs ?? 10_000)),
     });
 
     if (!res.ok) {

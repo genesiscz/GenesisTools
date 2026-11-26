@@ -1,5 +1,9 @@
 import { SHARE_BUNDLE_MAX_BYTES } from "@app/dev-dashboard/lib/obsidian/share-assets";
-import { isSnapshotEntryName, ShareSnapshotManifestSchema } from "@app/dev-dashboard/lib/share/snapshot";
+import {
+    isSnapshotEntryName,
+    ShareSnapshotManifestSchema,
+    snapshotAssetFile,
+} from "@app/dev-dashboard/lib/share/snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { definePublishedKind, type PublishedKind } from "@genesiscz/utils/publish/kind";
 import { SNAPSHOT_MANIFEST } from "@genesiscz/utils/publish/snapshot-store";
@@ -27,6 +31,10 @@ export const mdKind: PublishedKind = definePublishedKind({
         const manifest = parsed.data;
         if (manifest.slug !== id) {
             return { ok: false, error: "manifest names another slug" };
+        }
+
+        if (manifest.assets.list.some((asset) => asset.file !== snapshotAssetFile(asset))) {
+            return { ok: false, error: "snapshot asset path does not match its hash and extension" };
         }
 
         const missing = [manifest.noteFile, ...manifest.assets.list.map((asset) => asset.file)].find(

@@ -25,6 +25,7 @@ export function ObsidianReader({ path }: Props) {
         queryFn: () => dashboard.call(ENDPOINTS.obsidianNote, { path }),
     });
     const [copied, setCopied] = useState(false);
+    const [copyFailed, setCopyFailed] = useState(false);
     const [viewMode, setViewMode] = useState<QaViewMode>("reading");
 
     useEffect(() => {
@@ -100,19 +101,31 @@ export function ObsidianReader({ path }: Props) {
                     <QaSourceToggle mode={viewMode} onChange={setViewMode} />
                     <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
                 </div>
-                {shareUrl ? (
+                {data.publishedSlug ? (
                     <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                                await navigator.clipboard.writeText(shareUrl);
-                                setCopied(true);
-                                setTimeout(() => setCopied(false), 1500);
-                            }}
-                        >
-                            <Copy size={12} /> {copied ? "copied" : "copy"}
-                        </Button>
+                        {shareUrl ? (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                    setCopyFailed(false);
+                                    try {
+                                        if (!navigator.clipboard?.writeText) {
+                                            throw new Error("Clipboard API unavailable");
+                                        }
+
+                                        await navigator.clipboard.writeText(shareUrl);
+                                        setCopied(true);
+                                        setTimeout(() => setCopied(false), 1500);
+                                    } catch (err) {
+                                        console.warn("Copying the note share link failed", err);
+                                        setCopyFailed(true);
+                                    }
+                                }}
+                            >
+                                <Copy size={12} /> {copied ? "copied" : "copy"}
+                            </Button>
+                        ) : null}
                         <Button
                             size="sm"
                             variant="outline"
@@ -131,6 +144,16 @@ export function ObsidianReader({ path }: Props) {
                     </Button>
                 )}
             </div>
+            {copyFailed ? (
+                <p role="alert" className="px-3 py-2 text-xs">
+                    Could not copy the link
+                </p>
+            ) : null}
+            {unpublish.isError ? (
+                <p role="alert" className="px-3 py-2 text-xs text-[var(--dd-danger)]">
+                    Unpublish failed. The remaining copies can be retried. {unpublish.error.message}
+                </p>
+            ) : null}
             {data.shares.length > 0 ? (
                 <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-[var(--dd-border)] px-3 py-1.5 text-[11px]">
                     <ShareFreshnessChips shares={data.shares} editedAt={data.editedAt} />

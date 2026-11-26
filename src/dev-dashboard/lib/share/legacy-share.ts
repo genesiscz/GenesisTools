@@ -77,14 +77,19 @@ export function legacyShareImport(input: { rawConfig: unknown; livePublicBase: s
         return PublishTargetSchema.parse({
             name,
             publicBase: originOf(publicBase),
-            transport: { kind, host, dataDir },
+            transport: { kind, host, dataDir, mounts: { md: new URL(publicBase).pathname.replace(/\/+$/, "") } },
         });
     });
 
     return { targets, defaultTarget: share?.defaults.target, publications: notes.map(legacyPublication) };
 }
 
-function mergeConfig(config: ShareConfig, legacy: LegacyShareImport | null, base: string): ShareConfig {
+function mergeConfig(
+    config: ShareConfig,
+    legacy: LegacyShareImport | null,
+    base: string,
+    hasVault: boolean
+): ShareConfig {
     const byName = new Map(config.targets.map((target) => [target.name, target]));
     const targets = legacy?.targets ?? [];
     for (const target of targets) {
@@ -94,7 +99,7 @@ function mergeConfig(config: ShareConfig, legacy: LegacyShareImport | null, base
     }
 
     let defaultTarget = config.defaults.target ?? legacy?.defaultTarget;
-    if (byName.size === 0 && legacy?.defaultTarget === undefined && config.servers.length === 0) {
+    if (byName.size === 0 && legacy?.defaultTarget === undefined && (hasVault || config.servers.length === 0)) {
         byName.set("mac", liveTarget("mac", base));
         defaultTarget = "mac";
     }
@@ -105,7 +110,12 @@ function mergeConfig(config: ShareConfig, legacy: LegacyShareImport | null, base
 /** The dashboard keeps showing its existing targets before the first write imports them. */
 export async function loadSharePublishConfig(): Promise<ShareConfig> {
     const [rawConfig, config, livePublicBase] = await Promise.all([getConfig(), loadShareConfig(), publicBaseUrl()]);
-    return mergeConfig(config, legacyShareImport({ rawConfig, livePublicBase }), livePublicBase);
+    return mergeConfig(
+        config,
+        legacyShareImport({ rawConfig, livePublicBase }),
+        livePublicBase,
+        !!rawConfig.obsidianVault
+    );
 }
 
 export async function importLegacyShare(): Promise<{ imported: string[] }> {
@@ -121,7 +131,7 @@ export async function importLegacyShare(): Promise<{ imported: string[] }> {
 
         const imported: string[] = [];
         await updateShareConfig((current) => {
-            const merged = mergeConfig(current, legacy, livePublicBase);
+            const merged = mergeConfig(current, legacy, livePublicBase, !!rawConfig.obsidianVault);
             const existing = new Set(current.targets.map((target) => target.name));
             imported.push(
                 ...merged.targets.filter((target) => !existing.has(target.name)).map((target) => target.name)

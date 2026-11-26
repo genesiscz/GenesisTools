@@ -8,7 +8,7 @@ import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
@@ -644,7 +644,11 @@ program
 
                 const first = result.outcomes.find(({ url }) => url)?.url;
                 if (opts.clipboard && first) {
-                    await copyToClipboard(first, { label: "artifact URL" });
+                    try {
+                        await copyToClipboard(first, { label: "artifact URL" });
+                    } catch (err) {
+                        logger.warn({ err }, "Artifact published, but its URL could not be copied");
+                    }
                 }
 
                 if (!first || result.outcomes.some(({ error }) => error)) {
@@ -661,11 +665,12 @@ program
     .command("unpublish")
     .description("Remove a publication from selected targets, or from all targets")
     .argument("<id|target>", "publication id, registered name, directory or artifact file")
+    .option("--entry <file>", "entry used when the directory was published")
     .option("--target <name>", "publish target (repeatable, or all)", collectTarget, [])
-    .action(async (idOrTarget: string, opts: { target: string[] }) => {
+    .action(async (idOrTarget: string, opts: { target: string[]; entry?: string }) => {
         const { unpublishArtifact } = await import("./lib/publish");
         try {
-            const outcomes = await unpublishArtifact({ idOrTarget, targetNames: opts.target });
+            const outcomes = await unpublishArtifact({ idOrTarget, entry: opts.entry, targetNames: opts.target });
             for (const outcome of outcomes) {
                 if (outcome.error) {
                     out.printlnErr(`${outcome.target}: ${outcome.error}`);

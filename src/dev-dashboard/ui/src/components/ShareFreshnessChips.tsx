@@ -87,21 +87,35 @@ export function chipView(share: ShareTargetStatusDto, editedAt: string | null, n
 
 function CopyLink({ url, target }: { url: string; target: string }) {
     const [copied, setCopied] = useState(false);
+    const [copyFailed, setCopyFailed] = useState(false);
 
     return (
-        <button
-            type="button"
-            className="rounded p-0.5 text-[var(--dd-text-muted)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
-            aria-label={`Copy the ${target} link`}
-            title={url}
-            onClick={async () => {
-                await navigator.clipboard.writeText(url);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-            }}
-        >
-            {copied ? <Check size={11} /> : <Copy size={11} />}
-        </button>
+        <>
+            <button
+                type="button"
+                className="rounded p-0.5 text-[var(--dd-text-muted)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
+                aria-label={`Copy the ${target} link`}
+                title={url}
+                onClick={async () => {
+                    setCopyFailed(false);
+                    try {
+                        if (!navigator.clipboard?.writeText) {
+                            throw new Error("Clipboard API unavailable");
+                        }
+
+                        await navigator.clipboard.writeText(url);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1500);
+                    } catch (err) {
+                        console.warn("Copying the share link failed", err);
+                        setCopyFailed(true);
+                    }
+                }}
+            >
+                {copied ? <Check size={11} /> : <Copy size={11} />}
+            </button>
+            {copyFailed ? <span role="alert">Could not copy the link</span> : null}
+        </>
     );
 }
 
@@ -111,7 +125,7 @@ export function ShareFreshnessChips({ shares, editedAt }: { shares: ShareTargetS
     const now = useAgeClock(times.length ? Math.max(...times) : undefined);
 
     return (
-        <div className="flex min-w-0 shrink-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {shares.map((share) => {
                 const view = chipView(share, editedAt, now);
                 const color = TONE_COLOR[view.tone];

@@ -39,7 +39,10 @@ async function vaultRoot(): Promise<string> {
 /** The Obsidian vault on this Mac, read live at each request. */
 export function vaultShareSource(): ShareSource {
     return {
-        findBySlug: async (slug) => (await findPublishedBySlug(slug)) ?? null,
+        findBySlug: async (slug) => {
+            const note = await findPublishedBySlug(slug);
+            return note?.live === false ? null : (note ?? null);
+        },
         listPublished,
         readNoteText: async (note) => redactSecretsInText(await readNote(await vaultRoot(), note.vaultPath)),
         assetIndex: async ({ note, markdown }) => {

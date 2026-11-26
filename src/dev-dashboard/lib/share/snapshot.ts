@@ -153,8 +153,14 @@ export async function writeShareSnapshot(options: {
     source: ShareSource;
     note: PublishedNote;
     dir: string;
+    sourceModifiedAt?: string;
 }): Promise<ShareSnapshotManifest> {
     const { source, note, dir } = options;
+    const sourceModifiedAt = (await source.freshness(note)).editedAt;
+    if (options.sourceModifiedAt !== undefined && sourceModifiedAt !== options.sourceModifiedAt) {
+        throw new Error("Note changed before its snapshot was read; retry the share");
+    }
+
     const text = await source.readNoteText(note);
     const language = codeLanguageFor(note.vaultPath);
     const markdown = language ? fencedCode(text, language) : text;
@@ -168,10 +174,6 @@ export async function writeShareSnapshot(options: {
     for (const asset of allAssets(index)) {
         const file = snapshotAssetFile(asset);
 
-        if (written.has(file)) {
-            continue;
-        }
-
         const body = await read(asset);
 
         if (!body) {
@@ -179,8 +181,14 @@ export async function writeShareSnapshot(options: {
             continue;
         }
 
-        await writeFile(join(dir, file), body);
-        written.add(file);
+        if (!written.has(file)) {
+            await writeFile(join(dir, file), body);
+            written.add(file);
+        }
+    }
+
+    if ((await source.freshness(note)).editedAt !== sourceModifiedAt) {
+        throw new Error("Note changed while its snapshot was built; retry the share");
     }
 
     const published = await source.listPublished();
@@ -193,7 +201,7 @@ export async function writeShareSnapshot(options: {
         vaultPath: note.vaultPath,
         publishedAt: note.publishedAt,
         snapshotAt: new Date().toISOString(),
-        sourceModifiedAt: (await source.freshness(note)).editedAt,
+        sourceModifiedAt,
         noteFile,
         links: published
             .filter((other) => other.slug !== note.slug && linkedPaths.has(other.vaultPath.normalize("NFC")))

@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { collectShareServerStatus, startShareServe } from "@app/dev-dashboard/commands/share-server";
-import { configureShareServer, parseLegacyShareUnit } from "@app/dev-dashboard/commands/share-server-setup";
+import {
+    commandShareConfig,
+    configureShareServer,
+    parseLegacyShareUnit,
+    secureShareDirectory,
+    waitForShareReady,
+} from "@app/dev-dashboard/commands/share-server-setup";
 import { runTargetAdd } from "@app/dev-dashboard/commands/share-target";
 import { mdKind } from "@app/dev-dashboard/lib/share/kind";
 import { PUBLISH_KIND_SERVERS } from "@app/dev-dashboard/lib/share/server/kinds";
@@ -18,12 +24,16 @@ import {
     findPublication,
     loadShareConfig,
     type ShareServerConfig,
+    savePublication,
     shareConfigPath,
     shareServerDir,
     updateShareConfig,
+    updateShareConfigForHome,
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
+import { getBackend, setBackend } from "@genesiscz/utils/prompts/p/backend";
 import { HealthSchema, PUBLISH_API } from "@genesiscz/utils/publish/api";
 import { clientAuditDir, readAudit } from "@genesiscz/utils/publish/audit";
 import { startPublishServer } from "@genesiscz/utils/publish/server";
@@ -143,6 +153,19 @@ describe("published note snapshots", () => {
         ["a manifest for another slug", { manifest: manifest({ slug: "OtherSlug0123456" }) }],
         ["a listed asset missing from the zip", { skip: `assets/${PICTURE_HASH}.png` }],
         ["no manifest", { skip: "manifest.json" }],
+        [
+            "a manifest asset whose file disagrees with its hash",
+            {
+                manifest: manifest({
+                    assets: {
+                        ...manifest().assets,
+                        list: [{ ...manifest().assets.list[0], file: "assets/other.png" }],
+                    },
+                }),
+                skip: `assets/${PICTURE_HASH}.png`,
+                extra: [{ name: "assets/other.png", data: PICTURE }],
+            },
+        ],
     ])("refuses a note upload with %s", async (_label, options) => {
         const result = await installSnapshot({
             dataDir: join(dir, "data"),
@@ -262,9 +285,7 @@ describe("published note snapshots", () => {
     });
 
     async function configureServer(): Promise<ShareServerConfig> {
-        const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
-        const port = Number(probe.port);
-        await probe.stop(true);
+        const port = 3944;
         const config: ShareServerConfig = {
             name: "desk",
             listen: { host: "127.0.0.1", port },
@@ -286,9 +307,18 @@ describe("published note snapshots", () => {
 
     test("serve reads the configured listener without flags", async () => {
         const config = await configureServer();
-        const { server } = await startShareServe();
+        let forwardedPort: number | undefined;
+        const { server } = await startShareServe(
+            {},
+            {
+                startServer: (options) => {
+                    forwardedPort = options.port;
+                    return startPublishServer({ ...options, port: 0 });
+                },
+            }
+        );
         try {
-            expect(Number(new URL(server.url).port)).toBe(config.listen.port);
+            expect(forwardedPort).toBe(config.listen.port);
             expect(server.context.dataDir).toBe(config.dataDir);
             const res = await fetch(new URL(PUBLISH_API.health, server.url));
             expect(HealthSchema.parse(await res.json()).kinds).toEqual(["md", "artifact"]);
@@ -302,6 +332,7 @@ describe("published note snapshots", () => {
         const data = join(dir, "override");
         const first = await startShareServe({
             server: config.name,
+            port: 0,
             data,
             publicBase: "https://override.example.com/md",
         });
@@ -352,6 +383,7 @@ describe("published note snapshots", () => {
             account: { name: "desk", uid: 1000, gid: 1000, home: dir },
             installer: () => installer,
             runSystemCommand: run,
+            waitUntilReady: async () => {},
         };
         return { unitDir, calls, deps };
     }
@@ -399,8 +431,17 @@ describe("published note snapshots", () => {
         ]);
     });
 
-    test("rolls back a failed adoption and retries with the original snapshots and devices", async () => {
-        const { unitDir, calls, deps } = scratchSystemd({ restart: true });
+    test.each(["restart", "readiness"])("rolls back failed %s during adoption and can retry", async (phase) => {
+        const { unitDir, calls, deps } = scratchSystemd({ restart: phase === "restart" });
+        let readinessFailed = false;
+        if (phase === "readiness") {
+            deps.waitUntilReady = async () => {
+                if (!readinessFailed) {
+                    readinessFailed = true;
+                    throw new Error("fixture readiness failed");
+                }
+            };
+        }
         const oldData = join(dir, "original data");
         const oldState = join(dir, "original-state");
         const original = join(unitDir, "genesis-share-server.service");
@@ -420,7 +461,7 @@ describe("published note snapshots", () => {
         });
         const opts = { server: "desk", yes: true, adoptUnit: original } as const;
         const before = await loadShareConfig();
-        await expect(configureShareServer(opts, deps)).rejects.toThrow("fixture restart failed");
+        await expect(configureShareServer(opts, deps)).rejects.toThrow(`fixture ${phase} failed`);
         expect(await loadShareConfig()).toEqual(before);
         expect(readFileSync(original, "utf8")).toBe(text);
         expect(readFileSync(join(oldData, "snapshot-marker"), "utf8")).toBe("kept");
@@ -483,6 +524,106 @@ describe("published note snapshots", () => {
         }
     });
 
+    test("target destination changes invalidate the previous destination sync record", async () => {
+        await runTargetAdd("desk", { driver: "mac-live", publicBase: "https://one.example.com/share" });
+        const record = { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" };
+        await savePublication({
+            kind: "md",
+            id: SLUG,
+            source: "Note.md",
+            title: "Note",
+            publishedAt: record.syncedAt,
+            syncs: { desk: record },
+        });
+        await runTargetAdd("desk", { driver: "mac-live", publicBase: "https://two.example.com/share", replace: true });
+        expect((await findPublication({ kind: "md", id: SLUG }))?.syncs).toEqual({});
+    });
+
+    test("explicit config home resolves a custom service account independently of local config", async () => {
+        const configured = await configureServer();
+        const accountHome = join(dir, "other-account");
+        await updateShareConfigForHome({
+            home: accountHome,
+            change: (current) => ({
+                ...current,
+                defaults: { server: "relay" },
+                servers: [{ ...configured, name: "relay" }],
+            }),
+        });
+        expect((await commandShareConfig({ configHome: accountHome, server: "relay" })).servers[0].name).toBe("relay");
+        expect((await loadShareConfig()).servers[0].name).toBe("desk");
+    });
+
+    test("readiness checks retry a cold listener and reject an unavailable listener", async () => {
+        const config = await configureServer();
+        let attempts = 0;
+        const fetcher = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(
+                async () => {
+                    attempts++;
+                    return attempts === 1
+                        ? new Response("starting", { status: 503 })
+                        : Response.json(
+                              { server: "genesis-tools", api: 1, kinds: ["md", "artifact"] },
+                              { headers: { "X-Share-Server": "genesis-tools" } }
+                          );
+                },
+                { preconnect: fetch.preconnect }
+            )
+        );
+        try {
+            await waitForShareReady(config, { timeoutMs: 1000 });
+            expect(attempts).toBe(2);
+            fetcher.mockImplementation(
+                Object.assign(async () => new Response("starting", { status: 503 }), { preconnect: fetch.preconnect })
+            );
+            await expect(waitForShareReady(config, { timeoutMs: 5 })).rejects.toThrow("did not become ready");
+        } finally {
+            fetcher.mockRestore();
+        }
+    });
+
+    test("declined legacy adoption never installs over the existing unit", async () => {
+        const { calls, deps } = scratchSystemd();
+        const oldData = join(dir, "old-data");
+        const oldState = join(dir, "old-state");
+        const original = join(dir, "legacy.service");
+        const text = `[Service]\nUser=desk\nExecStart=/usr/bin/bun /srv/project/src/dev-dashboard/index.ts share-server serve --data ${oldData} --state ${oldState} --port 3944 --host 127.0.0.1 --public-base https://share.example.com/md\n`;
+        writeFileSync(original, text);
+        const backend = getBackend();
+        setBackend(makeTestBackend({ confirm: false }));
+        try {
+            await expect(
+                configureShareServer({ server: "desk", adoptUnit: original }, { ...deps, interactive: true })
+            ).rejects.toThrow("Adoption declined");
+            expect(calls).toEqual([]);
+            expect(readFileSync(original, "utf8")).toBe(text);
+        } finally {
+            setBackend(backend);
+        }
+    });
+
+    test("an adopted service cannot silently switch service accounts", async () => {
+        const { calls, deps } = scratchSystemd();
+        const original = join(dir, "legacy.service");
+        writeFileSync(
+            original,
+            `[Service]\nUser=desk\nExecStart=/usr/bin/bun /srv/project/src/dev-dashboard/index.ts share-server serve --data ${dir}/old-data --state ${dir}/old-state --port 3944 --public-base https://share.example.com/md\n`
+        );
+        await expect(
+            configureShareServer({ server: "desk", adoptUnit: original, serviceUser: "another", yes: true }, deps)
+        ).rejects.toThrow("existing service user");
+        expect(calls).toEqual([]);
+    });
+
+    test.skipIf(process.platform !== "linux")("privileged directory traversal refuses symlink components", async () => {
+        const outside = join(dir, "outside");
+        mkdirSync(outside);
+        symlinkSync(outside, join(dir, "linked"));
+        await expect(secureShareDirectory(join(dir, "linked", "child"))).rejects.toThrow();
+        expect(existsSync(join(outside, "child"))).toBe(false);
+    });
+
     test("client setup re-pairs the same target and prints the old device for revocation", async () => {
         useFixtureVaultKey();
         const server = await startPublishServer({
@@ -511,6 +652,30 @@ describe("published note snapshots", () => {
             }
 
             const previousToken = await resolveSecret(previous.transport.token);
+            const vault = await secrets();
+            const originalSet = vault.set.bind(vault);
+            let writes = 0;
+            const failingWrite = spyOn(vault, "set").mockImplementation(async (path, value) => {
+                const ref = await originalSet(path, value);
+                if (++writes === 1) {
+                    throw new Error("fixture vault permission failure");
+                }
+
+                return ref;
+            });
+            try {
+                await runTargetAdd("remote", {
+                    driver: "paired",
+                    replace: true,
+                    code: server.context.devices.createPairingCode().code,
+                    deviceName: "desk",
+                });
+                expect(await resolveSecret(previous.transport.token)).toBe(previousToken);
+                expect((await loadShareConfig()).targets.find(({ name }) => name === "remote")).toEqual(previous);
+            } finally {
+                failingWrite.mockRestore();
+                process.exitCode = exitCode;
+            }
             await runTargetAdd("remote", {
                 driver: "paired",
                 replace: true,
@@ -538,12 +703,14 @@ describe("published note snapshots", () => {
             expect(audit.map(({ action, target, status }) => [action, target, status])).toEqual([
                 ["pair", "remote", 200],
                 ["token-read", "remote", 200],
+                ["re-pair", "remote", 500],
+                ["token-read", "remote", 200],
                 ["re-pair", "remote", 200],
                 ["token-read", "remote", 200],
                 ["token-check", "remote", 200],
             ]);
             expect(audit[0].deviceId).toBe(previous.transport.deviceId);
-            expect(audit[2].deviceId).toBe(target.transport.deviceId);
+            expect(audit[4].deviceId).toBe(target.transport.deviceId);
             await server.context.devices.revoke(target.transport.deviceId);
             const rows = await collectShareServerStatus();
             expect(

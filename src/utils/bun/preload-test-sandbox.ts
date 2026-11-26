@@ -258,7 +258,22 @@ function isolateAppHome(): void {
     });
 }
 
+function isolateLogDir(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "gt-test-logs-"));
+    env.testing.set("GENESIS_TOOLS_LOG_DIR", sandboxRoot);
+    afterEach(() => {
+        if (!env.test.allowsRealHome()) {
+            env.testing.set("GENESIS_TOOLS_LOG_DIR", sandboxRoot);
+        }
+    });
+}
+
 installSandbox();
+isolateLogDir();
 isolateAppHome();
 isolateAgentEnv();
 isolateObsidian();

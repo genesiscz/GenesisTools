@@ -7,6 +7,7 @@ const LOCAL_FILE_HEADER = 0x04034b50;
 /**
  * Reads a ZIP archive into a name -> bytes map. Handles stored and deflated entries, which is what zip tools
  * and Sentry artifact bundles write; ZIP64 and encrypted archives throw. Directory entries are skipped.
+ * maxTotalBytes is an optional cap on cumulative expanded bytes. Exceeding it throws. Without it, expansion is unbounded.
  */
 export function unzip(body: Uint8Array, options: { maxTotalBytes?: number } = {}): Map<string, Uint8Array> {
     const maxTotal = options.maxTotalBytes ?? Number.POSITIVE_INFINITY;
@@ -59,6 +60,10 @@ export function unzip(body: Uint8Array, options: { maxTotalBytes?: number } = {}
         const data = body.subarray(start, start + compressedSize);
         let entry: Uint8Array;
         if (method === 0) {
+            if (data.byteLength > maxTotal - total) {
+                throw new Error(`zip expands past ${maxTotal} bytes (${name})`);
+            }
+
             entry = data.slice();
         } else if (method === 8) {
             // Bounded while it inflates, so a small archive cannot expand past the cap (a zip bomb).
@@ -87,4 +92,55 @@ export function unzip(body: Uint8Array, options: { maxTotalBytes?: number } = {}
     }
 
     return files;
+}
+
+/** Extract an archive in a worker so decompression cannot block the server's request loop. */
+export function unzipAsync(
+    body: Uint8Array,
+    options: { maxTotalBytes?: number } = {}
+): Promise<Map<string, Uint8Array>> {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(new URL("./unzip-worker.ts", import.meta.url).href);
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (finish()) {
+                reject(new Error("unzip worker timed out after 120000 ms"));
+            }
+        }, 120_000);
+
+        function finish(): boolean {
+            if (settled) {
+                return false;
+            }
+
+            settled = true;
+            clearTimeout(timer);
+            worker.terminate();
+            return true;
+        }
+
+        worker.onmessage = (event: MessageEvent<{ files?: Map<string, Uint8Array>; error?: string }>) => {
+            if (!finish()) {
+                return;
+            }
+
+            if (event.data.files) {
+                resolve(event.data.files);
+            } else {
+                reject(new Error(event.data.error ?? "unzip worker failed"));
+            }
+        };
+        worker.onerror = (event) => {
+            if (finish()) {
+                reject(new Error(event.message));
+            }
+        };
+        try {
+            worker.postMessage({ body, options });
+        } catch (err) {
+            if (finish()) {
+                reject(err);
+            }
+        }
+    });
 }

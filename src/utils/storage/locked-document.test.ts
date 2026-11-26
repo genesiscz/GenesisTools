@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    lstatSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    symlinkSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -179,6 +189,32 @@ describe("jsonDocument", () => {
         await expect(capped.mutate(() => undefined, { signal: aborted.signal })).rejects.toThrow();
         expect(capped.read().count).toBe(1);
     });
+
+    test.skipIf(process.platform === "win32")(
+        "a symlink swapped immediately before a protected write cannot redirect it",
+        async () => {
+            const root = dir();
+            const path = join(root, "counter.json");
+            const outside = join(root, "outside.json");
+            writeFileSync(path, SafeJSON.stringify({ count: 0, revision: 0 }));
+            const original = SafeJSON.stringify({ count: 41, revision: 0 });
+            writeFileSync(outside, original);
+            const document = counter(path, "refuse", {
+                followSymlinks: false,
+                fileMode: 0o600,
+                beforeWrite: () => {
+                    unlinkSync(path);
+                    symlinkSync(outside, path);
+                },
+            });
+            await document.mutate((current) => {
+                current.count = 1;
+            });
+            expect(readFileSync(outside, "utf8")).toBe(original);
+            expect(lstatSync(path).isSymbolicLink()).toBe(false);
+            expect(document.read().count).toBe(1);
+        }
+    );
 
     test("the file gets the asked mode", async () => {
         const path = join(dir(), "private.json");

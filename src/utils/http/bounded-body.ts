@@ -1,4 +1,12 @@
 import type { IncomingMessage } from "node:http";
+import { logger } from "@genesiscz/utils/logger";
+
+export class RequestBodyTimeoutError extends Error {
+    constructor(readonly timeoutMs: number) {
+        super(`Request body read timed out after ${timeoutMs} ms`);
+        this.name = "RequestBodyTimeoutError";
+    }
+}
 
 export class RequestBodyTooLargeError extends Error {
     constructor(
@@ -21,7 +29,16 @@ function declaredLength(headers: Headers | IncomingMessage["headers"]): number |
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-export async function readBoundedWebBody(request: Request, maxBytes: number): Promise<Uint8Array> {
+export async function readBoundedWebBody(
+    request: Request,
+    maxBytes: number,
+    options: { timeoutMs?: number } = {}
+): Promise<Uint8Array> {
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error("A request body read requires a positive finite deadline");
+    }
+
     const declared = declaredLength(request.headers);
     if (declared !== undefined && declared > maxBytes) {
         await request.body?.cancel();
@@ -35,9 +52,16 @@ export async function readBoundedWebBody(request: Request, maxBytes: number): Pr
 
     const chunks: Uint8Array[] = [];
     let bytes = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+            reject(new RequestBodyTimeoutError(timeoutMs));
+            void reader.cancel().catch((err: unknown) => logger.debug({ err }, "body reader cancellation failed"));
+        }, timeoutMs);
+    });
     try {
         while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await Promise.race([reader.read(), deadline]);
             if (done) {
                 break;
             }
@@ -51,6 +75,7 @@ export async function readBoundedWebBody(request: Request, maxBytes: number): Pr
             chunks.push(value);
         }
     } finally {
+        clearTimeout(timer);
         reader.releaseLock();
     }
 
@@ -80,6 +105,10 @@ export async function readBoundedNodeBody(request: IncomingMessage, maxBytes: nu
     return Buffer.concat(chunks, bytes);
 }
 
-export async function readBoundedRequestText(request: Request, maxBytes: number): Promise<string> {
-    return new TextDecoder().decode(await readBoundedWebBody(request, maxBytes));
+export async function readBoundedRequestText(
+    request: Request,
+    maxBytes: number,
+    options: { timeoutMs?: number } = {}
+): Promise<string> {
+    return new TextDecoder().decode(await readBoundedWebBody(request, maxBytes, options));
 }

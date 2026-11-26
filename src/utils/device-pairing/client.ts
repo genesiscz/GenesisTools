@@ -36,7 +36,7 @@ export async function redeemPairingCode(input: {
 
 export function bearerToken(req: Request): string | null {
     const header = req.headers.get("authorization") ?? "";
-    const match = /^Bearer (\S+)$/.exec(header);
+    const match = /^Bearer (\S+)$/i.exec(header);
 
     return match?.[1] ?? null;
 }

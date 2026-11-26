@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { redeemPairingCode } from "@genesiscz/utils/device-pairing/client";
 import { PairCodeResponseSchema } from "@genesiscz/utils/device-pairing/types";
 import { type ZipEntry, zip } from "@genesiscz/utils/fs/zip";
+import { RequestBodyTimeoutError, readBoundedWebBody } from "@genesiscz/utils/http/bounded-body";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { ADMIN_API, DeviceListSchema, HealthSchema, PUBLISH_API, SnapshotListSchema, WhoamiSchema } from "./api";
 import { definePublishedKind, serveKind } from "./kind";
@@ -25,6 +26,7 @@ import {
     migrateFlatDataDir,
     packSnapshot,
     readSnapshotManifestBase,
+    recoverSnapshots,
     SNAPSHOT_MANIFEST,
 } from "./snapshot-store";
 
@@ -60,6 +62,25 @@ function invalidNameZip(name: string): Uint8Array {
     body.write(name, second);
     return body;
 }
+
+test("body reads stop at an absolute deadline and cancel a stalled stream", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+        },
+        cancel() {
+            cancelled = true;
+        },
+    });
+    const request = new Request("https://share.example.com/_api/pair", { method: "POST", body });
+    await expect(readBoundedWebBody(request, 1024, { timeoutMs: 10 })).rejects.toBeInstanceOf(RequestBodyTimeoutError);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+    expect(
+        await readBoundedWebBody(new Request("https://share.example.com", { method: "POST", body: "ok" }), 2)
+    ).toEqual(new TextEncoder().encode("ok"));
+});
 
 describe("snapshot store", () => {
     let root: string;
@@ -142,7 +163,7 @@ describe("snapshot store", () => {
     });
 
     test("moves two flat snapshots once and leaves named kind folders where they are", async () => {
-        const fixture = ["alpha", "beta", "artifact"];
+        const fixture = ["alpha", "beta", "artifact", "md"];
         for (const id of fixture) {
             const dir = join(dataDir, id);
             await mkdir(dir, { recursive: true });
@@ -150,10 +171,34 @@ describe("snapshot store", () => {
         }
 
         const input = { dataDir, kind: "md", kindIds: ["md", "artifact"] };
-        expect(await migrateFlatDataDir(input)).toEqual(["alpha", "beta"]);
+        expect(await migrateFlatDataDir(input)).toEqual(["alpha", "artifact", "beta", "md"]);
         expect(await migrateFlatDataDir(input)).toEqual([]);
-        expect((await readdir(dataDir)).sort()).toEqual(["artifact", "md"]);
-        expect(await listSnapshotIds({ dataDir, kind: "md" })).toEqual(["alpha", "beta"]);
+        expect((await readdir(dataDir)).sort()).toEqual(["md"]);
+        expect(await listSnapshotIds({ dataDir, kind: "md" })).toEqual(["alpha", "artifact", "beta", "md"]);
+    });
+
+    test("recovers an interrupted replacement and leaves completed replacements intact", async () => {
+        const kindDir = join(dataDir, "demo");
+        const pending = join(kindDir, ".old-pending", ID);
+        const completed = join(kindDir, ".old-completed", "other");
+        await mkdir(pending, { recursive: true });
+        await mkdir(completed, { recursive: true });
+        await mkdir(join(kindDir, "other"), { recursive: true });
+        await writeFile(join(pending, SNAPSHOT_MANIFEST), manifestEntry().data);
+        await writeFile(join(pending, "demo.txt"), "old page");
+        await writeFile(join(completed, "demo.txt"), "old other");
+        await writeFile(join(kindDir, "other", "demo.txt"), "new other");
+        await recoverSnapshots({ dataDir, kinds: ["demo"] });
+        expect(await readFile(join(kindDir, ID, "demo.txt"), "utf8")).toBe("old page");
+        expect(await readFile(join(kindDir, "other", "demo.txt"), "utf8")).toBe("new other");
+        expect((await readdir(kindDir)).sort()).toEqual([ID, "other"]);
+    });
+
+    test("packing refuses oversized input before creating an archive", async () => {
+        const dir = join(root, "build");
+        await mkdir(dir);
+        await writeFile(join(dir, "large.bin"), new Uint8Array(1025));
+        await expect(packSnapshot(dir, { maxBytes: 1024 })).rejects.toThrow("snapshot files are too large");
     });
 
     test("checks, packs and serves the artifact HTML, and refuses a third file", async () => {

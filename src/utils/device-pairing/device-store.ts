@@ -36,6 +36,8 @@ function makeCode(): string {
 export interface DeviceStoreOptions {
     file: string;
     tokenPrefix: string;
+    /** Services with a per-source attempt budget can retain unrelated pending codes. */
+    invalidateCodesAfterFailures?: boolean;
     now?: () => number;
 }
 
@@ -50,11 +52,13 @@ export class DeviceStore {
     private readonly file: string;
     private readonly tokenPrefix: string;
     private readonly now: () => number;
+    private readonly invalidateCodesAfterFailures: boolean;
 
     constructor(options: DeviceStoreOptions) {
         this.file = options.file;
         this.tokenPrefix = options.tokenPrefix;
         this.now = options.now ?? Date.now;
+        this.invalidateCodesAfterFailures = options.invalidateCodesAfterFailures ?? true;
     }
 
     createPairingCode(ttlMs = PAIR_CODE_TTL_MS): { code: string; expiresAt: string } {
@@ -76,7 +80,7 @@ export class DeviceStore {
         if (!match) {
             this.failures++;
 
-            if (this.failures >= MAX_PAIR_FAILURES) {
+            if (this.invalidateCodesAfterFailures && this.failures >= MAX_PAIR_FAILURES) {
                 log.warn({ failures: this.failures }, "too many wrong pairing codes; dropping every pending code");
                 this.pending = [];
                 this.failures = 0;

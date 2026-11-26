@@ -93,6 +93,36 @@ describe("test sandbox preload", () => {
     });
 });
 
+test("an inherited log directory is replaced by the preload", () => {
+    const inherited = mkdtempSync(join(tmpdir(), "inherited-log-dir-"));
+    const result = Bun.spawnSync(
+        [process.execPath, "scripts/test.ts", import.meta.path, "--test-name-pattern", "^log directory isolation"],
+        {
+            cwd: join(import.meta.dir, "../../.."),
+            env: { ...env.getProcessEnv(), GENESIS_TOOLS_LOG_DIR: inherited, GENESIS_TOOLS_TEST_ALLOW_REAL_HOME: "0" },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 30_000,
+        }
+    );
+    const output = result.stdout.toString() + result.stderr.toString();
+    expect(result.exitCode, output).toBe(0);
+    expect(output).toContain("[test] suite complete (exit 0)");
+}, 40_000);
+
+describe("log directory isolation", () => {
+    const sandbox = env.log.getDirectory();
+    test("uses an isolated process log directory", () => {
+        expect(sandbox).toContain("gt-test-logs-");
+        env.testing.set("GENESIS_TOOLS_LOG_DIR", join(tmpdir(), "fixture-log-dir"));
+        expect(env.log.getDirectory()).not.toBe(sandbox);
+    });
+
+    test("restores the process log directory after each test", () => {
+        expect(env.log.getDirectory()).toBe(sandbox);
+    });
+});
+
 describe("Obsidian sandbox between tests", () => {
     const sandbox = env.getTrimmed("OBSIDIAN_CONFIG_DIR");
     const home = mkdtempSync(join(tmpdir(), "obsidian-preload-home-"));

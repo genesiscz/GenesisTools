@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { ADMIN_API, PUBLISH_API, PUBLISH_SERVER_HEADER } from "./api";
 import { artifactKindServer, writeArtifactSnapshot } from "./kinds/artifact";
 import { adminRequest, startPublishServer } from "./server";
-import { type PublishTarget, PublishTargetSchema, resolveTargets } from "./targets";
+import { type PublishTarget, PublishTargetSchema, resolveTargets, targetDestination } from "./targets";
 import { PUBLISH_TRANSPORTS, TRANSPORT_KINDS, transportFor } from "./transports";
 import { createPairedTransport, tokenPath } from "./transports/paired";
 import { createSshRsyncTransport } from "./transports/ssh-rsync";
@@ -48,6 +48,8 @@ describe("publish targets", () => {
         expect(resolveTargets({ targets, names: [] })).toEqual([]);
         expect(resolveTargets({ targets, names: [], defaultTarget: "mac" })).toEqual([mac]);
         expect(resolveTargets({ targets, names: ["all"] })).toEqual(targets);
+        expect(PublishTargetSchema.safeParse({ ...mac, name: "all" }).success).toBe(false);
+        expect(targetDestination({ ...remote, name: "alias" })).toBe(targetDestination(remote));
         expect(resolveTargets({ targets, names: ["remote", "remote"] })).toEqual([remote]);
         expect(() => resolveTargets({ targets, names: ["unknown"] })).toThrow('unknown publish target "unknown"');
     });
@@ -200,6 +202,38 @@ describe("paired transport", () => {
     });
 });
 
+test("an interrupted SSH transfer does not replace the live snapshot", async () => {
+    const calls: string[][] = [];
+    const transport = createSshRsyncTransport({
+        run: async (argv) => {
+            calls.push(argv);
+            if (argv[0] === "rsync" && argv.at(-2) === "/tmp/snapshot/") {
+                throw new Error("fixture transfer timed out");
+            }
+
+            return "";
+        },
+    });
+    await expect(
+        transport.send({ target: remote, kind: "artifact", id: "fixture", dir: "/tmp/snapshot" })
+    ).rejects.toThrow("fixture transfer timed out");
+    expect(calls.some((argv) => argv.includes("mv"))).toBe(false);
+    expect(calls.filter((argv) => argv[0] === "rsync")).toHaveLength(2);
+});
+
+test("SSH targets preserve an explicitly configured legacy Markdown mount", () => {
+    const target = PublishTargetSchema.parse({
+        ...remote,
+        transport: { ...remote.transport, mounts: { md: "/share" } },
+    });
+    expect(transportFor(target).pageUrl({ target, kind: "md", id: "fixture" })).toBe(
+        "https://share.example.com/share/fixture"
+    );
+    expect(transportFor(target).pageUrl({ target, kind: "artifact", id: "fixture" })).toBe(
+        "https://share.example.com/artifact/fixture"
+    );
+});
+
 test("ssh-rsync uses kind-scoped argv for sending, removing and listing", async () => {
     const calls: string[][] = [];
     const transport = createSshRsyncTransport({
@@ -216,13 +250,19 @@ test("ssh-rsync uses kind-scoped argv for sending, removing and listing", async 
     expect(await transport.check(target)).toEqual([
         { label: "SSH data directory", ok: true, detail: "alice@host.example.com:/srv/shares" },
     ]);
-    expect(calls.map((argv) => argv[0])).toEqual(["ssh", "rsync", "rsync", "ssh", "ssh", "ssh"]);
-    expect(calls[0]?.slice(-4)).toEqual(["mkdir", "-p", "--", "/srv/shares/artifact"]);
+    expect(calls.map((argv) => argv[0])).toEqual(["ssh", "rsync", "ssh", "rsync", "ssh", "rsync", "ssh", "ssh", "ssh"]);
+    expect(calls[0]?.slice(-5, -2)).toEqual(["mkdir", "-p", "--"]);
+    expect(calls[0]?.at(-2)).toMatch(/^\/srv\/shares\/artifact\/\.incoming-/);
+    expect(calls[0]?.at(-1)).toMatch(/^\/srv\/shares\/artifact\/\.old-/);
     const destination = "alice@host.example.com:/srv/shares/artifact/fixture/";
     expect(calls[1]).toContain("--chmod=D755,F644");
-    expect(calls[1]?.slice(-2)).toEqual(["/tmp/snapshot/", destination]);
-    expect(calls[2]?.at(-1)).toBe(destination);
-    expect(calls[3]?.slice(-3)).toEqual(["rmdir", "--", "/srv/shares/artifact/fixture"]);
-    expect(calls[4]?.slice(-6)).toEqual(["ls", "-1", "--", "/srv/shares/artifact", ";", "fi"]);
-    expect(calls[5]?.slice(-3)).toEqual(["test", "-d", "/srv/shares"]);
+    expect(calls[1]).toContain("--checksum");
+    expect(calls[1]?.at(-2)).toBe("/tmp/snapshot/");
+    expect(calls[1]?.at(-1)).toMatch(/^alice@host\.example\.com:\/srv\/shares\/artifact\/\.incoming-/);
+    expect(calls[2]).toContain("mv");
+    expect(calls[2]).toContain("/srv/shares/artifact/fixture");
+    expect(calls[5]?.at(-1)).toBe(destination);
+    expect(calls[6]?.slice(-3)).toEqual(["rmdir", "--", "/srv/shares/artifact/fixture"]);
+    expect(calls[7]?.slice(-6)).toEqual(["ls", "-1", "--", "/srv/shares/artifact", ";", "fi"]);
+    expect(calls[8]?.slice(-3)).toEqual(["test", "-d", "/srv/shares"]);
 });

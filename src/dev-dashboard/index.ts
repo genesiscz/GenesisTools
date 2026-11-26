@@ -266,7 +266,17 @@ const targetOption = (description: string) =>
         .preset(true)
         .default([])
         .argParser((value: string | true, previous: Array<string | true>) => [...previous, value]);
-const portOption = (value: string): number => Number.parseInt(value, 10);
+const integerOption =
+    ({ minimum, maximum, label }: { minimum: number; maximum: number; label: string }) =>
+    (value: string): number => {
+        const parsed = Number(value);
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+            throw new InvalidArgumentError(`Enter ${label} as an integer from ${minimum} through ${maximum}.`);
+        }
+
+        return parsed;
+    };
+const portOption = integerOption({ minimum: 1, maximum: 65535, label: "port" });
 const minFreeOption = (value: string): number => {
     const gb = Number(value);
     if (!value.trim() || !Number.isFinite(gb) || gb < 0 || gb * 1024 ** 3 > Number.MAX_SAFE_INTEGER) {
@@ -284,7 +294,7 @@ function isAutoSyncState(value: string): value is (typeof AUTO_SYNC_STATES)[numb
 
 const share = program
     .command("share")
-    .description("Publish an Obsidian note to /share/<slug> on your share targets and copy the link")
+    .description("Publish an Obsidian note to its configured share targets and copy the link")
     .argument("<path>", "Vault-relative or absolute path to a .md note")
     .addOption(targetOption('share target (repeatable, or "all"); uses the configured default when omitted'))
     .option("--no-clipboard", "Print the URL without copying it")
@@ -331,10 +341,14 @@ share
     .command("auto-sync")
     .description("Send published notes edited since their last sync every N minutes, through a tools daemon task")
     .argument("[state]", "on, off or status (default: status)")
-    .option("--every <minutes>", "how often, in minutes (default 10)", (value) => Number.parseInt(value, 10))
+    .option(
+        "--every <minutes>",
+        "how often, in minutes (default 10)",
+        integerOption({ minimum: 1, maximum: 1440, label: "minutes" })
+    )
     .action(async (state: string | undefined, opts: { every?: number }) => {
         const picked = await pickEnumFlag({
-            tool: toolCommand("dev-dashboard", "share auto-sync"),
+            tool: toolCommand("dev-dashboard", "share", "auto-sync"),
             subcommand: ["share", "auto-sync"],
             flag: "state",
             given: state,
@@ -373,7 +387,8 @@ shareTarget
     .argument("<name>", "target name, e.g. home or public")
     .option("--driver [kind]", "mac-live | paired | ssh-rsync")
     .option("--url <url>", "paired: publish server origin (https://share.example.com)")
-    .option("--code <code>", "paired: the one-time code from `share-server pair`")
+    .option("--code <code>", "paired: one-time code (prefer the hidden prompt or --code-stdin)")
+    .option("--code-stdin", "paired: read the one-time code from stdin")
     .option("--device-name <name>", "paired: how the server lists this Mac (default: host name)")
     .option("--host <user@host>", "ssh-rsync: ssh destination")
     .option("--data-dir <dir>", "ssh-rsync: snapshot folder on the host")
@@ -384,6 +399,7 @@ shareTarget
             driver: typeof opts.driver === "string" ? opts.driver : undefined,
             url: typeof opts.url === "string" ? opts.url : undefined,
             code: typeof opts.code === "string" ? opts.code : undefined,
+            codeStdin: opts.codeStdin === true,
             deviceName: typeof opts.deviceName === "string" ? opts.deviceName : undefined,
             host: typeof opts.host === "string" ? opts.host : undefined,
             dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
@@ -403,7 +419,8 @@ const shareServer = program
 const serverPaths = (command: Command): Command =>
     command
         .option("--data <dir>", "snapshot folder (one <kind>/<id>/ per publication)")
-        .option("--state <dir>", "state folder: paired devices, the admin socket, tunnel configs");
+        .option("--state <dir>", "state folder: paired devices, the admin socket, tunnel configs")
+        .option("--config-home <dir>", "home whose share configuration should be read");
 
 serverPaths(shareServer.command("serve"))
     .description("Run a configured share server in the foreground")
@@ -429,10 +446,10 @@ serverPaths(shareServer.command("setup"))
     .option("--host <host>", "listen host")
     .option("--data-dir <dir>", "snapshot directory")
     .option("--state-dir <dir>", "device and socket directory")
-    .option("--exposure <kind>", "reverse-proxy | cloudflared | local")
-    .option("--proxy <proxy>", "apache | nginx | caddy | other")
+    .option("--exposure [kind]", "reverse-proxy | cloudflared | local")
+    .option("--proxy [proxy]", "apache | nginx | caddy | other")
     .option("--tunnel <name>", "cloudflared tunnel name")
-    .option("--service <manager>", "systemd | launchd | none")
+    .option("--service [manager]", "systemd | launchd | none")
     .option("--service-user <name>", "systemd service account")
     .option("--user <name>", "alias for --service-user")
     .option("--adopt-unit <path>", "adopt an existing flag-based systemd unit")
@@ -440,20 +457,23 @@ serverPaths(shareServer.command("setup"))
     .option("--bun <path>", "Bun executable", process.execPath)
     .option("--pair", "print a pairing code when the server is ready")
     .option("--url <url>", "client: publish server URL")
-    .option("--code <code>", "client: one-time pairing code")
+    .option("--code <code>", "client: one-time code (prefer the hidden prompt or --code-stdin)")
+    .option("--code-stdin", "client: read the one-time code from stdin")
     .option("--default", "make the client target the default")
     .action(runShareServerSetup);
 
 shareServer
     .command("up")
     .description("Enable and restart the configured service")
+    .option("--config-home <dir>", "home whose share configuration should be read")
     .option("--server <name>", "server to restart")
-    .action((opts: { server?: string }) => runShareServerService("up", opts));
+    .action((opts: { server?: string; configHome?: string }) => runShareServerService("up", opts));
 shareServer
     .command("down")
     .description("Stop the configured service")
+    .option("--config-home <dir>", "home whose share configuration should be read")
     .option("--server <name>", "server to stop")
-    .action((opts: { server?: string }) => runShareServerService("down", opts));
+    .action((opts: { server?: string; configHome?: string }) => runShareServerService("down", opts));
 
 serverPaths(shareServer.command("status"))
     .description("Check servers, disk space and configured client targets")
@@ -467,6 +487,7 @@ serverPaths(shareServer.command("status"))
 shareServer
     .command("audit")
     .description("Read publish access records")
+    .option("--config-home <dir>", "home whose share configuration should be read")
     .option("--server <name>", "read the named server's access log")
     .option("--client", "read this computer's publishing log")
     .option("--since <time>", "filter by an ISO time or a duration such as 7d")

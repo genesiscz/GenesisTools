@@ -18,6 +18,7 @@ import {
 } from "@genesiscz/utils/genesis-tools/publish/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
+import { transportFor } from "@genesiscz/utils/publish/transports";
 import { getConfig, getOrCreateDashboardAuth, resolveDashboardVault, saveConfig, saveTtydSessions } from "./config";
 
 describe("dev-dashboard config", () => {
@@ -172,8 +173,17 @@ describe("dev-dashboard share migration", () => {
         expect(converted?.targets[1]).toEqual({
             name: "server",
             publicBase: "https://example.com",
-            transport: { kind: "ssh-rsync", host: "deploy@share.example.com", dataDir: "/srv/share/data" },
+            transport: {
+                kind: "ssh-rsync",
+                host: "deploy@share.example.com",
+                dataDir: "/srv/share/data",
+                mounts: { md: "/share" },
+            },
         });
+        const migrated = converted?.targets[1];
+        expect(migrated && transportFor(migrated).pageUrl({ target: migrated, kind: "md", id: "fixture" })).toBe(
+            "https://example.com/share/fixture"
+        );
         expect(parse({ target: "server", server: {} })?.defaultTarget).toBe("mac");
         expect(() => parse({ targets: [namedShare.targets[0], namedShare.targets[0]] })).toThrow();
         expect(() => parse({ targets: [{ ...namedShare.targets[1], token: "gtshare_plain" }] })).toThrow();
@@ -226,6 +236,23 @@ describe("dev-dashboard config that exists but cannot be used", () => {
         }
 
         resetDevDashboardStorage();
+    });
+
+    it("preserves dashboard settings when only deprecated share data is invalid", async () => {
+        const share = {
+            targets: [
+                { name: "duplicate", driver: "mac-live" },
+                { name: "duplicate", driver: "mac-live" },
+            ],
+        };
+        writeFileSync(configPath, SafeJSON.stringify({ port: 3123, auth: AUTH, publishedNotes: NOTES, share }));
+        const config = await getConfig();
+        expect(config.port).toBe(3123);
+        expect(config.auth).toEqual(AUTH);
+        expect(config.publishedNotes).toEqual(NOTES);
+        await saveTtydSessions([]);
+        expect(SafeJSON.parse(readFileSync(configPath, "utf8")).share).toEqual(share);
+        await expect(importLegacyShare()).rejects.toThrow("Duplicate target");
     });
 
     it("serves defaults for a schema failure, but refuses to save them over the file", async () => {

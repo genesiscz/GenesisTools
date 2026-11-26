@@ -1,3 +1,5 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
@@ -34,20 +36,23 @@ function quote(value: string): string {
     return /^[A-Za-z0-9_./=:-]+$/.test(escaped) ? escaped : `"${escaped}"`;
 }
 
+export async function withStagedSystemdUnit<T>(text: string, use: (file: string) => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "publish-unit-"));
+    try {
+        const source = join(dir, "service.unit");
+        await writeServiceFile(source, text);
+        return await use(source);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+}
+
 function render(input: ServiceUnitInput): string {
-    const { server, checkoutDir, bunPath, home } = input;
+    const { server, checkoutDir, command, home } = input;
     if (server.service.manager !== "systemd") {
         throw new Error("Expected a systemd server");
     }
 
-    const program = [
-        bunPath,
-        join(checkoutDir, "src/dev-dashboard/index.ts"),
-        "share-server",
-        "serve",
-        "--server",
-        server.name,
-    ];
     return [
         "[Unit]",
         "Description=GenesisTools publish server",
@@ -58,7 +63,7 @@ function render(input: ServiceUnitInput): string {
         "Type=simple",
         `User=${server.service.user}`,
         `WorkingDirectory=${quote(checkoutDir)}`,
-        `ExecStart=${program.map(quote).join(" ")}`,
+        `ExecStart=${command.map(quote).join(" ")}`,
         `Environment=${quote(`HOME=${home}`)}`,
         `Environment=${quote(`GENESIS_TOOLS_HOME=${home}`)}`,
         `Environment=${quote(`GENESIS_TOOLS_LOG_DIR=${join(server.stateDir, "logs")}`)}`,
@@ -96,11 +101,11 @@ export function createSystemdInstaller(
         render,
         installCommands,
         async install(input) {
-            const source = stagedSystemdUnit(input);
-            await writeServiceFile(source, render(input));
-            for (const argv of installCommands({ ...input, unitFile: source })) {
-                await elevated(argv);
-            }
+            await withStagedSystemdUnit(render(input), async (source) => {
+                for (const argv of installCommands({ ...input, unitFile: source })) {
+                    await elevated(argv);
+                }
+            });
 
             return { unitFile: join(unitDir, unitName(input.server)) };
         },

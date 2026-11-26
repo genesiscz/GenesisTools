@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
-import { listPublications, updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import { listPublications, savePublication, updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
 import { out } from "@genesiscz/utils/logger";
 import { makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
 import { getBackend, setBackend } from "@genesiscz/utils/prompts/p/backend";
 import type { PublishTarget } from "@genesiscz/utils/publish/targets";
-import { resolveShareTargetFlags, runShareSync } from "./share";
+import { syncShares } from "../lib/share/targets";
+import { resolveShareTargetFlags, runShare, runShareSync } from "./share";
 
 let dir: string;
 let previousHome: string | undefined;
@@ -68,6 +69,81 @@ test("non-interactive sync without a default suggests one command with both targ
         expect(suggestions[0]).toContain("share sync --all --target desk");
         expect(process.exitCode).toBe(1);
         expect(await listPublications("md")).toEqual([]);
+    } finally {
+        print.mockRestore();
+    }
+});
+
+async function trackAlpha(syncs: Record<string, { syncedAt: string; sourceModifiedAt: string }>): Promise<void> {
+    await savePublication({
+        kind: "md",
+        id: "Alpha",
+        title: "Alpha",
+        source: "Alpha.md",
+        publishedAt: "2026-01-01T00:00:00.000Z",
+        syncs,
+    });
+}
+
+test("changed sync excludes missing never-sent notes before choosing fallback", async () => {
+    unlinkSync(join(dir, "vault", "Beta.md"));
+    await trackAlpha({ desk: { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" } });
+    const result = await syncShares({ all: true, slugs: [], targetNames: [], changedOnly: true });
+    expect(result.map(({ note, outcomes }) => [note.slug, outcomes.map(({ target }) => target)])).toEqual([
+        ["Alpha", ["desk"]],
+    ]);
+});
+
+test("canceling fallback still syncs edited notes to their previous targets", async () => {
+    await trackAlpha({ desk: { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" } });
+    const result = await syncShares({
+        all: true,
+        slugs: [],
+        targetNames: [],
+        changedOnly: true,
+        pickFallback: async () => null,
+    });
+    expect(result.map(({ note }) => note.slug)).toEqual(["Alpha"]);
+});
+
+test("changed sync resolves all and sends only destinations that need this version", async () => {
+    const sourceModifiedAt = statSync(join(dir, "vault", "Alpha.md")).mtime.toISOString();
+    await trackAlpha({
+        desk: { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" },
+        backup: { syncedAt: sourceModifiedAt, sourceModifiedAt },
+    });
+    const result = await syncShares({
+        all: false,
+        slugs: ["Alpha"],
+        targetNames: ["all"],
+        changedOnly: true,
+    });
+    expect(result[0]?.outcomes.map(({ target }) => target)).toEqual(["desk"]);
+});
+
+test("an existing note whose sends all fail is reported as locally registered", async () => {
+    await updateShareConfig((config) => ({
+        ...config,
+        targets: [
+            {
+                name: "remote",
+                publicBase: "https://share.example.com",
+                transport: {
+                    kind: "paired",
+                    url: "https://share.example.com",
+                    deviceId: "fixture",
+                    token: { type: "secure", path: "fixture/missing-token" },
+                },
+            },
+        ],
+    }));
+    const print = spyOn(out, "printlnErr");
+    try {
+        await runShare("Alpha.md", { clipboard: false, targets: ["remote"] });
+        const messages = print.mock.calls.flat().join("\n");
+        expect(messages).toContain("no target received this version");
+        expect(messages).not.toContain("was sent again");
+        expect(process.exitCode).toBe(1);
     } finally {
         print.mockRestore();
     }

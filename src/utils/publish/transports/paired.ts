@@ -109,14 +109,14 @@ export function createPairedTransport(
         summary: "upload each snapshot to a publish server paired with a one-time code",
         live: false,
         pageUrl: ({ target, kind, id }) => `${target.publicBase}/${kind}/${encodeURIComponent(id)}`,
-        send: async ({ target, kind, id, dir }) => {
+        send: async ({ target, kind, id, dir, maxUploadBytes }) => {
             const paired = targetWith(target, "paired");
             const headers = bearer(await authorized(paired));
-            const body = await packSnapshot(dir);
+            const body = await packSnapshot(dir, { maxBytes: maxUploadBytes });
             const res = await request(paired.transport.url, PUBLISH_API.snapshot(kind, id), {
                 method: "PUT",
                 headers: { ...headers, "Content-Type": "application/zip" },
-                body: new Uint8Array(body),
+                body,
                 signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
             });
             await requireOk(res, `uploading ${id} to ${target.name}`);

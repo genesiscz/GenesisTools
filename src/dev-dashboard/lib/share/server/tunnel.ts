@@ -1,13 +1,15 @@
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { listenOrigin } from "@genesiscz/utils/publish/exposure";
 import type { Subprocess } from "bun";
 
 const { log } = logger.scoped("share-tunnel");
 
-export const TUNNEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+export { TUNNEL_NAME_RE } from "@genesiscz/utils/publish/exposure";
 export const HOSTNAME_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 
-/** Where `share-server tunnel` writes the connector config, and `share-server up --tunnel <name>` reads it. */
+/** Where `share-server tunnel` writes the connector config, and `share-server serve --tunnel <name>` reads it. */
 export function tunnelConfigPath(stateDir: string, name: string): string {
     return join(stateDir, `cloudflared-${name}.yml`);
 }
@@ -21,13 +23,14 @@ export function cloudflaredConfig(options: {
     credentialsFile: string;
     hostname: string;
     port: number;
+    host?: string;
 }): string {
     return [
         `tunnel: ${options.tunnelId}`,
-        `credentials-file: ${options.credentialsFile}`,
+        `credentials-file: ${SafeJSON.stringify(options.credentialsFile)}`,
         "ingress:",
         `  - hostname: ${options.hostname}`,
-        `    service: http://127.0.0.1:${options.port}`,
+        `    service: ${listenOrigin(options.host ?? "127.0.0.1", options.port)}`,
         "  - service: http_status:404",
         "",
     ].join("\n");

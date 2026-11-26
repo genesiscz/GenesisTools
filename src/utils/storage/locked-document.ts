@@ -80,6 +80,8 @@ export interface JsonDocumentSpec<T> {
     /** The mode of the written file (`0o600` for private data) and of a directory `update` creates. */
     fileMode?: number;
     dirMode?: number;
+    /** Keep directory-entry writes pinned when a privileged caller refuses symlink traversal. */
+    followSymlinks?: boolean;
     /**
      * Runs after the write, still under the lock: keep a derived file in step with the document (an index, a marker).
      * A throw here fails the update, but the document is already written.
@@ -250,7 +252,7 @@ export function jsonDocument<T>(spec: JsonDocumentSpec<T>): JsonDocument<T> {
             // The encode and the rename run with no await between them, so a cancel seen here is the last one
             // that can still stop the save.
             options?.signal?.throwIfAborted();
-            atomicWriteFileSync(spec.path, text, spec.fileMode !== undefined ? { mode: spec.fileMode } : undefined);
+            atomicWriteFileSync(spec.path, text, { mode: spec.fileMode, followSymlinks: spec.followSymlinks });
             spec.afterWrite?.(outcome.write);
             return outcome.result;
         };

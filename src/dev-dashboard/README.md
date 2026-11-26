@@ -106,7 +106,8 @@ computer once. The client saves a vault reference to its token and uses the targ
 
 ```bash
 # On the server
-tools dev-dashboard share-server setup
+tools dev-dashboard share-server setup --role server
+tools dev-dashboard share-server pair
 
 # On the computer that publishes, replace ABCD-EFGH with the code from the server
 tools dev-dashboard share-server setup --role client --target relay --url https://share.example.com --code ABCD-EFGH
@@ -114,6 +115,9 @@ tools dev-dashboard share "Notes/Weekly.md" --target relay
 tools dev-dashboard share sync "Notes/Weekly.md" --target relay
 tools dev-dashboard share unshare "Notes/Weekly.md" --target relay
 ```
+
+If setup selected `--service none`, start `tools dev-dashboard share-server serve` in another terminal
+before running `share-server pair`. Keep that foreground process running while pairing and serving.
 
 `share target list` shows the targets and marks the default. Use `share target default relay` to select the
 paired server for commands without `--target`. `share sync --all` uses each note's previous targets and sends
@@ -126,7 +130,9 @@ checks the origin. `share-server status --json` checks each configured listener,
 free space, and target. `share-server up` enables and restarts the selected service, and `share-server down`
 stops it. `share-server serve` runs the default server in the foreground. Use `--server <name>` to select
 another. The serve flags override saved settings, including the 2 GiB default upload reserve.
-`share-server pair` prints a fresh code, and `share-server devices --revoke <id>` revokes an upload token.
+For a custom service account, root can select its saved settings with `--config-home <service-user-home>`
+on server commands when the account cannot be inferred. `share-server pair` prints a fresh code, and
+`share-server devices --revoke <id>` revokes an upload token.
 Use `share-server audit --server <name> --since 1d --json` to read server access records and
 `share-server audit --client` to read this computer's publishing records. Each audit file is private to
 the account that runs it. Status also shows the most recent pairing attempt and failed token check when recorded.

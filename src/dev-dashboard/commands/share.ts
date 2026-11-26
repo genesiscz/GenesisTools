@@ -109,10 +109,15 @@ export async function runShare(path: string, opts: ShareCommandOptions): Promise
     await guarded(async () => {
         const { vaultPath, outcomes, alreadyPublished, slug } = await shareNote(path, opts.targets);
         const ok = printOutcomes(outcomes);
+        const delivered = outcomes.filter((outcome) => outcome.url && !outcome.error).length;
         out.printlnErr(
-            alreadyPublished
-                ? `already published as ${slug}: ${vaultPath} was sent again, the link stays the same`
-                : `published ${vaultPath}`
+            delivered === 0
+                ? `registered ${vaultPath} as ${slug}, but no target received this version`
+                : !ok
+                  ? `registered ${vaultPath} as ${slug}, sent to ${delivered} of ${outcomes.length} targets`
+                  : alreadyPublished
+                    ? `already published as ${slug}: ${vaultPath} was sent again, the link stays the same`
+                    : `published ${vaultPath}`
         );
         const first = outcomes.find((outcome) => outcome.url)?.url;
 

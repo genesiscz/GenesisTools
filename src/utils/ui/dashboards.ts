@@ -394,7 +394,10 @@ export const WEB_SERVICES = {
         portOverride: { flag: "--port" },
         serviceKind: "http-api",
         note: "The dev-dashboard share-server serve command; SHARE_SERVER_PORT in src/dev-dashboard/commands/share-server.ts.",
-        matchProcess: matchGenesisTool("dev-dashboard", "share-server"),
+        matchProcess: ({ fullCommand, command }) =>
+            /(?:^|[\s/\\])src[/\\]dev-dashboard[/\\]index\.ts["']?\s+share-server\s+serve(?:\s|$)/i.test(
+                fullCommand ?? command
+            ),
     },
     "youtube-server": {
         key: "youtube-server",

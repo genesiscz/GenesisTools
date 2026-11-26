@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { posix } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
@@ -48,13 +49,20 @@ function remoteSnapshotDir(kindDir: string, id: string): string {
 export function createSshRsyncTransport(
     deps: SshRsyncDeps = liveDeps
 ): PublishTransport & { readonly kind: "ssh-rsync" } {
-    const ssh = (host: string, ...args: string[]) => deps.run(["ssh", ...SSH_OPTIONS, "--", host, ...args]);
+    const ssh = (host: string, ...args: string[]) => {
+        if (!isSshHost(host)) {
+            throw new Error("invalid SSH host");
+        }
+
+        return deps.run(["ssh", ...SSH_OPTIONS, "--", host, ...args]);
+    };
     const rsync = (from: string, host: string, to: string) =>
         deps.run(
             [
                 "rsync",
                 "-a",
                 "--delete",
+                "--checksum",
                 "--chmod=D755,F644",
                 "-e",
                 `ssh ${SSH_OPTIONS.join(" ")}`,
@@ -69,13 +77,82 @@ export function createSshRsyncTransport(
         kind: "ssh-rsync",
         summary: "sync snapshots over SSH into a publish server's data directory",
         live: false,
-        pageUrl: ({ target, kind, id }) => `${target.publicBase}/${kind}/${encodeURIComponent(id)}`,
+        pageUrl: ({ target, kind, id }) => {
+            const { mounts } = targetWith(target, "ssh-rsync").transport;
+            return `${target.publicBase}${mounts?.[kind] ?? `/${kind}`}/${encodeURIComponent(id)}`;
+        },
         send: async ({ target, kind, id, dir }) => {
             const { host, dataDir } = targetWith(target, "ssh-rsync").transport;
             const kindDir = remoteKindDir(dataDir, kind);
             const remote = remoteSnapshotDir(kindDir, id);
-            await ssh(host, "mkdir", "-p", "--", kindDir);
-            await rsync(dir, host, remote);
+            const nonce = randomUUID();
+            const staging = posix.join(kindDir, `.incoming-${nonce}`);
+            const backup = posix.join(kindDir, `.old-${nonce}`);
+            const previous = posix.join(backup, id);
+            const empty = makeTempDir("publish-empty-");
+            let installed = false;
+            try {
+                await ssh(host, "mkdir", "-p", "--", staging, backup);
+                await rsync(dir, host, staging);
+                await ssh(
+                    host,
+                    "if",
+                    "test",
+                    "-e",
+                    remote,
+                    ";",
+                    "then",
+                    "mv",
+                    "--",
+                    remote,
+                    previous,
+                    "||",
+                    "exit",
+                    "1",
+                    ";",
+                    "fi",
+                    ";",
+                    "if",
+                    "mv",
+                    "--",
+                    staging,
+                    remote,
+                    ";",
+                    "then",
+                    ":",
+                    ";",
+                    "else",
+                    "if",
+                    "test",
+                    "-e",
+                    previous,
+                    ";",
+                    "then",
+                    "mv",
+                    "--",
+                    previous,
+                    remote,
+                    ";",
+                    "fi",
+                    ";",
+                    "exit",
+                    "1",
+                    ";",
+                    "fi"
+                );
+                installed = true;
+            } finally {
+                const abandoned = installed ? backup : staging;
+                try {
+                    await rsync(empty, host, abandoned);
+                    await ssh(host, "rmdir", "--", abandoned);
+                } catch (err) {
+                    log.warn({ err, target: target.name, kind, id }, "could not clean up snapshot staging");
+                }
+
+                await rm(empty, { recursive: true, force: true });
+            }
+
             log.info({ target: target.name, kind, id }, "snapshot uploaded with rsync");
         },
         remove: async ({ target, kind, id }) => {

@@ -106,6 +106,29 @@ describe("matchProcess", () => {
         ).toBe(false);
     });
 
+    test("the publish server matcher requires the subcommand and accepts custom checkout folders", () => {
+        const entry = WEB_SERVICES["dev-dashboard-share-server"];
+        const context = { port: 3044, command: "bun", cwd: "/srv/project" };
+        expect(
+            entry.matchProcess({
+                ...context,
+                fullCommand: "bun /srv/project/src/dev-dashboard/index.ts share-server serve --server desk",
+            })
+        ).toBe(true);
+        expect(
+            entry.matchProcess({
+                ...context,
+                fullCommand: "bun C:\\project\\src\\dev-dashboard\\index.ts share-server serve",
+            })
+        ).toBe(true);
+        expect(
+            entry.matchProcess({
+                ...context,
+                fullCommand: "bun /srv/GenesisTools/src/dev-dashboard/index.ts agent --port 3044",
+            })
+        ).toBe(false);
+    });
+
     test("youtube-server rejects unrelated process on 9886", () => {
         const entry = WEB_SERVICES["youtube-server"];
         expect(

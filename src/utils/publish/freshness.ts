@@ -18,6 +18,8 @@ export interface SyncRecord {
     syncedAt: string;
     /** The source file's modification time when it was sent. */
     sourceModifiedAt: string;
+    /** Content fingerprint when the source has additional build inputs. */
+    sourceFingerprint?: string;
 }
 
 export type FreshnessTone = "fresh" | "recent" | "aging" | "stale";
@@ -43,24 +45,28 @@ export function freshnessTone(ageMs: number): FreshnessTone {
 /** "just now" (under 10 s), "25 s ago", "5 min ago", "3 h ago", "2 days ago", "5 weeks ago". */
 export function formatAgo(ageMs: number): string {
     const age = Math.max(0, ageMs);
+    const second = 1000;
+    const minute = 60_000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
 
-    if (age < JUST_NOW_MS) {
+    if (age < 10_000) {
         return "just now";
     }
 
-    if (age < MINUTE_MS) {
-        return `${Math.floor(age / SECOND_MS)} s ago`;
+    if (age < minute) {
+        return `${Math.floor(age / second)} s ago`;
     }
 
-    if (age < HOUR_MS) {
-        return `${Math.floor(age / MINUTE_MS)} min ago`;
+    if (age < hour) {
+        return `${Math.floor(age / minute)} min ago`;
     }
 
-    if (age < DAY_MS) {
-        return `${Math.floor(age / HOUR_MS)} h ago`;
+    if (age < day) {
+        return `${Math.floor(age / hour)} h ago`;
     }
 
-    const days = Math.floor(age / DAY_MS);
+    const days = Math.floor(age / day);
 
     if (days < 14) {
         return `${days} ${days === 1 ? "day" : "days"} ago`;

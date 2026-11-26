@@ -5,6 +5,7 @@ import {
     constants,
     copyFileSync,
     existsSync,
+    fchmodSync,
     fsyncSync,
     linkSync,
     lstatSync,
@@ -47,6 +48,8 @@ export interface AtomicWriteOptions {
      * still one `mv` away from undone. A failed backup refuses the write.
      */
     backup?: boolean;
+    /** False replaces the directory entry itself, including a symlink, without following its target. */
+    followSymlinks?: boolean;
 }
 
 let tempCounter = 0;
@@ -138,7 +141,7 @@ function publishBackup(from: string, backupPath: string): void {
 export function atomicWriteFileSync(path: string, data: string | Uint8Array, options?: AtomicWriteOptions): void {
     assertTestSafePath(path, "write");
 
-    const filePath = resolveSymlinkTarget(path);
+    const filePath = options?.followSymlinks === false ? path : resolveSymlinkTarget(path);
 
     if (filePath !== path) {
         assertTestSafePath(filePath, "write");
@@ -172,14 +175,13 @@ export function atomicWriteFileSync(path: string, data: string | Uint8Array, opt
                 offset += atomicWriteIo.writeSync(fd, bytes, offset, bytes.length - offset);
             }
 
+            if (mode !== undefined) {
+                fchmodSync(fd, mode);
+            }
             // Without it a kernel panic after the rename can publish the new name with no data behind it.
             atomicWriteIo.fsyncSync(fd);
         } finally {
             closeSync(fd);
-        }
-
-        if (mode !== undefined) {
-            chmodSync(tmp, mode);
         }
 
         if (options?.backup && existsSync(filePath)) {

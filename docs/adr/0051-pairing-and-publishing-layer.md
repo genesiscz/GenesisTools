@@ -18,8 +18,8 @@ published kind is (`definePublishedKind`: an id that is also the URL namespace, 
 snapshot may hold, a check of the uploaded files), the server half of a kind (`serveKind`), the snapshot store with
 its bounded unzip and atomic swap, the server with its admin socket, and the transports behind one interface and
 one table: `paired` (HTTPS, or HTTP to a private address such as a WireGuard one), `ssh-rsync` and `mac-live`.
-`src/utils/genesis-tools/publish/` binds it to GenesisTools: the store under `~/.genesis-tools/publish/`
-(targets nested by transport, and a ledger of what was sent where and when), `publisher(kind)` and the command
+`src/utils/genesis-tools/publish/` binds it to GenesisTools: the version 2 config at `~/.genesis-tools/share/config.json`
+(named servers and targets nested by transport) and its `publications.json` ledger of what was sent where and when, `publisher(kind)` and the command
 functions in `src/utils/genesis-tools/tools/publish.ts`. Every kind gets freshness from the same two places: the
 manifest's `snapshotAt` and `sourceModifiedAt`, and the ledger's sync record per target.
 
@@ -44,5 +44,8 @@ Not chosen: static pages rendered on the client (the server would need no tool c
 download views of a note would need a new snapshot format, and the deployed server could not take it); one
 versioned API root for all kinds (cleaner, but it needs a fallback in every client while an old server runs); an
 opaque-origin sandbox for artifact pages (the artifact kit reads `localStorage`; any paired device is the owner's,
-so a page is as trusted as its uploader); a snapshot owner per device and per-address rate limits (all devices
-belong to one person; a minimum of free disk refuses an upload that would fill the host).
+so a page is as trusted as its uploader); a snapshot owner per device (all devices belong to one person; a minimum of free disk refuses an upload
+that would fill the host). Pairing attempts are limited to five per client address in ten minutes. Forwarded
+addresses are trusted only from a loopback peer for a named reverse-proxy or cloudflared exposure. Direct and
+legacy listeners use the socket peer. This server disables the shared device store's global pending-code
+invalidation so failed attempts from one address cannot invalidate another computer's pairing code.

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PairCodeResponseSchema, PairResponseSchema } from "@genesiscz/utils/device-pairing/types";
@@ -9,7 +9,7 @@ import { ADMIN_API, PUBLISH_API } from "./api";
 import { AUDIT_FILE, clientAddress, readAudit, recordAudit } from "./audit";
 import { definePublishedKind, serveKind } from "./kind";
 import { ARTIFACT_ENTRY, artifactKindServer } from "./kinds/artifact";
-import { adminRequest, DEVICES_FILE, startPublishServer } from "./server";
+import { adminRequest, createPublishServerContext, DEVICES_FILE, startPublishServer } from "./server";
 import { SNAPSHOT_MANIFEST } from "./snapshot-store";
 
 const ID = "FixtureId";
@@ -50,6 +50,7 @@ test("writes one redacted audit row per page, asset, pairing, admin, upload and 
         port: 0,
         kinds: [demo, artifactKindServer],
         publicBase: "https://share.example.com",
+        trustProxy: true,
         dataDir: join(root, "data"),
         stateDir,
         minFreeBytes: 0,
@@ -168,9 +169,11 @@ test("limits a forwarded address on its sixth try and keeps the audit record", a
         port: 0,
         kinds: [demo],
         publicBase: "https://share.example.com",
+        trustProxy: true,
         dataDir: join(root, "data"),
         stateDir,
     });
+    const pending = server.context.devices.createPairingCode().code;
     try {
         for (let index = 1; index <= 7; index++) {
             const forwarded = index === 7 ? "198.51.100.99" : "198.51.100.8";
@@ -193,9 +196,60 @@ test("limits a forwarded address on its sixth try and keeps the audit record", a
             ["198.51.100.99", "pair", 403],
         ]);
         expect(clientAddress("198.51.100.7", "198.51.100.10")).toBe("198.51.100.7");
+        expect(clientAddress("127.0.0.1", "198.51.100.10")).toBe("127.0.0.1");
+        expect(clientAddress("127.0.0.1", "198.51.100.10", { trustProxy: true })).toBe("198.51.100.10");
         expect(clientAddress("::1", "invalid")).toBe("::1");
+        const valid = await fetch(new URL(PUBLISH_API.pair, server.url), {
+            method: "POST",
+            headers: { "X-Forwarded-For": "198.51.100.100" },
+            body: SafeJSON.stringify({ code: pending, deviceName: "other-desk" }),
+        });
+        expect(valid.status).toBe(200);
+        expect(PairResponseSchema.parse(await valid.json()).deviceId).toBeTruthy();
     } finally {
         await server.stop();
+    }
+});
+
+test.skipIf(process.platform === "win32")("an existing loose audit file is restricted before rotation", async () => {
+    const file = join(root, AUDIT_FILE);
+    await writeFile(file, "older record\n");
+    await chmod(file, 0o644);
+    await recordAudit(
+        root,
+        {
+            time: new Date().toISOString(),
+            side: "client",
+            action: "publish",
+            status: 200,
+            durationMs: 1,
+        },
+        { maxBytes: 1 }
+    );
+    expect(await readFile(`${file}.1`, "utf8")).toBe("older record\n");
+    expect((await stat(`${file}.1`)).mode & 0o777).toBe(0o600);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+});
+
+test("pairing capacity is reclaimed when the earliest occupied slot expires", async () => {
+    const time = spyOn(Date, "now").mockReturnValue(1);
+    try {
+        const context = createPublishServerContext({
+            kinds: [demo],
+            dataDir: join(root, "data"),
+            stateDir: join(root, "state"),
+            publicBase: "https://share.example.com",
+        });
+        for (let index = 0; index < 10_000; index++) {
+            expect(context.pairRateLimit.allow(`fixture-${index}`)).toBe(true);
+        }
+
+        time.mockReturnValue(600_000);
+        expect(context.pairRateLimit.allow("blocked")).toBe(false);
+        time.mockReturnValue(600_001);
+        expect(context.pairRateLimit.allow("new-address")).toBe(true);
+    } finally {
+        time.mockRestore();
     }
 });
 
@@ -218,7 +272,10 @@ test("rotates at the configured size and reads new and rotated files in order", 
     const files = (await readdir(root)).sort();
     expect(files).toEqual([AUDIT_FILE, ...Array.from({ length: 9 }, (_, ix) => `${AUDIT_FILE}.${ix + 1}`)]);
     for (const path of files) {
-        expect((await stat(join(root, path))).mode & 0o777).toBe(0o600);
+        expect((await stat(join(root, path))).isFile()).toBe(true);
+        if (process.platform !== "win32") {
+            expect((await stat(join(root, path))).mode & 0o777).toBe(0o600);
+        }
     }
 
     const recent = await readAudit(root, { device: "desk", since: new Date("2026-01-09") });

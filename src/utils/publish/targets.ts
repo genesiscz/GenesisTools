@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { isPrivateHost } from "@genesiscz/utils/net/outbound-policy";
 import { isSecureRef, type SecureRef } from "@genesiscz/utils/security/SecureRef";
 import { z } from "zod";
@@ -11,7 +12,7 @@ export const ALL_TARGETS = "all";
 export type TransportConfig =
     | { kind: "mac-live"; mounts: Record<string, string> }
     | { kind: "paired"; url: string; deviceId: string; token: SecureRef; pairedAt?: string }
-    | { kind: "ssh-rsync"; host: string; dataDir: string };
+    | { kind: "ssh-rsync"; host: string; dataDir: string; mounts?: Record<string, string> };
 
 export interface PublishTarget {
     name: string;
@@ -56,7 +57,10 @@ const origin = z.string().refine((value) => {
 
 export const PublishTargetSchema: z.ZodType<PublishTarget> = z
     .object({
-        name: z.string().regex(TARGET_NAME_RE),
+        name: z
+            .string()
+            .regex(TARGET_NAME_RE)
+            .refine((name) => name !== ALL_TARGETS, "all is reserved for selecting every target"),
         publicBase: origin,
         transport: z.discriminatedUnion("kind", [
             z.object({
@@ -75,6 +79,12 @@ export const PublishTargetSchema: z.ZodType<PublishTarget> = z
             }),
             z.object({
                 kind: z.literal("ssh-rsync"),
+                mounts: z
+                    .record(
+                        z.string().regex(KIND_ID_RE),
+                        z.string().refine((value) => value === "" || isMountPath(value))
+                    )
+                    .optional(),
                 host: z.string().refine(isSshHost, "expected user@host or host"),
                 dataDir: z
                     .string()
@@ -88,6 +98,23 @@ export const PublishTargetSchema: z.ZodType<PublishTarget> = z
             transport.kind !== "paired" || (URL.canParse(publicBase) && isPrivateOrHttps(new URL(publicBase))),
         { message: "HTTP requires a private host", path: ["publicBase"] }
     );
+
+/** Identifies the storage destination independently of a target name or its credentials. */
+export function targetDestination(target: PublishTarget): string {
+    const transport = target.transport;
+    switch (transport.kind) {
+        case "paired":
+            return SafeJSON.stringify(["paired", transport.url]);
+        case "ssh-rsync":
+            return SafeJSON.stringify(["ssh-rsync", transport.host, transport.dataDir.replace(/\/+$/, "")]);
+        case "mac-live":
+            return SafeJSON.stringify([
+                "mac-live",
+                target.publicBase,
+                Object.entries(transport.mounts).sort(([a], [b]) => a.localeCompare(b)),
+            ]);
+    }
+}
 
 export function resolveTargets(input: {
     targets: readonly PublishTarget[];

@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import { isIP } from "node:net";
 import { join } from "node:path";
@@ -59,9 +60,13 @@ function scrub(value?: string, sensitive?: readonly string[]): string | undefine
         .replaceAll(/\b([A-HJ-KM-NP-Z2-9]{2})[A-HJ-KM-NP-Z2-9]{2}-[A-HJ-KM-NP-Z2-9]{4}\b/gi, "$1…");
 }
 
-export function clientAddress(peer?: string, forwarded?: string | null): string | undefined {
+export function clientAddress(
+    peer?: string,
+    forwarded?: string | null,
+    options: { trustProxy?: boolean } = {}
+): string | undefined {
     // Reverse proxies append their peer to the chain. Earlier entries may have been supplied by the client.
-    if (peer === "127.0.0.1" || peer === "::1") {
+    if (options.trustProxy && (peer === "127.0.0.1" || peer === "::1")) {
         const supplied = forwarded?.split(",").at(-1)?.trim();
         if (supplied && isIP(supplied)) {
             return supplied;
@@ -87,8 +92,18 @@ async function missingOk<T>(operation: Promise<T>): Promise<T | undefined> {
     }
 }
 
+async function restrictAuditFile(path: string): Promise<void> {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+        await file.chmod(0o600);
+    } finally {
+        await file.close();
+    }
+}
+
 async function rotate(dir: string): Promise<void> {
     for (let slot = AUDIT_FILES - 1; slot > 0; slot--) {
+        await missingOk(restrictAuditFile(auditPath(dir, slot - 1)));
         await missingOk(rename(auditPath(dir, slot - 1), auditPath(dir, slot)));
     }
 }
@@ -122,11 +137,19 @@ export async function recordAudit(
                 throw new Error("Audit path is not a regular file");
             }
 
+            if (existing && (existing.mode & 0o777) !== 0o600) {
+                await restrictAuditFile(path);
+            }
+
             if (existing?.size && existing.size + Buffer.byteLength(line) > maxBytes) {
                 await rotate(dir);
             }
 
-            const file = await open(path, "a", 0o600);
+            const file = await open(
+                path,
+                constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
+                0o600
+            );
             try {
                 if (existing && (existing.mode & 0o777) !== 0o600) {
                     await file.chmod(0o600);

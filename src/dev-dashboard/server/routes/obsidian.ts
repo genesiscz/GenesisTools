@@ -3,16 +3,11 @@ import { resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
 import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
-import {
-    findPublishedBySlug,
-    listPublished,
-    publishNote,
-    unpublishNote,
-} from "@app/dev-dashboard/lib/obsidian/publish";
+import { listPublished, publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
 import { shareStatusFor } from "@app/dev-dashboard/lib/share/status";
-import { shareInBackground, unshareInBackground } from "@app/dev-dashboard/lib/share/targets";
+import { shareInBackground, unshareFromTargets } from "@app/dev-dashboard/lib/share/targets";
 import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
@@ -78,7 +73,12 @@ export function obsidianRoutes(): RouteDef[] {
                 const published = await listPublished();
                 const publishedNote = published.find((note) => note.vaultPath === path.normalize("NFC"));
                 const publishedSlug = publishedNote?.slug ?? null;
-                const shares = publishedNote ? await shareStatusFor(publishedNote) : [];
+                const shares = publishedNote
+                    ? await shareStatusFor(publishedNote).catch((err: unknown) => {
+                          log.warn({ err, path }, "Share metadata unavailable for note");
+                          return [];
+                      })
+                    : [];
                 const info = await stat(resolve(obsidianVault, path)).catch((err: unknown) => {
                     log.debug({ err, path }, "note has no readable mtime");
                     return null;
@@ -136,11 +136,13 @@ export function obsidianRoutes(): RouteDef[] {
                 }
 
                 await importLegacyShare();
-                const note = await findPublishedBySlug(slug);
-                await unpublishNote(slug);
-
-                if (note) {
-                    unshareInBackground(note);
+                const outcomes = await unshareFromTargets({ slug, targetNames: [] });
+                const failed = outcomes.filter((outcome) => outcome.error);
+                if (failed.length > 0) {
+                    return errorResult(
+                        new Error(failed.map((outcome) => `${outcome.target}: ${outcome.error}`).join("; ")),
+                        502
+                    );
                 }
 
                 const remaining = await listPublished();

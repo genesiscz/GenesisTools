@@ -34,7 +34,13 @@ export interface PublishTransport {
     /** This target serves the source itself and has no snapshot to sync. */
     readonly live: boolean;
     pageUrl(input: { target: PublishTarget; kind: string; id: string }): string | null;
-    send(input: { target: PublishTarget; kind: string; id: string; dir: string }): Promise<void>;
+    send(input: {
+        target: PublishTarget;
+        kind: string;
+        id: string;
+        dir: string;
+        maxUploadBytes?: number;
+    }): Promise<void>;
     remove(input: { target: PublishTarget; kind: string; id: string }): Promise<void>;
     /** Null if this transport cannot list snapshots. */
     list(input: { target: PublishTarget; kind: string }): Promise<string[] | null>;

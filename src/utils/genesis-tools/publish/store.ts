@@ -4,6 +4,7 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
+import { TUNNEL_NAME_RE } from "../../publish/exposure";
 import type { SyncRecord } from "../../publish/freshness";
 import { isSnapshotId, KIND_ID_RE } from "../../publish/ids";
 import { isHttpUrl, type PublishTarget, PublishTargetSchema, TARGET_NAME_RE } from "../../publish/targets";
@@ -54,6 +55,7 @@ export interface Publication {
     title: string;
     source: string;
     publishedAt: string;
+    sourceInputs?: Array<{ path: string; hash: string }>;
     syncs: Record<string, SyncRecord>;
 }
 
@@ -88,7 +90,7 @@ export const ShareServerConfigSchema: z.ZodType<ShareServerConfig> = z.object({
     exposure: z.discriminatedUnion("kind", [
         z.object({ kind: z.literal("local") }),
         z.object({ kind: z.literal("reverse-proxy"), proxy: z.enum(["apache", "nginx", "caddy", "other"]) }),
-        z.object({ kind: z.literal("cloudflared"), tunnel: z.string().regex(/^[a-zA-Z0-9_-]+$/) }),
+        z.object({ kind: z.literal("cloudflared"), tunnel: z.string().regex(TUNNEL_NAME_RE) }),
     ]),
     service: z.discriminatedUnion("manager", [
         z.object({ manager: z.literal("none") }),
@@ -124,11 +126,13 @@ export const PublicationSchema: z.ZodType<Publication> = z.object({
     title: z.string(),
     source: z.string(),
     publishedAt: z.string(),
+    sourceInputs: z.array(z.object({ path: z.string(), hash: z.string() })).optional(),
     syncs: z.record(
         z.string().regex(TARGET_NAME_RE),
         z.object({
             syncedAt: z.string(),
             sourceModifiedAt: z.string(),
+            sourceFingerprint: z.string().optional(),
         })
     ),
 });
@@ -180,6 +184,7 @@ function configDocument(path: string, empty = emptyConfig, writes?: "always") {
         onUnreadable: "refuse",
         fileMode: 0o600,
         dirMode: 0o700,
+        followSymlinks: false,
     });
 }
 
@@ -208,9 +213,10 @@ export function updateShareConfig(change: (config: ShareConfig) => ShareConfig):
 
 export async function updateShareConfigForHome(input: {
     home?: string;
+    path?: string;
     change: (config: ShareConfig) => ShareConfig;
 }): Promise<ShareConfig> {
-    const document = await configForHome(input.home);
+    const document = input.path ? configDocument(input.path) : await configForHome(input.home);
     return document.update((current) => {
         const next = ShareConfigSchema.parse(input.change(current));
         return { write: next, result: next };
@@ -254,6 +260,7 @@ function publicationDocument(path: string, empty = emptyPublications, writes?: "
         onUnreadable: "refuse",
         fileMode: 0o600,
         dirMode: 0o700,
+        followSymlinks: false,
     });
 }
 

@@ -15,7 +15,7 @@ export async function shareStatusFor(note: PublishedNote): Promise<ShareTargetSt
     for (const target of config.targets) {
         const driver = transportFor(target);
         const sync = Object.hasOwn(syncs, target.name) ? syncs[target.name] : undefined;
-        if (!driver.live && !sync) {
+        if ((driver.live && note.live === false) || (!driver.live && !sync)) {
             continue;
         }
 

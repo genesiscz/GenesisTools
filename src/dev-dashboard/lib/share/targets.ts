@@ -1,4 +1,4 @@
-import { getConfig, type PublishedNote } from "@app/dev-dashboard/config";
+import { getConfig, type PublishedNote, saveConfig, withConfigMutation } from "@app/dev-dashboard/config";
 import { findPublishedBySlug, publishNote, unpublishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import { mdKind } from "@app/dev-dashboard/lib/share/kind";
 import { importLegacyShare } from "@app/dev-dashboard/lib/share/legacy-share";
@@ -19,22 +19,41 @@ const md = publisher(mdKind);
 
 async function sendNote(note: PublishedNote, targetNames: readonly string[]): Promise<TargetOutcome[]> {
     const source = vaultShareSource();
+    const sourceModifiedAt = (await source.freshness(note)).editedAt;
     const { outcomes } = await md.publish({
         id: note.slug,
         source: note.vaultPath,
         title: shareTitle(note.vaultPath),
-        sourceModifiedAt: (await source.freshness(note)).editedAt,
+        sourceModifiedAt,
         targetNames,
         build: async ({ dir }) => {
             if (!(await findPublishedBySlug(note.slug))) {
                 throw new Error(`Note is no longer published: ${note.slug}`);
             }
 
-            await writeShareSnapshot({ source, note, dir });
+            await writeShareSnapshot({ source, note, dir, sourceModifiedAt });
         },
     });
 
+    const config = await loadShareConfig();
+    const live = new Set(
+        config.targets.filter((target) => target.transport.kind === "mac-live").map((target) => target.name)
+    );
+    if (outcomes.some((outcome) => live.has(outcome.target) && !outcome.error)) {
+        await setLivePublished(note.slug, true);
+    }
+
     return outcomes;
+}
+
+async function setLivePublished(slug: string, live: boolean): Promise<void> {
+    await withConfigMutation(async () => {
+        const config = await getConfig();
+        await saveConfig({
+            ...config,
+            publishedNotes: config.publishedNotes.map((note) => (note.slug === slug ? { ...note, live } : note)),
+        });
+    });
 }
 
 /** Send the UI's newly published note without making the page wait. */
@@ -44,16 +63,6 @@ export function shareInBackground(note: PublishedNote): void {
         await sendNote(note, []);
     })().catch((err: unknown) => {
         log.warn({ err, slug: note.slug }, "background share failed");
-    });
-}
-
-/** The UI has already removed the live slug. Remove the copies tracked in the ledger. */
-export function unshareInBackground(note: PublishedNote): void {
-    void (async () => {
-        await importLegacyShare();
-        await md.unpublish({ id: note.slug, targetNames: [] });
-    })().catch((err: unknown) => {
-        log.warn({ err, slug: note.slug }, "background unshare failed");
     });
 }
 
@@ -86,37 +95,58 @@ export async function syncShares(options: {
     }
 
     const byId = new Map(ledger.map((entry) => [entry.id, entry]));
-    const notes = options.all ? publishedNotes : publishedNotes.filter((note) => options.slugs.includes(note.slug));
+    const selected = options.all ? publishedNotes : publishedNotes.filter((note) => options.slugs.includes(note.slug));
+    const notes: PublishedNote[] = [];
+    const edits = new Map<string, string>();
+    for (const note of selected) {
+        if (options.changedOnly) {
+            const { editedAt } = await vaultShareSource().freshness(note);
+            if (!editedAt) {
+                log.debug({ slug: note.slug }, "share sync --changed: source missing");
+                continue;
+            }
+
+            edits.set(note.slug, editedAt);
+        }
+
+        notes.push(note);
+    }
+
     const candidates = config.targets.map(({ name }) => name);
     const previousTargets = (note: PublishedNote) =>
         candidates.filter((name) => Object.hasOwn(byId.get(note.slug)?.syncs ?? {}, name));
     let fallback: string[] = [];
+    let fallbackCancelled = false;
     if (!options.targetNames.length && !config.defaults.target && notes.some((note) => !previousTargets(note).length)) {
         if (!options.pickFallback) {
             throw new Error("Choose a share target for notes that have yet to be sent.");
         }
 
         const picked = await options.pickFallback(candidates);
-        if (!picked) {
-            return [];
-        }
-
-        fallback = [picked];
+        fallbackCancelled = picked === null;
+        fallback = picked ? [picked] : [];
     }
 
     const results: Array<{ note: PublishedNote; outcomes: TargetOutcome[] }> = [];
     for (const note of notes) {
         const previous = previousTargets(note);
-        const targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
+        if (fallbackCancelled && !options.targetNames.length && !previous.length) {
+            continue;
+        }
+
+        let targetNames = options.targetNames.length ? options.targetNames : previous.length ? previous : fallback;
         if (options.changedOnly) {
-            // A note whose vault file is gone is skipped too: the timed run must not fail on it every time.
-            const { editedAt } = await vaultShareSource().freshness(note);
             const syncs = byId.get(note.slug)?.syncs ?? {};
-            const names = targetNames.length ? targetNames : previous;
-            const unchanged =
-                previous.length > 0 && names.every((name) => syncs[name] && !isEditedAfterSync(editedAt, syncs[name]));
-            if (!editedAt || unchanged) {
-                log.debug({ slug: note.slug, editedAt, missing: !editedAt }, "share sync --changed: skipped");
+            const editedAt = edits.get(note.slug);
+            targetNames = resolveTargets({
+                targets: config.targets,
+                defaultTarget: config.defaults.target,
+                names: targetNames,
+            })
+                .filter((target) => !syncs[target.name] || isEditedAfterSync(editedAt, syncs[target.name]))
+                .map((target) => target.name);
+            if (!targetNames.length) {
+                log.debug({ slug: note.slug, editedAt }, "share sync --changed: up to date");
                 continue;
             }
         }
@@ -149,13 +179,21 @@ export async function unshareFromTargets(options: {
 }): Promise<TargetOutcome[]> {
     await importLegacyShare();
     const note = await findPublishedBySlug(options.slug);
-    if (!note) {
+    if (!note && !(await md.find({ id: options.slug }))) {
         throw new Error(`not published: ${options.slug}`);
     }
 
-    const outcomes = await md.unpublish({ id: note.slug, targetNames: options.targetNames });
-    if (!outcomes.some((outcome) => outcome.error) && !(await md.find({ id: note.slug }))) {
-        await unpublishNote(note.slug);
+    const outcomes = await md.unpublish({ id: options.slug, targetNames: options.targetNames });
+    const config = await loadShareConfig();
+    const live = new Set(
+        config.targets.filter((target) => target.transport.kind === "mac-live").map((target) => target.name)
+    );
+    if (outcomes.some((outcome) => live.has(outcome.target) && !outcome.error)) {
+        await setLivePublished(options.slug, false);
+    }
+
+    if (!outcomes.some((outcome) => outcome.error) && !(await md.find({ id: options.slug }))) {
+        await unpublishNote(options.slug);
     }
 
     return outcomes;

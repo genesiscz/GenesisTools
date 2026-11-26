@@ -7,7 +7,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 export interface ServiceUnitInput {
     server: ShareServerConfig;
     checkoutDir: string;
-    bunPath: string;
+    command: string[];
     home: string;
 }
 

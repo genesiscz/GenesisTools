@@ -1255,36 +1255,37 @@ describe("build helpers", () => {
 test("publishes the built artifact to a paired server and reuses its id on republish", async () => {
     const root = mkdtempSync(join(tmpdir(), "artifact-publish-"));
     const priorHome = env.get("GENESIS_TOOLS_HOME");
-    env.testing.set("GENESIS_TOOLS_HOME", root);
-    const key = randomBytes(32);
-    _setMasterKeyProvidersForTest([
-        {
-            id: "keychain",
-            available: async () => true,
-            get: async () => key,
-            getSync: () => key,
-            set: async () => {},
-        },
-    ]);
-    _resetSecretsForTest();
-
-    const entry = join(root, "report.html");
-    const script = join(root, "report.js");
-    const html =
-        '<!doctype html><html><head><title>Report</title></head><body><script type="module" src="./report.js"></script></body></html>';
-    writeFileSync(entry, html);
-    writeFileSync(script, 'document.body.dataset.report = "fixture-built";');
-
-    const server = await startPublishServer({
-        dataDir: join(root, "data"),
-        stateDir: join(root, "state"),
-        kinds: [artifactKindServer],
-        host: "127.0.0.1",
-        port: 0,
-        publicBase: "https://share.example.com",
-        minFreeBytes: 0,
-    });
+    let server: Awaited<ReturnType<typeof startPublishServer>> | undefined;
     try {
+        env.testing.set("GENESIS_TOOLS_HOME", root);
+        const key = randomBytes(32);
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain",
+                available: async () => true,
+                get: async () => key,
+                getSync: () => key,
+                set: async () => {},
+            },
+        ]);
+        _resetSecretsForTest();
+
+        const entry = join(root, "report.html");
+        const script = join(root, "report.js");
+        const html =
+            '<!doctype html><html><head><title>Report</title></head><body><script type="module" src="./report.js"></script></body></html>';
+        writeFileSync(entry, html);
+        writeFileSync(script, 'document.body.dataset.report = "fixture-built";');
+
+        server = await startPublishServer({
+            dataDir: join(root, "data"),
+            stateDir: join(root, "state"),
+            kinds: [artifactKindServer],
+            host: "127.0.0.1",
+            port: 0,
+            publicBase: "https://share.example.com",
+            minFreeBytes: 0,
+        });
         const input = { target: entry, targetNames: [], title: "Weekly report" };
         await expect(publishArtifact(input)).rejects.toThrow("share-server setup --role client");
         const { code } = server.context.devices.createPairingCode();
@@ -1294,14 +1295,15 @@ test("publishes the built artifact to a paired server and reuses its id on repub
         }
 
         const token = await (await secrets()).set("publish/targets/remote/token", device.token);
+        const running = server;
         await updateShareConfig((config) => ({
             ...config,
             defaults: { target: "remote" },
             targets: [
                 {
                     name: "remote",
-                    publicBase: server.url,
-                    transport: { kind: "paired", url: server.url, deviceId: device.deviceId, token },
+                    publicBase: running.url,
+                    transport: { kind: "paired", url: running.url, deviceId: device.deviceId, token },
                 },
             ],
         }));
@@ -1318,17 +1320,42 @@ test("publishes the built artifact to a paired server and reuses its id on repub
             { id: first.id, stale: false },
         ]);
 
+        writeFileSync(script, 'document.body.dataset.report = "fixture-changed-script";');
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(true);
+        await publishArtifact(input);
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(false);
+
         const later = new Date(Date.now() + 5000);
         utimesSync(entry, later, later);
         expect((await listPublishedArtifacts())[0]?.stale).toBe(true);
         const second = await publishArtifact(input);
         expect(second).toEqual(first);
         expect((await listPublishedArtifacts())[0]?.stale).toBe(false);
-        expect(await unpublishArtifact({ idOrTarget: entry, targetNames: [] })).toEqual([{ target: "remote" }]);
+        await updateShareConfig((config) => ({
+            ...config,
+            targets: [
+                ...config.targets,
+                {
+                    name: "shadow",
+                    publicBase: "https://live.example.com",
+                    transport: { kind: "mac-live", mounts: { artifact: "/artifact" } },
+                },
+            ],
+        }));
+        await publishArtifact({ ...input, targetNames: ["all"] });
+        writeFileSync(script, 'document.body.dataset.report = "fixture-third-version";');
+        await publishArtifact(input);
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(true);
+        await publishArtifact({ ...input, targetNames: ["shadow"] });
+        expect((await listPublishedArtifacts())[0]?.stale).toBe(false);
+        expect(await unpublishArtifact({ idOrTarget: root, entry: "report.html", targetNames: [] })).toEqual([
+            { target: "remote" },
+            { target: "shadow" },
+        ]);
         expect(await listPublishedArtifacts()).toEqual([]);
         expect((await fetch(url)).status).toBe(404);
     } finally {
-        await server.stop();
+        await server?.stop();
         _resetSecretsForTest();
         _resetMasterKeyProviders();
 

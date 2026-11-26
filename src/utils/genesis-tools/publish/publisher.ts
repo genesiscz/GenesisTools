@@ -6,7 +6,7 @@ import type { SyncRecord } from "../../publish/freshness";
 import { isSnapshotId, newSnapshotId } from "../../publish/ids";
 import type { PublishedKind } from "../../publish/kind";
 import { checkSnapshotDir } from "../../publish/snapshot-store";
-import { ALL_TARGETS, resolveTargets } from "../../publish/targets";
+import { ALL_TARGETS, resolveTargets, targetDestination } from "../../publish/targets";
 import { transportFor } from "../../publish/transports";
 import {
     findPublication,
@@ -31,6 +31,8 @@ export interface PublishInput {
     source: string;
     title: string;
     sourceModifiedAt?: string;
+    sourceInputs?: Array<{ path: string; hash: string }>;
+    sourceFingerprint?: string;
     targetNames: readonly string[];
     build(input: { dir: string; id: string }): Promise<void>;
 }
@@ -106,12 +108,16 @@ async function publish(kind: PublishedKind, input: PublishInput): Promise<Publis
                 }
 
                 await auditClientOperation({ action: "send", target: target.name, kind: kind.id, id }, () =>
-                    transport.send({ ...location, dir })
+                    transport.send({ ...location, dir, maxUploadBytes: kind.maxUploadBytes })
                 );
                 outcomes.push({ target: target.name, url });
                 synced.push([
                     target.name,
-                    { syncedAt: new Date().toISOString(), sourceModifiedAt: input.sourceModifiedAt ?? at },
+                    {
+                        syncedAt: new Date().toISOString(),
+                        sourceModifiedAt: input.sourceModifiedAt ?? at,
+                        sourceFingerprint: input.sourceFingerprint,
+                    },
                 ]);
             } catch (err) {
                 log.warn({ err, target: target.name, kind: kind.id, id }, "publication send failed");
@@ -125,6 +131,7 @@ async function publish(kind: PublishedKind, input: PublishInput): Promise<Publis
                 id,
                 title: input.title,
                 source: input.source,
+                sourceInputs: input.sourceInputs,
                 publishedAt: previous?.publishedAt ?? at,
                 syncs: { ...previous?.syncs, ...Object.fromEntries(synced) },
             });
@@ -148,6 +155,18 @@ async function unpublish(
         ? config.targets.filter((target) => entry?.syncs && Object.hasOwn(entry.syncs, target.name))
         : resolveTargets({ targets: config.targets, names: targetNames });
     const outcomes: TargetOutcome[] = [];
+    if (everything && entry) {
+        const configured = new Set(config.targets.map((target) => target.name));
+        for (const name of Object.keys(entry.syncs)) {
+            if (!configured.has(name)) {
+                outcomes.push({
+                    target: name,
+                    error: `Target "${name}" is no longer configured; its remote snapshot was not removed`,
+                });
+            }
+        }
+    }
+
     const removed = new Set<string>();
     for (const target of targets) {
         try {
@@ -163,10 +182,7 @@ async function unpublish(
     }
 
     if (entry) {
-        const configured = new Set(config.targets.map((target) => target.name));
-        const remaining = Object.entries(entry.syncs).filter(
-            ([name]) => !removed.has(name) && (!everything || configured.has(name))
-        );
+        const remaining = Object.entries(entry.syncs).filter(([name]) => !removed.has(name));
         if (remaining.length) {
             await savePublication({ ...entry, syncs: Object.fromEntries(remaining) });
         } else {
@@ -189,8 +205,12 @@ async function prune(kind: string, names: readonly string[]): Promise<Array<{ ta
             continue;
         }
 
+        const destination = targetDestination(target);
+        const aliases = config.targets.filter((other) => targetDestination(other) === destination);
         const keep = new Set(
-            entries.filter((entry) => Object.hasOwn(entry.syncs, target.name)).map((entry) => entry.id)
+            entries
+                .filter((entry) => aliases.some((alias) => Object.hasOwn(entry.syncs, alias.name)))
+                .map((entry) => entry.id)
         );
         const stale = held.filter((id) => !keep.has(id));
         for (const id of stale) {

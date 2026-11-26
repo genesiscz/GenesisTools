@@ -69,15 +69,17 @@ async function vaultPathFor(inputPath: string): Promise<string> {
 
 /** A slug, or the slug of the published note at a vault path (what `share unshare` and `share sync` accept). */
 export async function resolvePublishedSlug(input: string): Promise<string> {
+    const { obsidianVault } = await getConfig();
+    if (obsidianVault) {
+        const note = await findPublishedByPath(toVaultRelativePath(input, obsidianVault));
+        if (note) {
+            return note.slug;
+        }
+    }
+
     if (SHARE_SLUG_RE.test(input) && !input.includes(".")) {
         return input;
     }
 
-    const note = await findPublishedByPath(await vaultPathFor(input));
-
-    if (!note) {
-        throw new Error(`not published: ${input}`);
-    }
-
-    return note.slug;
+    throw new Error(`not published: ${input}`);
 }

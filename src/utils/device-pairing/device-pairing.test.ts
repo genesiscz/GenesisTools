@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { bearerToken } from "./client";
 import { DeviceStore, hashToken, MAX_PAIR_FAILURES } from "./device-store";
 
 describe("device pairing", () => {
@@ -20,6 +21,23 @@ describe("device pairing", () => {
 
     afterEach(() => {
         rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("recognizes bearer schemes without changing token case", () => {
+        expect(
+            bearerToken(
+                new Request("https://share.example.com", {
+                    headers: { Authorization: "bearer MixedCaseToken" },
+                })
+            )
+        ).toBe("MixedCaseToken");
+        expect(
+            bearerToken(
+                new Request("https://share.example.com", {
+                    headers: { Authorization: "Basic MixedCaseToken" },
+                })
+            )
+        ).toBeNull();
     });
 
     test("a pairing code works once, the server keeps only the token's hash, and the token authenticates", async () => {
@@ -68,7 +86,7 @@ describe("device pairing", () => {
         const device = {
             id: "0123456789ab",
             name: "desk",
-            tokenHash: hashToken(token),
+            tokenHash: "11c81b1f6fdc893f8594699c16c2b405090387528d2205ccd80165d5aa627e55",
             createdAt: new Date(clock).toISOString(),
         };
         writeFileSync(file, SafeJSON.stringify({ version: 1, devices: [device] }), { mode: 0o600 });

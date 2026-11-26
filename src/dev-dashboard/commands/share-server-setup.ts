@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
-import { chown, mkdir, readFile, rename, unlink } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { type FileHandle, lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { Executor, isInteractive } from "@genesiscz/utils/cli";
+import { Executor, isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { PUBLISH_KIND_IDS } from "@genesiscz/utils/genesis-tools/publish/kinds";
@@ -15,13 +15,14 @@ import {
     shareConfigPath,
     updateShareConfigForHome,
 } from "@genesiscz/utils/genesis-tools/publish/store";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import * as p from "@genesiscz/utils/prompts/p";
+import { HealthSchema, PUBLISH_API, PUBLISH_SERVER_HEADER, PUBLISH_SERVER_ID } from "@genesiscz/utils/publish/api";
 import { listenOrigin, proxySnippet } from "@genesiscz/utils/publish/exposure";
 import { parsePublicOrigin } from "@genesiscz/utils/publish/server";
 import { serviceFor } from "@genesiscz/utils/publish/service";
-import { SYSTEMD_UNITS, stagedSystemdUnit } from "@genesiscz/utils/publish/service/systemd";
+import { SYSTEMD_UNITS, stagedSystemdUnit, withStagedSystemdUnit } from "@genesiscz/utils/publish/service/systemd";
 import {
     runServiceCommand,
     type ServiceInstaller,
@@ -51,16 +52,17 @@ const proxyLocations = {
 
 export interface SetupServerOptions {
     server?: string;
+    configHome?: string;
     yes?: boolean;
     publicOrigin?: string;
     port?: number;
     host?: string;
     dataDir?: string;
     stateDir?: string;
-    exposure?: string;
-    proxy?: string;
+    exposure?: string | true;
+    proxy?: string | true;
     tunnel?: string;
-    service?: string;
+    service?: string | true;
     serviceUser?: string;
     adoptUnit?: string;
     root?: string;
@@ -81,11 +83,12 @@ export interface SetupServerDeps {
     installer(server: ShareServerConfig): ServiceInstaller;
     runSystemCommand?: ServiceRunner;
     prepareExposure?(server: ShareServerConfig): Promise<void>;
+    waitUntilReady?(server: ShareServerConfig): Promise<void>;
 }
 
 const passwd = new Executor({ label: "publish-service-account" });
 
-async function lookupAccount(name: string): Promise<ServiceAccount | undefined> {
+export async function lookupAccount(name: string): Promise<ServiceAccount | undefined> {
     if (!/^[a-z_][a-z0-9_-]*$/.test(name)) {
         throw new Error("Enter a valid non-root service user");
     }
@@ -105,10 +108,15 @@ async function lookupAccount(name: string): Promise<ServiceAccount | undefined> 
     return { name, uid: Number(uid), gid: Number(gid), home };
 }
 
-export async function commandShareConfig(name?: string): Promise<ShareConfig> {
+export async function commandShareConfig(input: { server?: string; configHome?: string } = {}): Promise<ShareConfig> {
+    const { server: name, configHome } = input;
+    if (configHome) {
+        return loadShareConfigForHome(configHome);
+    }
+
     const local = await loadShareConfigForHome();
     if (
-        local.servers.length ||
+        (name ? local.servers.some((server) => server.name === name) : local.servers.length > 0) ||
         env.get("GENESIS_TOOLS_HOME") ||
         process.platform !== "linux" ||
         process.getuid?.() !== 0
@@ -181,12 +189,13 @@ export function parseLegacyShareUnit(input: {
     });
 }
 
-async function findLegacyUnit(
-    path: string | undefined,
-    name: string,
-    adoptAutomatically: boolean,
-    interactive: boolean
-) {
+async function findLegacyUnit(input: {
+    path?: string;
+    name: string;
+    adoptAutomatically: boolean;
+    interactive: boolean;
+}) {
+    const { path, name, adoptAutomatically, interactive } = input;
     const candidate = path ?? join(SYSTEMD_UNITS, name === "default" ? DEFAULT_UNIT : `genesis-share-${name}.service`);
     const text = await readFile(candidate, "utf8").catch((err: unknown) => {
         if (!path && isMissingPathError(err)) {
@@ -205,13 +214,17 @@ async function findLegacyUnit(
     }
 
     const allowed =
-        (path && adoptAutomatically) ||
+        adoptAutomatically ||
         (interactive &&
             (await p.confirm({
                 message: `Adopt the existing service in ${candidate}? [yes]`,
                 initialValue: true,
             })));
-    return allowed ? { server, path: candidate, text: text ?? "" } : undefined;
+    if (!allowed) {
+        throw new Error(`Adoption declined for ${candidate}. Choose a different server name to keep that unit.`);
+    }
+
+    return { server, path: candidate, text: text ?? "" };
 }
 
 async function textValue(
@@ -225,17 +238,25 @@ async function textValue(
 
 async function choice<T extends string>(input: {
     flag: string;
-    value?: string;
+    value?: string | true;
     initial: T;
     choices: readonly T[];
     interactive: boolean;
     label: string;
 }): Promise<T> {
     const { flag, value, initial, choices, interactive, label } = input;
+    if (value === true && interactive) {
+        return p.select({
+            message: label,
+            initialValue: initial,
+            options: choices.map((entry) => ({ value: entry, label: entry })),
+        });
+    }
+
     if (value !== undefined) {
         const match = choices.find((entry) => entry === value);
         if (!match) {
-            throw new Error(`--${flag} must be one of ${choices.join(", ")}`);
+            throw new Error(suggestEnumFlag("tools dev-dashboard share-server setup", `--${flag}`, choices));
         }
 
         return match;
@@ -324,18 +345,106 @@ export async function moveAdoptedShareFolders(
     return undo;
 }
 
-async function ensureDirs(server: ShareServerConfig, account: ServiceAccount, ownerIsOtherUser: boolean) {
+/** Open every component relative to a held directory descriptor, refusing symlinks throughout. */
+export async function secureShareDirectory(path: string): Promise<FileHandle> {
+    if (process.platform !== "linux") {
+        throw new Error("Privileged service provisioning requires Linux directory descriptors.");
+    }
+
+    let directory = await open("/", constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+        for (const name of resolve(path).split("/").filter(Boolean)) {
+            const child = `/proc/self/fd/${directory.fd}/${name}`;
+            await mkdir(child, { mode: 0o700 }).catch((err: unknown) => {
+                if (!(err instanceof Error && "code" in err && err.code === "EEXIST")) {
+                    throw err;
+                }
+            });
+            const next = await open(child, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+            await directory.close();
+            directory = next;
+        }
+
+        return directory;
+    } catch (err) {
+        await directory.close();
+        throw err;
+    }
+}
+
+async function setConfigOwner(directory: FileHandle, account: ServiceAccount): Promise<void> {
+    const file = await open(`/proc/self/fd/${directory.fd}/config.json`, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+        await file.chown(account.uid, account.gid);
+    } finally {
+        await file.close();
+    }
+}
+
+export async function waitForShareReady(
+    server: ShareServerConfig,
+    options: { timeoutMs?: number } = {}
+): Promise<void> {
+    const deadline = Date.now() + (options.timeoutMs ?? 15_000);
+    const bind = server.listen.host;
+    const host = bind === "0.0.0.0" ? "127.0.0.1" : bind === "::" || bind === "[::]" ? "::1" : bind;
+    const url = new URL(PUBLISH_API.health, listenOrigin(host, server.listen.port));
+    while (Date.now() < deadline) {
+        try {
+            const response = await fetch(url, {
+                signal: AbortSignal.timeout(Math.min(1000, Math.max(1, deadline - Date.now()))),
+            });
+            if (response.ok && response.headers.get(PUBLISH_SERVER_HEADER) === PUBLISH_SERVER_ID) {
+                const health = HealthSchema.parse(await response.json());
+                if (server.kinds.every((kind) => health.kinds.includes(kind))) {
+                    return;
+                }
+            } else {
+                await response.body?.cancel();
+            }
+        } catch (err) {
+            logger.debug({ err, url: url.href }, "publish listener not ready");
+        }
+
+        const remaining = deadline - Date.now();
+        if (remaining > 0) {
+            await Bun.sleep(Math.min(200, remaining));
+        }
+    }
+
+    throw new Error(`The publish listener at ${url.origin} did not become ready before its deadline.`);
+}
+
+async function ensureDirs(
+    server: ShareServerConfig,
+    account: ServiceAccount,
+    ownerIsOtherUser: boolean,
+    explicitDirs: readonly string[] = []
+) {
     const shareRoot = genesisToolsDirIn(account.home, "share");
     const configRoot = dirname(shareRoot);
     const serverRoot = join(shareRoot, "servers", server.name);
     const folders = [configRoot, shareRoot, dirname(serverRoot), serverRoot, server.dataDir, server.stateDir];
     for (const dir of folders) {
-        const created = await mkdir(dir, { recursive: true, mode: 0o700 });
-        if (
-            ownerIsOtherUser &&
-            (created || dir === configRoot || dir === shareRoot || dir === serverRoot || dir === dirname(serverRoot))
-        ) {
-            await chown(dir, account.uid, account.gid);
+        if (ownerIsOtherUser) {
+            const directory = await secureShareDirectory(dir);
+            try {
+                const entry = await directory.stat();
+                if (entry.uid !== 0 && entry.uid !== account.uid) {
+                    throw new Error(`Publish folder is owned by another account: ${dir}`);
+                }
+
+                const managed = dir === configRoot || dir === shareRoot || dir.startsWith(`${shareRoot}/`);
+                if (entry.uid === 0 && !managed && !explicitDirs.includes(dir)) {
+                    throw new Error(`Existing root-owned folder needs an explicit directory choice: ${dir}`);
+                }
+
+                await directory.chown(account.uid, account.gid);
+            } finally {
+                await directory.close();
+            }
+        } else {
+            await mkdir(dir, { recursive: true, mode: 0o700 });
         }
     }
 }
@@ -349,7 +458,7 @@ export async function configureShareServer(
     installed: boolean;
 }> {
     const deps = { ...defaultDeps(), ...overrides };
-    const config = await commandShareConfig(opts.server);
+    const config = await commandShareConfig({ server: opts.server, configHome: opts.configHome });
     const interactive = deps.interactive && !opts.yes;
     const name = await textValue(interactive, "Server name", opts.server, config.defaults.server ?? "default");
     if (!TARGET_NAME_RE.test(name)) {
@@ -357,7 +466,9 @@ export async function configureShareServer(
     }
 
     const existing = config.servers.find((entry) => entry.name === name);
-    const adoption = existing ? undefined : await findLegacyUnit(opts.adoptUnit, name, opts.yes ?? false, interactive);
+    const adoption = existing
+        ? undefined
+        : await findLegacyUnit({ path: opts.adoptUnit, name, adoptAutomatically: opts.yes ?? false, interactive });
     const previous = existing ?? adoption?.server;
     const portDefault = opts.port ?? previous?.listen.port ?? DEFAULT_PORT;
     const hostDefault = opts.host ?? previous?.listen.host ?? DEFAULT_HOST;
@@ -372,13 +483,18 @@ export async function configureShareServer(
 
     const manager = await choice({
         flag: "service",
-        value: opts.service,
+        value: typeof opts.service === "string" ? opts.service : undefined,
         initial: previous?.service.manager ?? defaultManager(deps.platform),
         choices: managers,
         interactive: false,
         label: "Service manager",
     });
     const priorUser = previous?.service.manager === "systemd" ? previous.service.user : undefined;
+    if (adoption && opts.serviceUser && opts.serviceUser !== priorUser) {
+        throw new Error(
+            "Adopt using the existing service user. Migrate account ownership separately before changing --service-user."
+        );
+    }
     const hintedUser = opts.serviceUser ?? priorUser ?? "genesis-share";
     const hint = manager === "systemd" && deps.account.uid === 0 ? await lookupAccount(hintedUser) : undefined;
     const home = hint?.home ?? deps.account.home;
@@ -446,9 +562,14 @@ export async function configureShareServer(
     const owner = await serviceAccount({ ...deps, interactive }, serviceManager, opts.serviceUser ?? priorUser);
     const defaultHomeChanged = owner.home !== home && (move || previous === undefined);
     const finalRoot = genesisToolsDirIn(owner.home, "share", "servers", name);
-    const ownedData = defaultHomeChanged && dataDir === join(serverRoot, "data") ? join(finalRoot, "data") : dataDir;
+    const ownedData =
+        defaultHomeChanged && opts.dataDir === undefined && dataDir === join(serverRoot, "data")
+            ? join(finalRoot, "data")
+            : dataDir;
     const ownedState =
-        defaultHomeChanged && stateDir === join(serverRoot, "state") ? join(finalRoot, "state") : stateDir;
+        defaultHomeChanged && opts.stateDir === undefined && stateDir === join(serverRoot, "state")
+            ? join(finalRoot, "state")
+            : stateDir;
     const server = ShareServerConfigSchema.parse({
         name,
         dataDir: ownedData,
@@ -482,7 +603,14 @@ export async function configureShareServer(
     const unitInput: ServiceUnitInput = {
         server,
         checkoutDir: resolve(opts.root ?? PROJECT_ROOT),
-        bunPath: resolve(opts.bun ?? process.execPath),
+        command: [
+            resolve(opts.bun ?? process.execPath),
+            join(resolve(opts.root ?? PROJECT_ROOT), "src/dev-dashboard/index.ts"),
+            "share-server",
+            "serve",
+            "--server",
+            server.name,
+        ],
         home: owner.home,
     };
     if (serviceManager === "systemd" && deps.account.uid !== 0 && !opts.yes) {
@@ -509,6 +637,7 @@ export async function configureShareServer(
     let beforeSave: ShareConfig | undefined;
     let undo: (() => Promise<void>) | undefined;
     let installStarted = false;
+    let shareDirectory: FileHandle | undefined;
     const priorService = adoption ? deps.installer(adoption.server) : undefined;
     if (move) {
         await priorService?.stop(adoption.server);
@@ -519,8 +648,32 @@ export async function configureShareServer(
             undo = await moveAdoptedShareFolders(adoption.server, server);
         }
 
-        await ensureDirs(server, owner, ownerIsOtherUser);
+        await ensureDirs(
+            server,
+            owner,
+            ownerIsOtherUser,
+            [opts.dataDir, opts.stateDir].filter((dir): dir is string => dir !== undefined)
+        );
+        if (ownerIsOtherUser) {
+            shareDirectory = await secureShareDirectory(genesisToolsDirIn(owner.home, "share"));
+        }
+
+        const configPath = shareDirectory ? `/proc/self/fd/${shareDirectory.fd}/config.json` : undefined;
+        if (configPath) {
+            const entry = await lstat(configPath).catch((err: unknown) => {
+                if (!isMissingPathError(err)) {
+                    throw err;
+                }
+
+                return undefined;
+            });
+            if (entry?.isSymbolicLink()) {
+                throw new Error("Refusing a symlinked share configuration.");
+            }
+        }
+
         await updateShareConfigForHome({
+            path: configPath,
             home: owner.home,
             change: (current) => {
                 beforeSave = current;
@@ -531,8 +684,8 @@ export async function configureShareServer(
                 };
             },
         });
-        if (ownerIsOtherUser) {
-            await chown(file, owner.uid, owner.gid);
+        if (shareDirectory) {
+            await setConfigOwner(shareDirectory, owner);
         }
 
         out.println(`Saved server ${name} in ${file}`);
@@ -549,6 +702,9 @@ export async function configureShareServer(
         }
 
         await installer.restart(server);
+        if (serviceManager !== "none") {
+            await (deps.waitUntilReady ?? waitForShareReady)(server);
+        }
     } catch (err) {
         if (adoption && priorService) {
             const errors: unknown[] = [];
@@ -574,6 +730,7 @@ export async function configureShareServer(
                     const saved = previous.servers.find((entry) => entry.name === name);
                     await updateShareConfigForHome({
                         home: owner.home,
+                        path: shareDirectory ? `/proc/self/fd/${shareDirectory.fd}/config.json` : undefined,
                         change: (current) => ({
                             ...current,
                             defaults: {
@@ -589,8 +746,8 @@ export async function configureShareServer(
                             ],
                         }),
                     });
-                    if (ownerIsOtherUser) {
-                        await chown(file, owner.uid, owner.gid);
+                    if (shareDirectory) {
+                        await setConfigOwner(shareDirectory, owner);
                     }
                 });
             }
@@ -600,12 +757,11 @@ export async function configureShareServer(
                     const run =
                         deps.runSystemCommand ??
                         ((args) => runServiceCommand(deps.account.uid === 0 ? args : ["sudo", ...args]));
-                    const staged = `${stagedSystemdUnit({ ...unitInput, server: adoption.server })}.rollback`;
-                    await writeServiceFile(staged, adoption.text);
-                    await run(["install", "-m", "0644", "--", staged, adoption.path]);
+                    await withStagedSystemdUnit(adoption.text, async (staged) => {
+                        await run(["install", "-m", "0644", "--", staged, adoption.path]);
+                    });
                     await run(["systemctl", "daemon-reload"]);
                     await priorService.restart(adoption.server);
-                    await unlink(staged);
                 });
             }
 
@@ -615,6 +771,8 @@ export async function configureShareServer(
         }
 
         throw err;
+    } finally {
+        await shareDirectory?.close();
     }
 
     return { server, home: owner.home, installed: serviceManager !== "none" };

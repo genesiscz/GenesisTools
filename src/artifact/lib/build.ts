@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -55,6 +56,7 @@ export interface BuildResult {
     bundled: boolean;
     embedded: string[];
     skippedEmbeds: SkippedEmbed[];
+    sourceInputs: Array<{ path: string; hash: string }>;
 }
 
 function isTsxEntry(entry: string): boolean {
@@ -498,14 +500,14 @@ export async function withProductionNodeEnv(run: () => Promise<void>): Promise<v
 }
 
 /** Bundle an .html entry in place. */
-async function buildHtmlEntry(dir: string, entryRel: string, entryAbs: string): Promise<string> {
+async function buildHtmlEntry(dir: string, entryRel: string, entryAbs: string, inputs: Set<string>): Promise<string> {
     const outDir = join(cacheDirFor(dir), "build");
     await withProductionNodeEnv(async () => {
         await viteBuild({
             ...SHARED_BUILD,
             root: dir,
             cacheDir: cacheDirFor(dir),
-            plugins: basePlugins(),
+            plugins: [...basePlugins(), sourceInputsPlugin(inputs)],
             resolve: baseResolve(),
             build: buildOutputOptions(outDir, entryAbs),
         });
@@ -520,7 +522,13 @@ async function buildHtmlEntry(dir: string, entryRel: string, entryAbs: string): 
  * styles) is generated in the tool's cache dir, so the artifact stays ONE file
  * with no folder scaffolding.
  */
-async function buildTsxEntry(dir: string, entryRel: string, entryAbs: string, templateDir?: string): Promise<string> {
+async function buildTsxEntry(
+    dir: string,
+    entryRel: string,
+    entryAbs: string,
+    inputs: Set<string>,
+    templateDir?: string
+): Promise<string> {
     const title = basename(entryRel).replace(/\.(tsx|jsx)$/, "");
     const tmpRoot = join(cacheDirFor(dir), "tsx-entry");
     const stylesAbs = join(RUNTIME_DIR, "styles.css");
@@ -569,7 +577,7 @@ ${themed ? `${THEME_PREPAINT_SCRIPT}\n` : ""}</head>
             ...SHARED_BUILD,
             root: tmpRoot,
             cacheDir: cacheDirFor(dir),
-            plugins: basePlugins(),
+            plugins: [...basePlugins(), sourceInputsPlugin(inputs)],
             resolve: baseResolve(),
             build: buildOutputOptions(outDir, join(tmpRoot, "index.html")),
         });
@@ -585,7 +593,13 @@ ${themed ? `${THEME_PREPAINT_SCRIPT}\n` : ""}</head>
  * ```mermaid fence ships with the inline hydrator, which fetches mermaid from
  * its CDN on open, so that one part of the page needs the network.
  */
-function buildMdEntry(dir: string, entryAbs: string, templateDir: string): string {
+function buildMdEntry(dir: string, entryAbs: string, templateDir: string, inputs: Set<string>): string {
+    for (const file of ["page.html", "theme.css"]) {
+        const path = join(templateDir, file);
+        if (existsSync(path)) {
+            inputs.add(path);
+        }
+    }
     const rendered = renderMarkdown(readFileSync(entryAbs, "utf8"));
 
     return renderTemplate(loadTemplate(templateDir, "page.html"), {
@@ -596,23 +610,38 @@ function buildMdEntry(dir: string, entryAbs: string, templateDir: string): strin
     });
 }
 
+function sourceInputsPlugin(inputs: Set<string>): import("vite").Plugin {
+    return {
+        name: "artifact-source-inputs",
+        generateBundle() {
+            for (const id of this.getModuleIds()) {
+                const path = id.split("?")[0];
+                if (path.startsWith("/") && existsSync(path) && statSync(path).isFile()) {
+                    inputs.add(path);
+                }
+            }
+        },
+    };
+}
+
 export async function buildSingleFile(options: BuildOptions): Promise<BuildResult> {
     const dir = resolve(options.dir);
     const entryRel = options.entry;
     const entryAbs = join(dir, entryRel);
+    const inputs = new Set([entryAbs]);
     let bundled: boolean;
     let html: string;
 
     if (isTsxEntry(entryRel)) {
         bundled = true;
-        html = await buildTsxEntry(dir, entryRel, entryAbs, options.templateDir);
+        html = await buildTsxEntry(dir, entryRel, entryAbs, inputs, options.templateDir);
     } else if (isMdEntry(entryRel)) {
         bundled = true;
-        html = buildMdEntry(dir, entryAbs, options.templateDir ?? resolveTemplateDir(undefined));
+        html = buildMdEntry(dir, entryAbs, options.templateDir ?? resolveTemplateDir(undefined), inputs);
     } else {
         const source = readFileSync(entryAbs, "utf8");
         bundled = hasLocalAssetRefs(source);
-        html = bundled ? await buildHtmlEntry(dir, entryRel, entryAbs) : source;
+        html = bundled ? await buildHtmlEntry(dir, entryRel, entryAbs, inputs) : source;
     }
 
     const outBase = outBaseFor(entryRel);
@@ -649,7 +678,15 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
         "[artifact] build finished"
     );
 
-    return { outPath, bytes, bundled, embedded: scan.embedded, skippedEmbeds: scan.skipped };
+    for (const name of scan.embedded) {
+        inputs.add(resolve(dir, name));
+    }
+
+    const sourceInputs = [...inputs].sort().map((path) => ({
+        path,
+        hash: createHash("sha256").update(readFileSync(path)).digest("hex"),
+    }));
+    return { outPath, bytes, bundled, embedded: scan.embedded, skippedEmbeds: scan.skipped, sourceInputs };
 }
 
 /**

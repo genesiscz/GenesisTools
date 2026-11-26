@@ -20,17 +20,10 @@ function labelFor(server: ShareServerConfig): string {
     return server.service.label;
 }
 
-function options({ server, checkoutDir, bunPath, home }: ServiceUnitInput): LaunchdInstallOptions {
+function options({ server, checkoutDir, command, home }: ServiceUnitInput): LaunchdInstallOptions {
     return {
         label: labelFor(server),
-        command: [
-            bunPath,
-            join(checkoutDir, "src/dev-dashboard/index.ts"),
-            "share-server",
-            "serve",
-            "--server",
-            server.name,
-        ],
+        command,
         cwd: checkoutDir,
         env: { HOME: home, GENESIS_TOOLS_HOME: home },
         logFile: join(server.stateDir, "service.log"),

@@ -223,11 +223,17 @@ describe("GET /share/:slug assets", () => {
             host: "127.0.0.1",
         });
         let servedHtml: string;
+        let savedHtml: string;
         try {
             const served = await fetch(`${server.url}/md/${slug}`, { headers: { accept: "text/html" } });
             expect(served.status).toBe(200);
             expect(served.headers.get("x-share-server")).toBe("genesis-tools");
             servedHtml = await served.text();
+            const saved = await fetch(`${server.url}/md/${slug}?download=html`, {
+                headers: { accept: "text/html" },
+            });
+            expect(saved.status).toBe(200);
+            savedHtml = await saved.text();
         } finally {
             await server.stop();
         }
@@ -271,11 +277,47 @@ describe("GET /share/:slug assets", () => {
         const names = (res: RouteResult) => (res.kind === "binary" ? [...unzip(res.body).keys()].sort() : []);
         expect(names(zipped)).toEqual(names(liveZip));
 
-        const saved = await get({ download: "html" }, "*/*", slug, {}, snapshots);
-        expect(saved.kind === "raw" && saved.body).toContain(`https://share.example.com/share/${pubSlug}`);
+        expect(savedHtml).toContain(`https://share.example.com/md/${pubSlug}`);
 
         expect(await get({}, "text/html", "no-such-slug", {}, snapshots)).toMatchObject({ status: 404 });
         expect(await get({}, "text/html", "..", {}, snapshots)).toMatchObject({ status: 404 });
+    });
+
+    test("snapshot reads every alias before deduplicating its file and rejects a changed source version", async () => {
+        const source = vaultShareSource();
+        const note = await source.findBySlug(slug);
+        if (!note) {
+            throw new Error("fixture note is not published");
+        }
+
+        const read = await source.assetReader(note);
+        const reads: string[] = [];
+        const manifest = await writeShareSnapshot({
+            note,
+            dir: join(dir, "alias-snapshot"),
+            source: {
+                ...source,
+                assetReader: async () => async (asset) => {
+                    reads.push(asset.vaultPath);
+                    return asset.vaultPath.endsWith("pic-copy.webp") ? null : read(asset);
+                },
+            },
+        });
+        expect(reads.some((name) => name.endsWith("pic-copy.webp"))).toBe(true);
+        expect(manifest.assets.list.some((asset) => asset.vaultPath.endsWith("pic-copy.webp"))).toBe(false);
+        expect(manifest.assets.list.some((asset) => asset.vaultPath.endsWith("pic.webp"))).toBe(true);
+
+        let version = 0;
+        await expect(
+            writeShareSnapshot({
+                note,
+                dir: join(dir, "changed-version"),
+                source: {
+                    ...source,
+                    freshness: async () => ({ mode: "live", editedAt: new Date(1000 * ++version).toISOString() }),
+                },
+            })
+        ).rejects.toThrow("Note changed while its snapshot was built");
     });
 
     function assetUrl(bytes: Buffer | string): string {

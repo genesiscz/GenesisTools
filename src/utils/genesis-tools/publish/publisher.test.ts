@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +7,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { clientAuditDir, readAudit } from "@genesiscz/utils/publish/audit";
 import { artifactKind, writeArtifactSnapshot } from "@genesiscz/utils/publish/kinds/artifact";
 import type { PublishTarget } from "@genesiscz/utils/publish/targets";
+import { PUBLISH_TRANSPORTS } from "@genesiscz/utils/publish/transports";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { publisher } from "./publisher";
 import {
+    listPublications,
     loadShareConfig,
     migrateShareConfig,
     publicationsPath,
@@ -17,6 +19,7 @@ import {
     type ShareConfig,
     ShareConfigSchema,
     type ShareServerConfig,
+    savePublication,
     shareConfigPath,
     shareServerDir,
     updateShareConfig,
@@ -87,6 +90,46 @@ test("selects the named, default or only configured server and explains an empty
     expect(resolveServer({ ...base, servers: [desk, relay], defaults: { server: "desk" } }, "relay")).toEqual(relay);
 });
 
+test("unpublish preserves records whose target is missing and prune keeps destination aliases", async () => {
+    const target: PublishTarget = {
+        name: "work",
+        publicBase: "https://share.example.com",
+        transport: { kind: "ssh-rsync", host: "alice@host.example.com", dataDir: "/srv/shares" },
+    };
+    const alias = { ...target, name: "backup" };
+    await updateShareConfig((config) => ({ ...config, targets: [target, alias] }));
+    const entry = {
+        kind: "artifact",
+        id: "FixtureId",
+        source: "report.html",
+        title: "Report",
+        publishedAt: "2026-01-01T00:00:00.000Z",
+        syncs: {
+            work: { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" },
+            missing: { syncedAt: "2026-01-01T00:00:00.000Z", sourceModifiedAt: "2026-01-01T00:00:00.000Z" },
+        },
+    };
+    await savePublication(entry);
+    const transport = PUBLISH_TRANSPORTS["ssh-rsync"];
+    const list = spyOn(transport, "list").mockResolvedValue(["FixtureId", "StaleId"]);
+    const remove = spyOn(transport, "remove").mockResolvedValue(undefined);
+    try {
+        const artifacts = publisher(artifactKind);
+        expect(await artifacts.prune(["backup"])).toEqual([{ target: "backup", removed: ["StaleId"] }]);
+        expect(remove.mock.calls.map(([value]) => value.id)).toEqual(["StaleId"]);
+        const outcomes = await artifacts.unpublish({ id: "FixtureId", targetNames: [] });
+        expect(outcomes).toContainEqual({ target: "work" });
+        expect(outcomes).toContainEqual({
+            target: "missing",
+            error: 'Target "missing" is no longer configured; its remote snapshot was not removed',
+        });
+        expect(await listPublications("artifact")).toEqual([{ ...entry, syncs: { missing: entry.syncs.missing } }]);
+    } finally {
+        list.mockRestore();
+        remove.mockRestore();
+    }
+});
+
 test("a successful send writes one sync record and a failed target leaves its outcome", async () => {
     expect(await loadShareConfig()).toEqual(ShareConfigSchema.parse(migrateShareConfig({})));
     const targets: PublishTarget[] = [
@@ -116,6 +159,7 @@ test("a successful send writes one sync record and a failed target leaves its ou
         source,
         title,
         sourceModifiedAt,
+        sourceFingerprint: "fixture-fingerprint",
         targetNames: ["unpaired", "live"],
         build: async ({ dir, id }) => {
             builds++;
@@ -137,7 +181,9 @@ test("a successful send writes one sync record and a failed target leaves its ou
                 source,
                 title,
                 publishedAt: expect.any(String),
-                syncs: { live: { syncedAt: expect.any(String), sourceModifiedAt } },
+                syncs: {
+                    live: { syncedAt: expect.any(String), sourceModifiedAt, sourceFingerprint: "fixture-fingerprint" },
+                },
             },
         ],
     });

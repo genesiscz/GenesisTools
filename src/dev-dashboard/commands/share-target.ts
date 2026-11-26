@@ -1,11 +1,18 @@
 import { importLegacyShare, loadSharePublishConfig } from "@app/dev-dashboard/lib/share/legacy-share";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { loadShareConfig, updateShareConfig } from "@genesiscz/utils/genesis-tools/publish/store";
+import {
+    listPublications,
+    loadShareConfig,
+    savePublication,
+    updateShareConfig,
+    withPublicationLock,
+} from "@genesiscz/utils/genesis-tools/publish/store";
+import { readBoundedRequestText } from "@genesiscz/utils/http/bounded-body";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { auditClientOperation } from "@genesiscz/utils/publish/audit";
-import { ALL_TARGETS, TARGET_NAME_RE } from "@genesiscz/utils/publish/targets";
+import { ALL_TARGETS, type PublishTarget, TARGET_NAME_RE, targetDestination } from "@genesiscz/utils/publish/targets";
 import {
     isTransportKind,
     PUBLISH_TRANSPORTS,
@@ -28,6 +35,7 @@ export interface TargetAddOptions {
     driver?: string;
     url?: string;
     code?: string;
+    codeStdin?: boolean;
     host?: string;
     dataDir?: string;
     publicBase?: string;
@@ -36,8 +44,44 @@ export interface TargetAddOptions {
     replace?: boolean;
 }
 
+export async function pairingCodeInput(opts: { code?: string; codeStdin?: boolean }): Promise<string | undefined> {
+    if (!opts.codeStdin) {
+        return opts.code;
+    }
+
+    if (opts.code) {
+        throw new Error("Choose --code-stdin or --code.");
+    }
+
+    return (
+        await readBoundedRequestText(
+            new Request("http://localhost", {
+                method: "POST",
+                body: Bun.stdin.stream(),
+            }),
+            1024
+        )
+    ).trim();
+}
+
 const askInTerminal: SetupAsk = async (prompt) =>
-    p.text({ message: prompt.message, initialValue: prompt.initial, validate: prompt.validate });
+    prompt.flag === "code"
+        ? p.password({ message: prompt.message })
+        : p.text({ message: prompt.message, initialValue: prompt.initial, validate: prompt.validate });
+
+async function invalidateTargetSyncs(name: string): Promise<void> {
+    const kinds = new Set((await listPublications()).map((entry) => entry.kind));
+    for (const kind of kinds) {
+        await withPublicationLock(kind, async () => {
+            for (const entry of await listPublications(kind)) {
+                if (Object.hasOwn(entry.syncs, name)) {
+                    const { [name]: _old, ...syncs } = entry.syncs;
+                    await savePublication({ ...entry, syncs });
+                }
+            }
+        });
+    }
+}
 
 const askNever: SetupAsk = async (prompt) => {
     throw new MissingSetupValueError(prompt.flag);
@@ -84,7 +128,7 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
             name,
             values: {
                 url: opts.url,
-                code: opts.code,
+                code: await pairingCodeInput(opts),
                 host: opts.host,
                 "data-dir": opts.dataDir,
                 "public-base": opts.publicBase,
@@ -118,27 +162,39 @@ export async function runTargetAdd(name: string, opts: TargetAddOptions): Promis
                 }
             }
 
-            const target = await transport.setup(input);
+            let target: PublishTarget | undefined;
             try {
+                target = await transport.setup(input);
+                if (!previous || targetDestination(previous) !== targetDestination(target)) {
+                    await invalidateTargetSyncs(name);
+                }
+                const saved = target;
                 await updateShareConfig((current) => ({
                     ...current,
                     defaults: opts.default ? { ...current.defaults, target: name } : current.defaults,
                     targets: previous
-                        ? current.targets.map((entry) => (entry.name === name ? target : entry))
-                        : [...current.targets, target],
+                        ? current.targets.map((entry) => (entry.name === name ? saved : entry))
+                        : [...current.targets, saved],
                 }));
             } catch (err) {
-                if (pair && oldToken !== undefined) {
-                    await (await secrets()).set(pair.token.path, oldToken);
-                } else {
-                    await transport.forget(target);
+                try {
+                    if (pair && oldToken !== undefined) {
+                        await (await secrets()).set(pair.token.path, oldToken);
+                    } else if (target) {
+                        await transport.forget(target);
+                    }
+                } catch (restoreError) {
+                    throw new AggregateError(
+                        [err, restoreError],
+                        "Target setup failed and the previous token could not be restored"
+                    );
                 }
 
                 throw err;
             }
 
-            if (pair && target.transport.kind === "paired") {
-                if (pair.token.path !== target.transport.token.path) {
+            if (pair && target) {
+                if (target.transport.kind !== "paired" || pair.token.path !== target.transport.token.path) {
                     await auditClientOperation(
                         { action: "forget", target: name, deviceId: pair.deviceId },
                         async () => (await secrets()).delete(pair.token.path),
