@@ -1,8 +1,10 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { type PairedDevice, PairedDeviceSchema } from "./types";
 
@@ -91,31 +93,44 @@ export class DeviceStore {
             tokenHash: hashToken(token),
             createdAt: new Date(at).toISOString(),
         };
-        const devices = await this.read();
-        await this.write([...devices, device]);
+        await this.withWriteLock(async () => this.write([...(await this.read()), device]));
         log.info({ deviceId: device.id, deviceName }, "share device paired");
 
         return { deviceId: device.id, token };
     }
 
-    /** The device a bearer token belongs to, or null. */
+    /** Identify a token for a read-only request, without recording use. */
+    async identify(token: string): Promise<PairedDevice | null> {
+        return findDevice(await this.read(), hashToken(token));
+    }
+
+    /** Identify a token and record its use, at most once per hour. */
     async authenticate(token: string): Promise<PairedDevice | null> {
         const tokenHash = hashToken(token);
-        const devices = await this.read();
-        const device = devices.find((entry) => safeEqual(entry.tokenHash, tokenHash)) ?? null;
+        const device = findDevice(await this.read(), tokenHash);
 
-        if (device) {
-            const last = device.lastUsedAt ? Date.parse(device.lastUsedAt) : 0;
-
-            if (this.now() - last > LAST_USED_RESOLUTION_MS) {
-                const usedAt = new Date(this.now()).toISOString();
-                await this.write(
-                    devices.map((entry) => (entry.id === device.id ? { ...entry, lastUsedAt: usedAt } : entry))
-                );
-            }
+        if (!device || !this.usageIsDue(device)) {
+            return device;
         }
 
-        return device;
+        return this.withWriteLock(async () => {
+            const devices = await this.read();
+            const current = findDevice(devices, tokenHash);
+
+            if (current && this.usageIsDue(current)) {
+                const usedAt = new Date(this.now()).toISOString();
+                await this.write(
+                    devices.map((entry) => (entry.id === current.id ? { ...entry, lastUsedAt: usedAt } : entry))
+                );
+            }
+
+            return current;
+        });
+    }
+
+    private usageIsDue(device: PairedDevice): boolean {
+        const last = device.lastUsedAt ? Date.parse(device.lastUsedAt) : 0;
+        return this.now() - last > LAST_USED_RESOLUTION_MS;
     }
 
     async list(): Promise<PairedDevice[]> {
@@ -123,22 +138,27 @@ export class DeviceStore {
     }
 
     async revoke(id: string): Promise<boolean> {
-        const devices = await this.read();
-        const next = devices.filter((device) => device.id !== id);
+        return this.withWriteLock(async () => {
+            const devices = await this.read();
+            const next = devices.filter((device) => device.id !== id);
 
-        if (next.length === devices.length) {
-            return false;
-        }
+            if (next.length === devices.length) {
+                return false;
+            }
 
-        await this.write(next);
-        log.info({ deviceId: id }, "share device revoked");
+            await this.write(next);
+            log.info({ deviceId: id }, "share device revoked");
 
-        return true;
+            return true;
+        });
     }
 
     private async read(): Promise<PairedDevice[]> {
         const raw = await readFile(this.file, "utf8").catch((err: unknown) => {
-            log.debug({ err, file: this.file }, "no share devices file yet");
+            if (!isMissingPathError(err)) {
+                throw err;
+            }
+
             return null;
         });
 
@@ -149,12 +169,20 @@ export class DeviceStore {
         return DevicesFileSchema.parse(SafeJSON.parse(raw, { strict: true })).devices;
     }
 
-    private async write(devices: PairedDevice[]): Promise<void> {
+    private async withWriteLock<T>(write: () => Promise<T>): Promise<T> {
         await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
+        return withFileLock(`${this.file}.lock`, write);
+    }
+
+    private async write(devices: PairedDevice[]): Promise<void> {
         const temp = `${this.file}.${randomBytes(4).toString("hex")}.tmp`;
         await writeFile(temp, SafeJSON.stringify({ version: 1, devices }, null, 2), { mode: 0o600 });
         await rename(temp, this.file);
     }
+}
+
+function findDevice(devices: readonly PairedDevice[], tokenHash: string): PairedDevice | null {
+    return devices.find((entry) => safeEqual(entry.tokenHash, tokenHash)) ?? null;
 }
 
 function safeEqual(a: string, b: string): boolean {
