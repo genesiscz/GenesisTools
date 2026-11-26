@@ -1,4 +1,4 @@
-import { relative } from "node:path";
+import { relative, sep } from "node:path";
 import watchman from "fb-watchman";
 import type { WatchChange, WatchChanges, WatchDriver, WatchedRoot, WatchLoss } from "./types";
 
@@ -12,7 +12,7 @@ function clockInstance(clock: string): string {
 }
 
 function toPosix(path: string): string {
-    return path.replace(/\\/g, "/");
+    return sep === "\\" ? path.replace(/\\/g, "/") : path;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

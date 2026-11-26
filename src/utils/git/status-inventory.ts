@@ -69,7 +69,7 @@ export function collapsePoints(changed: readonly string[], trackedDirs: Readonly
     const points = new Set<string>();
 
     for (const raw of changed) {
-        const path = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+        const path = raw.replace(/\/+$/, "");
 
         if (!path) {
             continue;

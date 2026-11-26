@@ -27,7 +27,7 @@ describe("collapsePoints", () => {
         expect(
             collapsePoints(["src/lib/a.ts", "new/deep/x.txt", "new/y.txt", "src/fresh/z.ts", "top.txt"], tracked)
         ).toEqual(["new", "src/fresh", "src/lib/a.ts", "top.txt"]);
-        expect(collapsePoints(["src\\lib\\b.ts"], tracked)).toEqual(["src/lib/b.ts"]);
+        expect(collapsePoints(["src\\lib\\b.ts"], tracked)).toEqual(["src\\lib\\b.ts"]);
     });
 });
 
@@ -71,6 +71,7 @@ describe("StatusInventory", () => {
             "b.txt",
             "src/c.txt",
             "src/deep/d.txt",
+            "literal\\\\name.txt",
             "new.txt",
             "fresh/one.txt",
             "fresh/sub/two.txt",
@@ -116,6 +117,7 @@ describe("StatusInventory", () => {
             const answer = await inventory.snapshot({ since: mark, fenceMs: 50 });
             const full = readHookStatus(repo.dir);
             expect(answer.state).toBe("ok");
+            expect(full.ok).toBe(true);
 
             if (answer.state !== "ok" || !full.ok) {
                 return;

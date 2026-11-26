@@ -292,8 +292,12 @@ function armReport(arm: string, observations: readonly Observation[], walls: Map
     let missingDirtyAtWriterPre = 0;
     let otherDifferences = 0;
     let unexplained = 0;
+    let earliest = Number.POSITIVE_INFINITY;
+    let latest = Number.NEGATIVE_INFINITY;
 
     for (const observation of observations) {
+        earliest = Math.min(earliest, observation.at);
+        latest = Math.max(latest, observation.at);
         const call = observation.call ?? `${observation.at}`;
         calls.add(call);
         parity[observation.parity] += 1;
@@ -348,7 +352,6 @@ function armReport(arm: string, observations: readonly Observation[], walls: Map
         };
     };
     const cpu = spread(observations.map((observation) => observation.cpuMs));
-    const ats = observations.map((observation) => observation.at);
 
     return {
         arm,
@@ -370,7 +373,7 @@ function armReport(arm: string, observations: readonly Observation[], walls: Map
         roots: roots.size,
         linkedRoots: linkedRoots.size,
         harnesses: [...harnesses].sort(),
-        days: ats.length === 0 ? 0 : round((Math.max(...ats) - Math.min(...ats)) / 86_400_000, 2),
+        days: observations.length === 0 ? 0 : round((latest - earliest) / 86_400_000, 2),
     };
 }
 

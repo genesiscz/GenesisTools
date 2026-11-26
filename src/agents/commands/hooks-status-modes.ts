@@ -385,9 +385,9 @@ async function report(flags: { since?: string; json?: boolean }): Promise<void> 
 }
 
 /** `tools agents hooks diff modes list|try|report`. */
-export function registerStatusModeCommands(diff: Command): void {
+export function registerStatusModeCommands(diff: Command, name = "modes"): void {
     const modes = diff
-        .command("modes")
+        .command(name)
         .description("The status modes of the diff hooks: their arms, a trial read, the shadow report");
 
     modes

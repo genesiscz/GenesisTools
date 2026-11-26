@@ -607,6 +607,7 @@ export function registerHooksCommands(program: Command): void {
 
     const diffCommand = hooks.command("diff").description("The Bash diff hook");
     registerStatusModeCommands(diffCommand);
+    registerStatusModeCommands(hooks, "status-modes");
 
     diffCommand
         .command("show <call>")

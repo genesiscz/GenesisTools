@@ -64,8 +64,8 @@ export function statusEligible(call: StatusCall, facts: { background: boolean; d
 
 const MARKS_FILE = "status-marks.json";
 
-/** `{ v: 1, arms: { <arm id>: [<mark, "" for an answer without one, or null>, ...] } }`, one slot per root. */
-type MarkSlots = Record<string, Array<string | null>>;
+/** Version 2 binds each arm mark to its worktree root, including roots added or reordered at post. */
+type MarkSlots = Record<string, Record<string, string | null>>;
 
 function markFileOf(call: StatusCall): string | null {
     const session = safeSegment(call.sessionId);
@@ -90,7 +90,7 @@ function readMarks(path: string | null): MarkSlots {
             typeof parsed !== "object" ||
             parsed === null ||
             !("v" in parsed) ||
-            parsed.v !== 1 ||
+            parsed.v !== 2 ||
             !("arms" in parsed)
         ) {
             return {};
@@ -105,8 +105,10 @@ function readMarks(path: string | null): MarkSlots {
         const slots: MarkSlots = {};
 
         for (const [id, value] of Object.entries(arms)) {
-            if (Array.isArray(value)) {
-                slots[id] = value.map((slot) => (typeof slot === "string" ? slot : null));
+            if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+                slots[id] = Object.fromEntries(
+                    Object.entries(value).map(([root, slot]) => [root, typeof slot === "string" ? slot : null])
+                );
             }
         }
 
@@ -130,7 +132,7 @@ function writeMarks(path: string | null, slots: MarkSlots): void {
         return;
     }
 
-    writeFileSync(path, SafeJSON.stringify({ v: 1, arms: slots }), { mode: 0o600 });
+    writeFileSync(path, SafeJSON.stringify({ v: 2, arms: slots }), { mode: 0o600 });
 }
 
 function sampled(call: StatusCall, every: number): boolean {
@@ -214,7 +216,8 @@ async function defaultRecorder(): Promise<MetricsRecorder> {
  *
  * Otherwise each root is asked of the active arm (with the arm's mark from pre at post); a post boundary whose
  * active arm left no slot in pre answers `unavailable` with `no-mark`, so a call that began on Git ends on Git. One call
- * in `shadow.every` also reads the reference and then each shadow arm, one after another, until `budgetMs` is spent.
+ * in `shadow.every` also reads the reference and starts shadow arms while the admission budget allows it.
+ * An admitted arm and its confirmation reads retain their own deadlines and may finish after that budget.
  */
 export async function prepareStatus(options: {
     phase: StatusPhase;
@@ -251,21 +254,21 @@ export async function prepareStatus(options: {
     const views = new Map<string, StatusView>();
     const started = performance.now();
 
-    for (const [index, entry] of roots.entries()) {
+    for (const entry of roots) {
         const requestFor = (arm: StatusArm): StatusRequest => ({
             phase,
             root: entry.root,
             need,
             head: entry.head,
-            mark: marksIn[arm.id]?.[index] || null,
+            mark: marksIn[arm.id]?.[entry.root] || null,
         });
         const linked = isLinked(entry.root);
         let referenceAnswer: StatusAnswer | null = null;
 
         const keepMark = (arm: StatusArm, answer: StatusAnswer) => {
-            const slots = marksOut[arm.id] ?? roots.map(() => null);
+            const slots = marksOut[arm.id] ?? {};
             marksOut[arm.id] = slots;
-            slots[index] = answer.state === "ok" ? (answer.mark ?? "") : null;
+            slots[entry.root] = answer.state === "ok" ? (answer.mark ?? "") : null;
         };
 
         if (shadowing) {
@@ -276,7 +279,7 @@ export async function prepareStatus(options: {
 
         if (active.id === reference.id) {
             activeAnswer = referenceAnswer ?? (await observeSafely(active, requestFor(active)));
-        } else if (phase === "post" && (marksIn[active.id]?.[index] ?? null) === null) {
+        } else if (phase === "post" && (marksIn[active.id]?.[entry.root] ?? null) === null) {
             activeAnswer = { state: "unavailable", reason: "no-mark", cost: NO_COST };
         } else {
             activeAnswer = await observeSafely(active, requestFor(active));
