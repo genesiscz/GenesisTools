@@ -98,14 +98,10 @@ export function ObsidianReader({ path }: Props) {
             <div className="flex items-center justify-between gap-2 border-b border-[var(--dd-border)] px-3 py-2 text-[11px]">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                     <QaSourceToggle mode={viewMode} onChange={setViewMode} />
-                    {data.shares.length > 0 ? (
-                        <ShareFreshnessChips shares={data.shares} editedAt={data.editedAt} />
-                    ) : null}
                     <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
                 </div>
                 {shareUrl ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                        <code className="truncate text-[10px] text-[var(--dd-text-muted)]">{shareUrl}</code>
+                    <div className="flex shrink-0 items-center gap-2">
                         <Button
                             size="sm"
                             variant="outline"
@@ -135,6 +131,14 @@ export function ObsidianReader({ path }: Props) {
                     </Button>
                 )}
             </div>
+            {data.shares.length > 0 ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-[var(--dd-border)] px-3 py-1.5 text-[11px]">
+                    <ShareFreshnessChips shares={data.shares} editedAt={data.editedAt} />
+                    {shareUrl ? (
+                        <code className="min-w-0 truncate text-[10px] text-[var(--dd-text-muted)]">{shareUrl}</code>
+                    ) : null}
+                </div>
+            ) : null}
             {viewMode === "reading" ? (
                 <div className="flex-1 overflow-auto px-5 py-4">
                     <ReadingColumn>
