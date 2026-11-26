@@ -55,37 +55,50 @@ public extension ButtonStyle where Self == KitButtonStyle {
 private struct KitButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let style: KitButtonStyle
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        KitButtonInteraction(isPressed: configuration.isPressed) { state in
+            let surface = look.surface(style.kind.role, state, hue: style.hue, scheme: scheme)
+            let radius = look.radius(style.kind.role, height: style.size.height, legacy: 7)
+            configuration.label
+                .font(.system(size: style.size.font, weight: style.kind == .primary ? .semibold : .medium))
+                .lineLimit(1)
+                .foregroundStyle(surface.label)
+                .environment(\.kitGlyphColor, surface.glyph)
+                .environment(\.kitGlyphSize, style.size.glyph)
+                .padding(.horizontal, style.square ? 0 : style.size.padding)
+                .frame(width: style.square ? style.size.height : nil, height: style.size.height)
+                .frame(minWidth: style.minWidth, maxWidth: style.fullWidth ? .infinity : nil)
+                .background(KitSurfaceBackground(surface, radius: radius, corners: look.corners))
+                .brightness(surface.brightness)
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: look.corners))
+        }
+    }
+}
+
+/// Shared pointer, pressed and disabled behavior for kit buttons with their own geometry and surface.
+struct KitButtonInteraction<Content: View>: View {
+    let isPressed: Bool
+    var pressedScale: CGFloat = 0.97
+    var disabledOpacity: Double = 0.4
+    @ViewBuilder var content: (KitInteraction) -> Content
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.kitLook) private var look
     @Environment(\.kitForcedInteraction) private var forced
-    @Environment(\.colorScheme) private var scheme
     @GenReduceMotion private var reduceMotion
 
     private var state: KitInteraction {
         guard isEnabled else { return .rest }
-        if configuration.isPressed || forced == .pressed { return .pressed }
+        if isPressed || forced == .pressed { return .pressed }
         return hovering || forced == .hover ? .hover : .rest
     }
 
     var body: some View {
-        let state = state
-        let surface = look.surface(style.kind.role, state, hue: style.hue, scheme: scheme)
-        let radius = look.radius(style.kind.role, height: style.size.height, legacy: 7)
-        configuration.label
-            .font(.system(size: style.size.font, weight: style.kind == .primary ? .semibold : .medium))
-            .lineLimit(1)
-            .foregroundStyle(surface.label)
-            .environment(\.kitGlyphColor, surface.glyph)
-            .environment(\.kitGlyphSize, style.size.glyph)
-            .padding(.horizontal, style.square ? 0 : style.size.padding)
-            .frame(width: style.square ? style.size.height : nil, height: style.size.height)
-            .frame(minWidth: style.minWidth, maxWidth: style.fullWidth ? .infinity : nil)
-            .background(KitSurfaceBackground(surface, radius: radius, corners: look.corners))
-            .brightness(surface.brightness)
-            .scaleEffect(reduceMotion ? 1 : (state == .pressed ? 0.97 : 1))
-            .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(RoundedRectangle(cornerRadius: radius, style: look.corners))
+        content(state)
+            .scaleEffect(reduceMotion ? 1 : (state == .pressed ? pressedScale : 1))
+            .opacity(isEnabled ? 1 : disabledOpacity)
             .pointerCursor(isEnabled)
             .onHover { inside in
                 let next = isEnabled && inside
@@ -97,7 +110,7 @@ private struct KitButtonBody: View {
             }
             // A button that scrolls out from under a still pointer gets no exit event.
             .onDisappear { hovering = false }
-            .animation(reduceMotion ? nil : KitTheme.quick, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : KitTheme.quick, value: isPressed)
     }
 }
 

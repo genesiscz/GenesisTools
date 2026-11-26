@@ -35,11 +35,16 @@ public final class RecordingBarPanel {
     private let defaults: UserDefaults
     private let targetBounds: (RecordingTarget) -> CGRect?
     private var placement: RecordingPanelPlacement
+    /// The look the bar opened with (`RecordingBarLook.key`). It stays until the bar closes.
+    let look: RecordingBarLook
     private var cancellables = Set<AnyCancellable>()
     private var dragged = false
     private var dragging = false
     private let hideAction: () -> Void
     private let cancelDraft: () -> Void
+    let motion = RecordingBarMotion()
+    /// The content's last measured size, applied when a closing drawer ends.
+    private var measured: CGSize = .zero
 
     /// targetBounds supplies the picker's known target bounds, in global Cocoa screen points.
     public init(model: RecordingBarModel, actions: RecordingBarActions, defaults: UserDefaults = .standard,
@@ -52,6 +57,7 @@ public final class RecordingBarPanel {
         placement = defaults.string(forKey: "recorder.bar.placement").flatMap(RecordingPanelPlacement.init(rawValue:))
             ?? defaults.string(forKey: RecordingSettings.Key.placement).flatMap(RecordingPanelPlacement.init(rawValue:))
             ?? .nearTarget
+        look = RecordingBarLook.load(defaults)
         let panel = RecordingBarWindow(contentRect: CGRect(x: 0, y: 0, width: RecordingBarView.width, height: 44),
                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window = panel
@@ -65,14 +71,22 @@ public final class RecordingBarPanel {
         var hostedActions = actions
         hostedActions.hide = { [weak self] in self?.hide() }
         let view = RecordingBarView(model: model, actions: hostedActions, defaults: defaults, placement: placement,
-                                    onPlace: { [weak self] in self?.setPlacement($0) },
+                                    look: look, motion: motion, onPlace: { [weak self] in self?.setPlacement($0) },
                                     onDrag: { [weak self] in self?.dragging = true })
-        let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) {
+        let content = view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) {
             [weak self] size in DispatchQueue.main.async { self?.resize(to: size) }
-        }))
+        }
+        let hosting = FirstMouseHostingView(rootView: AnyView(RecordingBarRoot(motion: motion, content: content)))
         panel.contentView = hosting
         let size = RecordingPickerPanel.measure(hosting)
         resize(to: size)
+        motion.decideGrowth = { [weak self] in self?.growthFromHere() ?? .down }
+        motion.reserve = { [weak self] height in self?.reserve(height: height) }
+        motion.settle = { [weak self] in
+            guard let self else { return }
+            self.resize(to: self.measured)
+            self.window.invalidateShadow()
+        }
         panel.shortcut = { [weak self] event in self?.handle(event) == true }
         panel.escape = { [weak self] in self?.escape() }
         panel.endDrag = { [weak self] in self?.saveDrag() }
@@ -134,21 +148,41 @@ public final class RecordingBarPanel {
         return true
     }
 
+    /// Follows the content's size. The drawer's motion happens inside the window: it grows the window once when it
+    /// starts opening (`reserve`) and shrinks it once when it has closed (`settle`), so no frame of the window is
+    /// animated and nothing in the first row moves. A content change outside that motion (a notice, a phase) is
+    /// applied at once.
     private func resize(to measured: CGSize) {
+        self.measured = measured
         let size = CGSize(width: ceil(measured.width), height: ceil(measured.height))
         guard size.width > 0, size.height > 0, size != window.frame.size else { return }
-        let visible = window.screen?.visibleFrame ?? CGRect(origin: window.frame.origin, size: size)
-        let frame = RecordingPanelLayout.resized(window.frame, to: size, visible: visible)
-        let animated = window.isVisible && window.alphaValue > 0
-            && !GenMotion.systemReduceMotion && !NativeSettingsAppearance.shared.reduceMotion
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = GenMotion.duration(expanding: size.height > window.frame.height)
-                window.animator().setFrame(frame, display: true)
-            }
-        } else {
-            window.setFrame(frame, display: true)
-        }
+        if motion.moving && size.height < window.frame.height { return }
+        window.setFrame(anchored(size), display: true)
+    }
+
+    private func reserve(height: CGFloat) {
+        let size = CGSize(width: window.frame.width, height: ceil(height))
+        guard size.height > window.frame.height else { return }
+        window.setFrame(anchored(size), display: true)
+    }
+
+    /// The new frame keeps the edge the drawer opens away from: the top while it opens downward, the bottom while it
+    /// opens upward. It stays inside the visible screen.
+    private func anchored(_ size: CGSize) -> CGRect {
+        let frame = window.frame
+        let visible = window.screen?.visibleFrame ?? CGRect(origin: frame.origin, size: size)
+        var next = CGRect(x: frame.minX, y: motion.growth == .up ? frame.minY : frame.maxY - size.height,
+                          width: size.width, height: size.height)
+        next.origin.x = min(max(next.minX, visible.minX + 8), visible.maxX - 8 - next.width)
+        next.origin.y = min(max(next.minY, visible.minY + 8), visible.maxY - 8 - next.height)
+        return next.integral
+    }
+
+    /// Opens toward the larger part of the screen: upward from a bar in the lower half (the default place, under the
+    /// recorded window or at the bottom of the display), downward from one in the upper half.
+    private func growthFromHere() -> RecordingBarGrowth {
+        guard let visible = window.screen?.visibleFrame else { return .down }
+        return window.frame.midY < visible.midY ? .up : .down
     }
 
     private func setPlacement(_ newValue: RecordingPanelPlacement) {
@@ -238,5 +272,15 @@ public final class RecordingBarPanel {
                                                displayIndex: nil, screens: [local])
         }
         window.setFrame(frame, display: true)
+    }
+}
+
+/// Keeps the bar against the edge its drawer opens away from, so a taller window never moves the first row.
+private struct RecordingBarRoot<Content: View>: View {
+    @ObservedObject var motion: RecordingBarMotion
+    let content: Content
+
+    var body: some View {
+        content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: motion.growth == .up ? .bottom : .top)
     }
 }

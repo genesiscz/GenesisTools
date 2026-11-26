@@ -44,7 +44,11 @@ final class WidgetSessionEngineTests: XCTestCase {
 
     func testFollowReportsClearWhenTheTargetChangesOrTheNewSegmentHasNoDisplay() async throws {
         let pipe = WidgetSessionPipe()
-        let engine = makeEngine(pipe)
+        let engine = WidgetSessionEngine(makeController: pipe.makeController, showsBorder: { true },
+                                         connectedDisplay: { id, name in
+            guard id == 51 else { return nil }
+            return RecordingDisplay(index: 0, name: name, isPrimary: true, width: 1000, height: 800)
+        })
         try await engine.start(.init(target: .followDisplay), excludeWindowIDs: [])
         pipe.receive?([#"{"event":"state","state":"recording","target":{"kind":"display","follow":true},"display":{"id":51,"name":"Main"}}"#])
         pipe.receive?([#"{"event":"state","state":"starting","target":{"kind":"display","screenIndex":1}}"#])
